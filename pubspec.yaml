@@ -1,0 +1,54 @@
+name: knz_scent_admin
+description: KNZ Scent Admin Portal - Luxury Fragrance Management App
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter_dotenv: ^5.2.1   # FIX 1 — load Brevo API key from .env
+  crypto: ^3.0.5            # FIX 2 — SHA-256 password hashing
+  flutter:
+    sdk: flutter
+
+  # ── UI ────────────────────────────────────────────────────────────────────
+  cupertino_icons: ^1.0.8
+  animate_do: ^3.3.4
+  flutter_staggered_animations: ^1.1.1
+  fl_chart: ^0.70.2
+  intl: ^0.20.1
+
+  # ── Image ─────────────────────────────────────────────────────────────────
+  image_picker: ^1.1.2
+  path_provider: ^2.1.5
+
+  # ── Local Database ────────────────────────────────────────────────────────
+  sqflite: ^2.4.1
+  path: ^1.9.1
+
+  # ── Utilities ─────────────────────────────────────────────────────────────
+  uuid: ^4.5.1
+  http: ^1.4.0
+  connectivity_plus: ^6.1.4
+
+  # ── Firebase ──────────────────────────────────────────────────────────────
+  firebase_core: ^3.13.0
+  cloud_firestore: ^5.6.5
+
+  # ── Bluetooth Printing ────────────────────────────────────────────────────
+  flutter_blue_plus: ^1.35.5
+  esc_pos_utils_plus: ^2.0.4
+  permission_handler: ^12.0.0+1
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - .env   # FIX 1 — required so flutter_dotenv can read the file at runtime
