@@ -385,10 +385,11 @@ class AppState extends ChangeNotifier {
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   void _addLogSilent(String message, String type) {
+    final now = DateTime.now();
     final log = ActivityLog(
-      id:        DateTime.now().microsecondsSinceEpoch.toString(),
+      id:        now.microsecondsSinceEpoch.toString(),
       message:   message,
-      timestamp: DateTime.now(),
+      timestamp: now,
       type:      type,
     );
     _activityLogs = [log, if (_activityLogs.length < 50) ..._activityLogs

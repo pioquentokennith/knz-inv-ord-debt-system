@@ -18,6 +18,7 @@ class DatabaseHelper {
     return await openDatabase(
       path,
       version: 3,  // bumped to 3 para ma-add ang sync_queue table
+      onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );

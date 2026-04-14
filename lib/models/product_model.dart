@@ -97,7 +97,6 @@ class Product extends BaseModel {
 
   // ── Computed getters ──────────────────────────────────────────────────────
   bool get isLowStock => _stockQty <= _minStockLevel;
-  bool get isInStock  => _stockQty > _minStockLevel;
 
   Product copyWith({
     String?          id,
