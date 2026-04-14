@@ -139,9 +139,13 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   @override
   Future<int> getNextOrderNumber(String userId) => safeCall(() async {
     final database = await db.database;
+    // FIX 2: Dati COUNT(*) — kung nag-delete ng order, mauulit ang number.
+    // Ngayon MAX — palagi itong tumataas, hindi na mauulit kahit may na-delete.
     final result = await database.rawQuery(
-        'SELECT COUNT(*) as count FROM orders WHERE user_id = ?', [userId]);
-    return (result.first['count'] as int) + 1;
+        "SELECT COALESCE(MAX(CAST(SUBSTR(order_id, 5) AS INTEGER)), 0) + 1 AS next_num "
+        "FROM orders WHERE user_id = ?",
+        [userId]);
+    return (result.first['next_num'] as int? ?? 1);
   }, 1);
 
   Map<String, dynamic> _orderToMap(Order o, String userId) => {

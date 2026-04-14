@@ -125,8 +125,19 @@ class _OrderDialogState extends State<OrderDialog> {
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
     );
 
-    await state.addOrder(order);
-    if (mounted) Navigator.pop(context);
+    // FIX 3: Gamitin ang onError callback para malaman ng user kung failed ang order creation.
+    // Dati walang error feedback — nag-pop agad ang dialog kahit failed.
+    final success = await state.addOrder(order, onError: (msg) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    });
+    if (success && mounted) Navigator.pop(context);
   }
 
   @override

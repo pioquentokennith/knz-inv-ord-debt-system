@@ -39,6 +39,15 @@ class AppUser extends BaseModel {
     'role':      _role,
     'createdAt': _createdAt.toIso8601String(),
   };
+
+  // FIX 8: Dinagdag ang fromMap() factory — consistent sa OOP pattern ng
+  // Product, Order, at CustomerDebt na lahat ay may fromMap().
+  factory AppUser.fromMap(Map<String, dynamic> m) => AppUser(
+    id:        m['id']         as String,
+    username:  m['name']       as String,
+    role:      m['role']       as String,
+    createdAt: DateTime.parse(m['created_at'] as String),
+  );
 }
 
 /// Activity log entry — immutable record of a past action.

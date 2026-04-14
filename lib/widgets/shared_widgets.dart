@@ -275,22 +275,10 @@ class OrderStatusBadge extends StatelessWidget {
 
   const OrderStatusBadge({super.key, required this.status});
 
-  Color get _color {
-    switch (status) {
-      case OrderStatus.pending:
-        return AppColors.warning;
-      case OrderStatus.processing:
-        return AppColors.info;
-      case OrderStatus.shipped:
-        return Colors.purple;
-      case OrderStatus.delivered:
-        return AppColors.success;
-      case OrderStatus.cancelled:
-        return AppColors.error;
-      case OrderStatus.utang:
-        return AppColors.warning;
-    }
-  }
+  // FIX 4: Tinanggal ang duplicate switch statement.
+  // Ginagamit na ngayon ang status.color mula sa OrderStatusExtension —
+  // isa lang ang source of truth para sa colors, walang mismatch.
+  Color get _color => status.color;
 
   @override
   Widget build(BuildContext context) {

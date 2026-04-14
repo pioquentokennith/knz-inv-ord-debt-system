@@ -40,13 +40,8 @@ class LocalUserRepository extends BaseRepository implements UserRepository {
     }
 
     if (maps.isEmpty) return null;
-    final m = maps.first;
-    return AppUser(
-      id:        m['id']        as String,
-      username:  m['name']      as String,
-      role:      m['role']      as String,
-      createdAt: DateTime.parse(m['created_at'] as String),
-    );
+    // FIX 8: Gumagamit na ng AppUser.fromMap() — consistent sa OOP deserialization pattern
+    return AppUser.fromMap(maps.first);
   }, null);
 
   @override

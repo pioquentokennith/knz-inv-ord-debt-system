@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
 import '../models/user_model.dart';
@@ -83,7 +84,15 @@ class AppState extends ChangeNotifier {
   List<CustomerDebt> get unpaidDebts      => _debts.where((d) => !d.isPaid).toList();
   List<CustomerDebt> get overdueDebts     => _debts.where((d) => d.isOverdue).toList();
 
+  // FIX 5: Dati kasama ang utang sa revenue — misleading kasi hindi pa nababayaran.
+  // Ngayon: delivered lang = actual collected revenue.
+  // Ang utang ay tracked na separately sa totalDebtAmount getter.
   double get totalRevenue => _orders
+      .where((o) => o.status == OrderStatus.delivered)
+      .fold(0.0, (s, o) => s + o.totalAmount);
+
+  // Billed revenue (lahat maliban cancelled) — para sa analytics na gusto ng gross view
+  double get totalBilledRevenue => _orders
       .where((o) => o.status != OrderStatus.cancelled)
       .fold(0.0, (s, o) => s + o.totalAmount);
 
@@ -154,7 +163,9 @@ class AppState extends ChangeNotifier {
           name, username, password,
           confirm.isEmpty ? password : confirm, email);
       if (error != null) { _setLoading(false); return false; }
-      final user   = await _authService.login(username, password);
+      final user = await _authService.login(username, password);
+      // FIX 1: null-check — kung null ang user, huwag i-proceed (crash prevention)
+      if (user == null) { _setLoading(false); return false; }
       _activeUser  = username.toLowerCase();
       _currentUser = user;
       _isLoggedIn  = true;
@@ -253,7 +264,10 @@ class AppState extends ChangeNotifier {
       await _productService.updateStock(productId, newQty);
       final idx = _products.indexWhere((p) => p.id == productId);
       if (idx != -1) {
-        _products[idx].stockQty = newQty;
+        // FIX 7: Dati direktang binabago ang object (_products[idx].stockQty = newQty).
+        // Ngayon gumagawa ng bagong list copy — consistent sa pattern ng ibang methods,
+        // mas predictable ang state management.
+        _products = List.of(_products)..[idx] = _products[idx].copyWith(stockQty: newQty);
         _addLogSilent('Stock updated for "${_products[idx].name}"', 'stock');
       }
     } catch (_) {
@@ -386,8 +400,10 @@ class AppState extends ChangeNotifier {
 
   void _addLogSilent(String message, String type) {
     final now = DateTime.now();
+    // FIX 6: Dati microsecondsSinceEpoch — posible ang collision sa mabilis na ops.
+    // Ngayon Uuid().v4() — guaranteed unique, consistent sa ibang parts ng codebase.
     final log = ActivityLog(
-      id:        now.microsecondsSinceEpoch.toString(),
+      id:        const Uuid().v4(),
       message:   message,
       timestamp: now,
       type:      type,
