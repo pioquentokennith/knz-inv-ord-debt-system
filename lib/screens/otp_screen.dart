@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:animate_do/animate_do.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart'; // ← FIX 1: import dotenv
+import 'package:flutter_dotenv/flutter_dotenv.dart'; 
 import '../core/app_constants.dart';
 
 enum OtpPurpose { register, resetPassword }
