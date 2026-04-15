@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// local_product_repository.dart — Soft-delete support
+// Changes:
+//   • getAll()   — now filters WHERE is_deleted = 0 (active only)
+//   • delete()   — soft-delete: sets is_deleted=1, deleted_at=now
+//   • getDeleted() — NEW: returns all soft-deleted products (Recycle Bin)
+//   • restore()    — NEW: un-deletes a product (is_deleted=0, deleted_at=NULL)
+//   • hardDelete() — NEW: permanently remove (for admin purge only)
+// ─────────────────────────────────────────────────────────────────────────────
+
 import '../models/product_model.dart';
 import 'base_repository.dart';
 import 'product_repository.dart';
@@ -11,8 +21,9 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
   @override
   Future<List<Product>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
+    // Only return non-deleted products
     final maps = await database.query('products',
-        where: 'user_id = ?', whereArgs: [userId],
+        where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId],
         orderBy: 'created_at DESC');
 
     // Kung walang local data at online, restore mula Firestore
@@ -34,17 +45,55 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
             'image_path':      p['image_path'],
             'created_at':      p['created_at'],
             'user_id':         userId,
+            'is_deleted':      0,
+            'deleted_at':      null,
           });
         } catch (_) {}
       }
       final restored = await database.query('products',
-          where: 'user_id = ?', whereArgs: [userId],
+          where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId],
           orderBy: 'created_at DESC');
       return restored.map(_fromMap).toList();
     }
 
     return maps.map(_fromMap).toList();
   }, []);
+
+  // ── NEW: Get soft-deleted products (Recycle Bin) ──────────────────────────
+  Future<List<Product>> getDeleted(String userId) => safeCall(() async {
+    final database = await db.database;
+    final maps = await database.query('products',
+        where: 'user_id = ? AND is_deleted = 1', whereArgs: [userId],
+        orderBy: 'deleted_at DESC');
+    return maps.map(_fromMap).toList();
+  }, []);
+
+  // ── NEW: Restore a soft-deleted product ───────────────────────────────────
+  Future<void> restore(String productId) => safeVoidCall(() async {
+    final database = await db.database;
+    await database.update(
+      'products',
+      {'is_deleted': 0, 'deleted_at': null},
+      where: 'id = ?',
+      whereArgs: [productId],
+    );
+
+    // Re-sync the restored product to Firestore
+    final rows = await database.query('products',
+        where: 'id = ?', whereArgs: [productId]);
+    if (rows.isNotEmpty) {
+      final userId = rows.first['user_id'] as String;
+      final data = Map<String, dynamic>.from(rows.first);
+      if (_queue.isOnline) {
+        await _cloud.saveProduct(userId, data);
+      } else {
+        await _queue.enqueue(
+          operation: 'save_product', collection: 'products',
+          userId: userId, docId: productId, data: data,
+        );
+      }
+    }
+  });
 
   @override
   Future<void> add(Product product, String userId) => safeVoidCall(() async {
@@ -88,23 +137,15 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
   @override
   Future<void> updateStock(String productId, int newQty) => safeVoidCall(() async {
     final database = await db.database;
-
-    // 1. Update SQLite first
     await database.update('products', {'stock_qty': newQty},
         where: 'id = ?', whereArgs: [productId]);
 
-    // 2. Fetch the updated row to build the full cloud payload
     final rows = await database.query('products',
         where: 'id = ?', whereArgs: [productId]);
-
     if (rows.isNotEmpty) {
       final userId = rows.first['user_id'] as String;
-
-      // ── FIX 3: ..[] cascade on Map does NOT mutate — it returns void.
-      // The old code sent the OLD stock_qty to Firestore.
-      // Correct approach: build a new map with the updated value.
-      final data = Map<String, dynamic>.from(rows.first); // copy from DB
-      data['stock_qty'] = newQty; // ← FIX 3: explicit assignment, always correct
+      final data = Map<String, dynamic>.from(rows.first);
+      data['stock_qty'] = newQty;
 
       if (_queue.isOnline) {
         await _cloud.saveProduct(userId, data);
@@ -117,8 +158,39 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
+  // ── Soft-delete (replaces hard delete) ────────────────────────────────────
   @override
   Future<void> delete(String productId) => safeVoidCall(() async {
+    final database = await db.database;
+    final rows = await database.query('products',
+        where: 'id = ?', whereArgs: [productId]);
+    final userId = rows.isNotEmpty ? rows.first['user_id'] as String : '';
+    final now = DateTime.now().toIso8601String();
+
+    // Soft-delete: mark as deleted, set timestamp
+    await database.update(
+      'products',
+      {'is_deleted': 1, 'deleted_at': now},
+      where: 'id = ?',
+      whereArgs: [productId],
+    );
+
+    // Sync soft-delete flag to Firestore
+    if (userId.isNotEmpty) {
+      if (_queue.isOnline) {
+        await _cloud.softDeleteProduct(userId, productId, now);
+      } else {
+        await _queue.enqueue(
+          operation: 'soft_delete_product', collection: 'products',
+          userId: userId, docId: productId,
+          data: {'id': productId, 'is_deleted': 1, 'deleted_at': now},
+        );
+      }
+    }
+  });
+
+  // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  Future<void> hardDelete(String productId) => safeVoidCall(() async {
     final database = await db.database;
     final rows = await database.query('products',
         where: 'id = ?', whereArgs: [productId]);
@@ -149,6 +221,8 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
       'min_stock_level': p.minStockLevel,
       'image_path':      p.imagePath,
       'created_at':      p.createdAt.toIso8601String(),
+      'is_deleted':      0,
+      'deleted_at':      null,
     };
     if (userId != null && userId.isNotEmpty) m['user_id'] = userId;
     return m;

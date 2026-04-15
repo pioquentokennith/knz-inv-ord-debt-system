@@ -8,6 +8,7 @@ import '../models/product_model.dart';
 import '../widgets/shared_widgets.dart';
 import '../dialogs/product_dialog.dart';
 import '../dialogs/edit_stock_dialog.dart';
+import '../dialogs/export_dialog.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -100,6 +101,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     context: context,
                     builder: (_) => const ProductDialog(),
                   ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary),
+                  tooltip: 'Export Inventory',
+                  onPressed: () => showExportDialog(context, ExportType.inventory),
                 ),
               ],
             ),

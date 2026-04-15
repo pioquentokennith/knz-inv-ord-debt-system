@@ -30,6 +30,7 @@ import '../widgets/shared_widgets.dart';
 import '../dialogs/order_dialog.dart';
 import '../dialogs/mark_as_utang_dialog.dart'; // ← FIX 5 import
 import 'receipt_screen.dart';
+import '../dialogs/export_dialog.dart';
 
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
@@ -156,6 +157,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
                     context: context,
                     builder: (_) => const OrderDialog(),
                   ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary),
+                  tooltip: 'Export Orders',
+                  onPressed: () => showExportDialog(context, ExportType.orders),
                 ),
               ],
             ),

@@ -9,6 +9,7 @@ import 'products_screen.dart';
 import 'analytics_screen.dart';
 import 'login_screen.dart';
 import 'utang_screen.dart';
+import 'recycle_bin_screen.dart';
 
 enum NavItem { overview, inventory, orders, products, analytics, utang }
 
@@ -219,6 +220,22 @@ class MainShellState extends State<MainShell>
             NavItem.utang,
             Icons.account_balance_wallet_outlined,
             'Utang',
+          ),
+          const SizedBox(height: 4),
+          _navSection('TOOLS'),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: AppColors.whiteTertiary),
+            title: const Text('Recycle Bin', style: AppTextStyles.navItem),
+            onTap: () {
+              if (_sidebarOpen) {
+                _drawerCtrl.reverse();
+                setState(() => _sidebarOpen = false);
+              }
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const RecycleBinScreen()),
+              );
+            },
           ),
           const Spacer(),
           const Divider(color: AppColors.divider),

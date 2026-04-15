@@ -1,8 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// firestore_sync.dart
-// Handles all Firestore auto-sync operations
-// SQLite = primary (offline-first), Firestore = cloud backup
-// Images = local storage only (product_images/ folder sa app documents)
+// firestore_sync.dart — Added soft-delete sync methods
+// New methods:
+//   • softDeleteProduct() — marks is_deleted=1 in Firestore (no hard delete)
+//   • softDeleteOrder()   — same for orders
+//   • softDeleteDebt()    — same for debts
+// Existing hard-delete methods kept for permanent purge use-case only.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -13,7 +15,6 @@ class FirestoreSync {
 
   final _fs = FirebaseFirestore.instance;
 
-  // ── Collections ───────────────────────────────────────────────────────────
   CollectionReference get _users => _fs.collection('users');
   CollectionReference _products(String uid) =>
       _fs.collection('users').doc(uid).collection('products');
@@ -23,9 +24,6 @@ class FirestoreSync {
       _fs.collection('users').doc(uid).collection('debts');
   CollectionReference _logs(String uid) =>
       _fs.collection('users').doc(uid).collection('activity_logs');
-
-  
-  
 
   // ── USER ──────────────────────────────────────────────────────────────────
 
@@ -71,23 +69,44 @@ class FirestoreSync {
     } catch (_) {}
   }
 
+  // ── NEW: Soft-delete product in Firestore ─────────────────────────────────
+  Future<void> softDeleteProduct(String userId, String productId, String deletedAt) async {
+    try {
+      await _products(userId).doc(productId).update({
+        'is_deleted': 1,
+        'deleted_at': deletedAt,
+      });
+    } catch (_) {}
+  }
+
   Future<void> deleteProduct(String userId, String productId) async {
     try {
       await _products(userId).doc(productId).delete();
-      // Note: local images are not deleted from cloud — only local file cleanup needed
     } catch (_) {}
   }
 
   Future<List<Map<String, dynamic>>> getProducts(String userId) async {
     try {
       final snap = await _products(userId)
+          .where('is_deleted', isEqualTo: 0)
           .orderBy('created_at', descending: true)
           .get();
       return snap.docs
           .map((d) => d.data() as Map<String, dynamic>)
           .toList();
     } catch (_) {
-      return [];
+      // Fallback without filter if index not yet created
+      try {
+        final snap = await _products(userId)
+            .orderBy('created_at', descending: true)
+            .get();
+        return snap.docs
+            .map((d) => d.data() as Map<String, dynamic>)
+            .where((d) => (d['is_deleted'] as int? ?? 0) == 0)
+            .toList();
+      } catch (_) {
+        return [];
+      }
     }
   }
 
@@ -117,6 +136,16 @@ class FirestoreSync {
     } catch (_) {}
   }
 
+  // ── NEW: Soft-delete order in Firestore ───────────────────────────────────
+  Future<void> softDeleteOrder(String userId, String orderId, String deletedAt) async {
+    try {
+      await _orders(userId).doc(orderId).update({
+        'is_deleted': 1,
+        'deleted_at': deletedAt,
+      });
+    } catch (_) {}
+  }
+
   Future<void> deleteOrder(String userId, String orderId) async {
     try {
       await _orders(userId).doc(orderId).delete();
@@ -130,6 +159,7 @@ class FirestoreSync {
           .get();
       return snap.docs
           .map((d) => d.data() as Map<String, dynamic>)
+          .where((d) => (d['is_deleted'] as int? ?? 0) == 0)
           .toList();
     } catch (_) {
       return [];
@@ -166,6 +196,16 @@ class FirestoreSync {
     } catch (_) {}
   }
 
+  // ── NEW: Soft-delete debt in Firestore ────────────────────────────────────
+  Future<void> softDeleteDebt(String userId, String debtId, String deletedAt) async {
+    try {
+      await _debts(userId).doc(debtId).update({
+        'is_deleted': 1,
+        'deleted_at': deletedAt,
+      });
+    } catch (_) {}
+  }
+
   Future<void> deleteDebt(String userId, String debtId) async {
     try {
       await _debts(userId).doc(debtId).delete();
@@ -179,6 +219,7 @@ class FirestoreSync {
           .get();
       return snap.docs
           .map((d) => d.data() as Map<String, dynamic>)
+          .where((d) => (d['is_deleted'] as int? ?? 0) == 0)
           .toList();
     } catch (_) {
       return [];

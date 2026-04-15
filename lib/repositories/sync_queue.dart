@@ -1,7 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// sync_queue.dart
-// Handles offline-first sync queue — nag-queue ng pending operations
-// kapag walang internet, tapos auto-sync kapag bumalik ang connection
+// sync_queue.dart — Added soft_delete_* operations
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dart:async';
@@ -19,24 +17,18 @@ class SyncQueue {
   bool _isOnline = false;
   bool _isSyncing = false;
 
-  // ── Start monitoring internet connection ───────────────────────────────────
   void startMonitoring() {
     _connectivitySub?.cancel();
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final wasOffline = !_isOnline;
       _isOnline = results.any((r) => r != ConnectivityResult.none);
-
-      // Kapag bumalik ang internet, i-sync sa background
       if (wasOffline && _isOnline) {
-        // Delay ng 2 seconds para ma-stabilize ang connection bago mag-sync
         Future.delayed(const Duration(seconds: 2), syncPending);
       }
     });
 
-    // Check current connectivity status
     Connectivity().checkConnectivity().then((results) {
       _isOnline = results.any((r) => r != ConnectivityResult.none);
-      // Kung may pending syncs at online na, sync agad
       if (_isOnline) {
         Future.delayed(const Duration(seconds: 1), syncPending);
       }
@@ -49,10 +41,9 @@ class SyncQueue {
 
   bool get isOnline => _isOnline;
 
-  // ── Add to queue (kapag walang internet) ──────────────────────────────────
   Future<void> enqueue({
-    required String operation,   // 'save_user', 'save_product', etc.
-    required String collection,  // 'users', 'products', etc.
+    required String operation,
+    required String collection,
     required String userId,
     required String docId,
     required Map<String, dynamic> data,
@@ -68,7 +59,6 @@ class SyncQueue {
     });
   }
 
-  // ── Process all pending syncs ──────────────────────────────────────────────
   Future<void> syncPending() async {
     if (_isSyncing || !_isOnline) return;
     _isSyncing = true;
@@ -79,7 +69,6 @@ class SyncQueue {
 
       for (final row in pending) {
         final operation  = row['operation']  as String;
-        final collection = row['collection'] as String;
         final userId     = row['user_id']    as String;
         final docId      = row['doc_id']     as String;
         final data       = jsonDecode(row['data'] as String) as Map<String, dynamic>;
@@ -93,6 +82,10 @@ class SyncQueue {
             case 'save_product':
               await _cloud.saveProduct(userId, data);
               break;
+            case 'soft_delete_product':
+              await _cloud.softDeleteProduct(
+                  userId, docId, data['deleted_at'] as String);
+              break;
             case 'delete_product':
               await _cloud.deleteProduct(userId, docId);
               break;
@@ -104,6 +97,10 @@ class SyncQueue {
               break;
             case 'update_order_status':
               await _cloud.updateOrderStatus(userId, docId, data['status'] as String);
+              break;
+            case 'soft_delete_order':
+              await _cloud.softDeleteOrder(
+                  userId, docId, data['deleted_at'] as String);
               break;
             case 'delete_order':
               await _cloud.deleteOrder(userId, docId);
@@ -122,6 +119,10 @@ class SyncQueue {
                   (data['amount_paid'] as num).toDouble(),
                   payments2);
               break;
+            case 'soft_delete_debt':
+              await _cloud.softDeleteDebt(
+                  userId, docId, data['deleted_at'] as String);
+              break;
             case 'delete_debt':
               await _cloud.deleteDebt(userId, docId);
               break;
@@ -135,17 +136,15 @@ class SyncQueue {
               break;
           }
 
-          // Remove from queue after successful sync
           await database.delete('sync_queue',
               where: 'id = ?', whereArgs: [rowId]);
 
-          // Mark as synced sa users table kung applicable
-          if (collection == 'users') {
+          if (row['collection'] == 'users') {
             await database.update('users', {'is_synced': 1},
                 where: 'id = ?', whereArgs: [docId]);
           }
         } catch (_) {
-          // Keep in queue kung may error — try ulit next time
+          // Keep in queue — retry next time
         }
       }
     } finally {

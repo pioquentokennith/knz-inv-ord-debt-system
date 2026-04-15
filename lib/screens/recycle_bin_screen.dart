@@ -1,0 +1,368 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// recycle_bin_screen.dart — View and restore soft-deleted items
+// Features:
+//   • Tab view: Products | Orders
+//   • Restore button — un-deletes and puts back to active list
+//   • Permanent delete button — hard purge with confirmation dialog
+//   • Shows deleted_at timestamp for audit trail
+// ─────────────────────────────────────────────────────────────────────────────
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../core/app_constants.dart';
+import '../core/app_state.dart';
+import '../models/order_model.dart';
+import '../models/product_model.dart';
+import '../repositories/local_order_repository.dart';
+import '../repositories/local_product_repository.dart';
+
+class RecycleBinScreen extends StatefulWidget {
+  const RecycleBinScreen({super.key});
+
+  @override
+  State<RecycleBinScreen> createState() => _RecycleBinScreenState();
+}
+
+class _RecycleBinScreenState extends State<RecycleBinScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  final _orderRepo   = LocalOrderRepository();
+  final _productRepo = LocalProductRepository();
+
+  List<Order>   _deletedOrders   = [];
+  List<Product> _deletedProducts = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _isLoading = true);
+    final userId = AppState().activeUser;
+    final results = await Future.wait([
+      _orderRepo.getDeleted(userId),
+      _productRepo.getDeleted(userId),
+    ]);
+    if (mounted) {
+      setState(() {
+        _deletedOrders   = results[0] as List<Order>;
+        _deletedProducts = results[1] as List<Product>;
+        _isLoading       = false;
+      });
+    }
+  }
+
+  Future<void> _restoreOrder(Order order) async {
+    await _orderRepo.restore(order.id);
+    await AppState().refreshData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Order ${order.orderId} restored'),
+        backgroundColor: AppColors.success,
+      ));
+    }
+    await _load();
+  }
+
+  Future<void> _restoreProduct(Product product) async {
+    await _productRepo.restore(product.id);
+    await AppState().refreshData();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('"${product.name}" restored'),
+        backgroundColor: AppColors.success,
+      ));
+    }
+    await _load();
+  }
+
+  Future<void> _hardDeleteOrder(Order order) async {
+    final confirm = await _confirmDialog(
+        'Permanently delete order ${order.orderId}?\n\nThis cannot be undone.');
+    if (confirm != true) return;
+    await _orderRepo.hardDelete(order.id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Order permanently deleted'),
+        backgroundColor: AppColors.error,
+      ));
+    }
+    await _load();
+  }
+
+  Future<void> _hardDeleteProduct(Product product) async {
+    final confirm = await _confirmDialog(
+        'Permanently delete "${product.name}"?\n\nThis cannot be undone.');
+    if (confirm != true) return;
+    await _productRepo.hardDelete(product.id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Product permanently deleted'),
+        backgroundColor: AppColors.error,
+      ));
+    }
+    await _load();
+  }
+
+  Future<bool?> _confirmDialog(String message) => showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      title: const Text('Confirm', style: TextStyle(color: AppColors.white)),
+      content: Text(message,
+          style: const TextStyle(color: AppColors.whiteSecondary)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel',
+              style: TextStyle(color: AppColors.whiteTertiary)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Delete Forever',
+              style: TextStyle(color: AppColors.error)),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.sidebar,
+        title: const Text('Recycle Bin',
+            style: TextStyle(color: AppColors.gold, fontWeight: FontWeight.w600)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: AppColors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: AppColors.whiteTertiary),
+            tooltip: 'Refresh',
+            onPressed: _load,
+          ),
+        ],
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: AppColors.gold,
+          unselectedLabelColor: AppColors.whiteTertiary,
+          indicatorColor: AppColors.gold,
+          tabs: [
+            Tab(text: 'Orders (${_deletedOrders.length})'),
+            Tab(text: 'Products (${_deletedProducts.length})'),
+          ],
+        ),
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: AppColors.gold))
+          : TabBarView(
+              controller: _tabController,
+              children: [
+                _OrdersBin(),
+                _ProductsBin(),
+              ],
+            ),
+    );
+  }
+
+  // ── Deleted Orders Tab ────────────────────────────────────────────────────
+  Widget _OrdersBin() {
+    if (_deletedOrders.isEmpty) {
+      return _emptyState('No deleted orders', Icons.receipt_long_outlined);
+    }
+    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _deletedOrders.length,
+      itemBuilder: (_, i) {
+        final order = _deletedOrders[i];
+        return _BinCard(
+          title: order.orderId,
+          subtitle: order.customerName,
+          detail: currency.format(order.totalAmount),
+          badge: order.status.displayName,
+          badgeColor: order.status.color,
+          onRestore: () => _restoreOrder(order),
+          onDelete:  () => _hardDeleteOrder(order),
+        );
+      },
+    );
+  }
+
+  // ── Deleted Products Tab ──────────────────────────────────────────────────
+  Widget _ProductsBin() {
+    if (_deletedProducts.isEmpty) {
+      return _emptyState('No deleted products', Icons.inventory_2_outlined);
+    }
+    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: _deletedProducts.length,
+      itemBuilder: (_, i) {
+        final p = _deletedProducts[i];
+        return _BinCard(
+          title: p.name,
+          subtitle: p.category.displayName,
+          detail: currency.format(p.price),
+          badge: 'Stock was: ${p.stockQty}',
+          badgeColor: AppColors.whiteTertiary,
+          onRestore: () => _restoreProduct(p),
+          onDelete:  () => _hardDeleteProduct(p),
+        );
+      },
+    );
+  }
+
+  Widget _emptyState(String label, IconData icon) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 64, color: AppColors.whiteTertiary),
+        const SizedBox(height: 12),
+        Text(label,
+            style: const TextStyle(color: AppColors.whiteTertiary, fontSize: 16)),
+      ],
+    ),
+  );
+}
+
+// ── Reusable bin card ─────────────────────────────────────────────────────────
+class _BinCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final String detail;
+  final String badge;
+  final Color  badgeColor;
+  final VoidCallback onRestore;
+  final VoidCallback onDelete;
+
+  const _BinCard({
+    required this.title,
+    required this.subtitle,
+    required this.detail,
+    required this.badge,
+    required this.badgeColor,
+    required this.onRestore,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            // Icon
+            Container(
+              width: 42, height: 42,
+              decoration: BoxDecoration(
+                color: AppColors.error.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.delete_outline,
+                  color: AppColors.error, size: 20),
+            ),
+            const SizedBox(width: 12),
+            // Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: AppColors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14)),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          color: AppColors.whiteSecondary, fontSize: 12)),
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    Text(detail,
+                        style: const TextStyle(
+                            color: AppColors.gold,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(badge,
+                          style: TextStyle(
+                              color: badgeColor, fontSize: 10,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+            // Actions
+            Column(
+              children: [
+                _actionBtn(
+                  icon: Icons.restore,
+                  color: AppColors.success,
+                  tooltip: 'Restore',
+                  onTap: onRestore,
+                ),
+                const SizedBox(height: 6),
+                _actionBtn(
+                  icon: Icons.delete_forever,
+                  color: AppColors.error,
+                  tooltip: 'Delete Forever',
+                  onTap: onDelete,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _actionBtn({
+    required IconData icon,
+    required Color color,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) =>
+      Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(icon, color: color, size: 18),
+          ),
+        ),
+      );
+}

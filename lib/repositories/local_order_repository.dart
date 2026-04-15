@@ -1,3 +1,15 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// local_order_repository.dart — Soft-delete support
+// Changes:
+//   • getAll()     — filters WHERE is_deleted = 0
+//   • delete()     — soft-delete only (is_deleted=1, deleted_at=now)
+//   • getDeleted() — NEW: Recycle Bin for orders
+//   • restore()    — NEW: un-delete an order
+//   • hardDelete() — NEW: permanent purge
+//   • getNextOrderNumber() — now queries ALL orders (including deleted)
+//                            to prevent order ID reuse
+// ─────────────────────────────────────────────────────────────────────────────
+
 import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import '../models/order_model.dart';
@@ -14,12 +26,17 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   @override
   Future<List<Order>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
+    // Only return non-deleted orders
     final orderMaps = await database.query('orders',
-        where: 'user_id = ?', whereArgs: [userId], orderBy: 'order_date DESC');
+        where: 'user_id = ? AND is_deleted = 0',
+        whereArgs: [userId],
+        orderBy: 'order_date DESC');
 
     if (orderMaps.isEmpty && _queue.isOnline) {
       final cloudOrders = await _cloud.getOrders(userId);
       for (final o in cloudOrders) {
+        // Skip cloud orders that are soft-deleted
+        if ((o['is_deleted'] as int? ?? 0) == 1) continue;
         try {
           final exists = await database.query('orders',
               where: 'id = ?', whereArgs: [o['id']]);
@@ -33,6 +50,8 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
             'order_date':    o['order_date'],
             'notes':         o['notes'],
             'user_id':       userId,
+            'is_deleted':    0,
+            'deleted_at':    null,
           });
           final items = List<Map<String, dynamic>>.from(o['items'] ?? []);
           for (final item in items) {
@@ -52,7 +71,9 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
 
     final allOrders = await database.query('orders',
-        where: 'user_id = ?', whereArgs: [userId], orderBy: 'order_date DESC');
+        where: 'user_id = ? AND is_deleted = 0',
+        whereArgs: [userId],
+        orderBy: 'order_date DESC');
     final orders = <Order>[];
     for (final orderMap in allOrders) {
       final itemMaps = await database.query('order_items',
@@ -61,6 +82,52 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
     return orders;
   }, []);
+
+  // ── NEW: Get soft-deleted orders (Recycle Bin) ────────────────────────────
+  Future<List<Order>> getDeleted(String userId) => safeCall(() async {
+    final database = await db.database;
+    final orderMaps = await database.query('orders',
+        where: 'user_id = ? AND is_deleted = 1',
+        whereArgs: [userId],
+        orderBy: 'deleted_at DESC');
+    final orders = <Order>[];
+    for (final orderMap in orderMaps) {
+      final itemMaps = await database.query('order_items',
+          where: 'order_id = ?', whereArgs: [orderMap['id']]);
+      orders.add(_orderFromMap(orderMap, itemMaps.map(_itemFromMap).toList()));
+    }
+    return orders;
+  }, []);
+
+  // ── NEW: Restore a soft-deleted order ─────────────────────────────────────
+  Future<void> restore(String orderId) => safeVoidCall(() async {
+    final database = await db.database;
+    await database.update(
+      'orders',
+      {'is_deleted': 0, 'deleted_at': null},
+      where: 'id = ?',
+      whereArgs: [orderId],
+    );
+
+    final rows = await database.query('orders',
+        where: 'id = ?', whereArgs: [orderId]);
+    if (rows.isNotEmpty) {
+      final userId = rows.first['user_id'] as String;
+      final itemMaps = await database.query('order_items',
+          where: 'order_id = ?', whereArgs: [orderId]);
+      final itemsData = itemMaps.map((i) => _itemFromMap(i)).map((i) => _itemToMap(i, orderId)).toList();
+      final orderData = Map<String, dynamic>.from(rows.first);
+      if (_queue.isOnline) {
+        await _cloud.saveOrder(userId, orderData, itemsData);
+      } else {
+        await _queue.enqueue(
+          operation: 'save_order', collection: 'orders',
+          userId: userId, docId: orderId,
+          data: {...orderData, '_items': jsonEncode(itemsData)},
+        );
+      }
+    }
+  });
 
   @override
   Future<void> add(Order order, String userId) => safeVoidCall(() async {
@@ -112,8 +179,39 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
+  // ── Soft-delete (replaces hard delete) ────────────────────────────────────
   @override
   Future<void> delete(String orderId) => safeVoidCall(() async {
+    final database = await db.database;
+    final existing = await database.query('orders',
+        where: 'id = ?', whereArgs: [orderId]);
+    final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
+    final now = DateTime.now().toIso8601String();
+
+    await database.update(
+      'orders',
+      {'is_deleted': 1, 'deleted_at': now},
+      where: 'id = ?',
+      whereArgs: [orderId],
+    );
+
+    if (userId.isNotEmpty) {
+      if (_queue.isOnline) {
+        await _cloud.softDeleteOrder(userId, orderId, now);
+      } else {
+        await _queue.enqueue(
+          operation:  'soft_delete_order',
+          collection: 'orders',
+          userId:     userId,
+          docId:      orderId,
+          data:       {'id': orderId, 'is_deleted': 1, 'deleted_at': now},
+        );
+      }
+    }
+  });
+
+  // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  Future<void> hardDelete(String orderId) => safeVoidCall(() async {
     final database = await db.database;
     final existing = await database.query('orders',
         where: 'id = ?', whereArgs: [orderId]);
@@ -136,14 +234,13 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
+  // ── getNextOrderNumber queries ALL orders (inc. deleted) to prevent ID reuse
   @override
   Future<int> getNextOrderNumber(String userId) => safeCall(() async {
     final database = await db.database;
-    // FIX 2: Dati COUNT(*) — kung nag-delete ng order, mauulit ang number.
-    // Ngayon MAX — palagi itong tumataas, hindi na mauulit kahit may na-delete.
     final result = await database.rawQuery(
-        "SELECT COALESCE(MAX(CAST(SUBSTR(order_id, 5) AS INTEGER)), 0) + 1 AS next_num "
-        "FROM orders WHERE user_id = ?",
+        'SELECT COALESCE(MAX(CAST(SUBSTR(order_id, 5) AS INTEGER)), 0) + 1 AS next_num '
+        'FROM orders WHERE user_id = ?',
         [userId]);
     return (result.first['next_num'] as int? ?? 1);
   }, 1);
@@ -157,6 +254,8 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     'order_date':    o.orderDate.toIso8601String(),
     'notes':         o.notes,
     'user_id':       userId,
+    'is_deleted':    0,
+    'deleted_at':    null,
   };
 
   Map<String, dynamic> _itemToMap(OrderItem item, String orderId) => {

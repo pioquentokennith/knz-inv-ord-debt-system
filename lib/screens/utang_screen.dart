@@ -7,6 +7,7 @@ import '../models/debt_model.dart';
 import '../widgets/shared_widgets.dart';
 import '../dialogs/utang_payment_dialog.dart';   // ← FIX 5
 import '../dialogs/utang_receipt_printer.dart';   // ← FIX 5
+import '../dialogs/export_dialog.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UtangScreen — FIX 5 + FIX 6 applied
@@ -177,7 +178,16 @@ class _UtangHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SectionHeader(title: '💳  Utang Tracker'),
+          Row(
+            children: [
+              const Expanded(child: SectionHeader(title: '💳  Utang Tracker')),
+              IconButton(
+                icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary),
+                tooltip: 'Export Utang',
+                onPressed: () => showExportDialog(context, ExportType.debts),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
           Row(
             children: [

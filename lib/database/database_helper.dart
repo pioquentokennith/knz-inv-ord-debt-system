@@ -1,3 +1,12 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// database_helper.dart — v4: Soft-delete support
+// Changes from v3:
+//   • products  — added is_deleted INTEGER DEFAULT 0, deleted_at TEXT
+//   • orders    — added is_deleted INTEGER DEFAULT 0, deleted_at TEXT
+//   • debts     — added is_deleted INTEGER DEFAULT 0, deleted_at TEXT
+//   • onUpgrade — v3→v4 migration adds the new columns safely
+// ─────────────────────────────────────────────────────────────────────────────
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -17,7 +26,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 3,  // bumped to 3 para ma-add ang sync_queue table
+      version: 4, // bumped to 4 — soft-delete columns
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
@@ -49,7 +58,9 @@ class DatabaseHelper {
         min_stock_level INTEGER NOT NULL DEFAULT 5,
         image_path TEXT,
         created_at TEXT NOT NULL,
-        user_id TEXT NOT NULL
+        user_id TEXT NOT NULL,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT
       )
     ''');
 
@@ -62,7 +73,9 @@ class DatabaseHelper {
         status TEXT NOT NULL,
         order_date TEXT NOT NULL,
         notes TEXT,
-        user_id TEXT NOT NULL
+        user_id TEXT NOT NULL,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT
       )
     ''');
 
@@ -86,7 +99,9 @@ class DatabaseHelper {
         total_amount REAL NOT NULL,
         amount_paid REAL NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
-        user_id TEXT NOT NULL
+        user_id TEXT NOT NULL,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT
       )
     ''');
 
@@ -111,8 +126,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // Sync queue — nag-iimbak ng pending Firestore operations
-    // kapag walang internet
     await db.execute('''
       CREATE TABLE sync_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +145,6 @@ class DatabaseHelper {
       try { await db.execute('ALTER TABLE users ADD COLUMN is_synced INTEGER NOT NULL DEFAULT 0'); } catch (_) {}
     }
     if (oldVersion < 3) {
-      // Add sync_queue table sa existing database
       try {
         await db.execute('''
           CREATE TABLE IF NOT EXISTS sync_queue (
@@ -146,6 +158,19 @@ class DatabaseHelper {
           )
         ''');
       } catch (_) {}
+    }
+    if (oldVersion < 4) {
+      // Soft-delete columns — safe to run on any existing DB
+      for (final stmt in [
+        'ALTER TABLE products ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE products ADD COLUMN deleted_at TEXT',
+        'ALTER TABLE orders  ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE orders  ADD COLUMN deleted_at TEXT',
+        'ALTER TABLE debts   ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE debts   ADD COLUMN deleted_at TEXT',
+      ]) {
+        try { await db.execute(stmt); } catch (_) {}
+      }
     }
   }
 }
