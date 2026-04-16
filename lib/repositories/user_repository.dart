@@ -11,7 +11,7 @@ abstract class UserRepository {
 
   /// [email] is optional — concrete repo decides whether to persist it.
   Future<bool> register(String name, String username, String password,
-      {String email});
+      {String email = ''});
 
   Future<bool> resetPassword(String username, String newPassword);
   Future<bool> usernameExists(String username);

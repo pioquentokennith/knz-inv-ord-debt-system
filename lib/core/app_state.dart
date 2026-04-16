@@ -99,8 +99,8 @@ class AppState extends ChangeNotifier {
   double get totalDebtAmount => _debts.fold(0.0, (s, d) => s + d.remainingBalance);
 
   double get avgOrderValue {
-    final valid = _orders.where((o) => o.status != OrderStatus.cancelled).toList();
-    return valid.isEmpty ? 0 : totalRevenue / valid.length;
+    final delivered = _orders.where((o) => o.status == OrderStatus.delivered).toList();
+    return delivered.isEmpty ? 0 : totalRevenue / delivered.length;
   }
 
   Map<OrderStatus, int> get ordersByStatus => {
