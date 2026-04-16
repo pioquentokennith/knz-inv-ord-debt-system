@@ -63,6 +63,10 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
   }
 
   Future<void> _restoreOrder(Order order) async {
+    final confirm = await _restoreDialog(
+        'Restore order ${order.orderId}?',
+        'This will move it back to your active Orders list.');
+    if (confirm != true) return;
     await _orderRepo.restore(order.id);
     await AppState().refreshData();
     if (mounted) {
@@ -75,6 +79,10 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
   }
 
   Future<void> _restoreProduct(Product product) async {
+    final confirm = await _restoreDialog(
+        'Restore "${product.name}"?',
+        'This will move it back to your active Inventory list.');
+    if (confirm != true) return;
     await _productRepo.restore(product.id);
     await AppState().refreshData();
     if (mounted) {
@@ -113,6 +121,49 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     }
     await _load();
   }
+
+  Future<bool?> _restoreDialog(String title, String message) => showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      title: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: AppColors.success.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Icon(Icons.restore, color: AppColors.success, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(title,
+              style: const TextStyle(color: AppColors.white, fontSize: 15)),
+        ),
+      ]),
+      content: Text(message,
+          style: const TextStyle(color: AppColors.whiteSecondary, fontSize: 13)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel',
+              style: TextStyle(color: AppColors.whiteTertiary)),
+        ),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppColors.success,
+            foregroundColor: AppColors.white,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8)),
+          ),
+          icon: const Icon(Icons.restore, size: 16),
+          label: const Text('Yes, Restore'),
+          onPressed: () => Navigator.pop(context, true),
+        ),
+      ],
+    ),
+  );
 
   Future<bool?> _confirmDialog(String message) => showDialog<bool>(
     context: context,

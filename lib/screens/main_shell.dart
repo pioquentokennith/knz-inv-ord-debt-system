@@ -117,31 +117,41 @@ class MainShellState extends State<MainShell>
   }
 
   Widget _buildTopBar() {
+    // SafeArea top — prevents overlap with the system status bar
+    final topPadding = MediaQuery.of(context).padding.top;
     return Container(
-      height: 56,
       color: AppColors.sidebar,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.menu, color: AppColors.gold),
-            onPressed: () {
-              setState(() => _sidebarOpen = true);
-              _drawerCtrl.forward();
-            },
-          ),
-          const SizedBox(width: 8),
-          Text(AppStrings.appName, style: AppTextStyles.brandName.copyWith(fontSize: 22)),
-          const SizedBox(width: 6),
-          Text(AppStrings.appSubtitle,
-              style: AppTextStyles.brandSubtitle.copyWith(fontSize: 9)),
-        ],
+      padding: EdgeInsets.only(
+        top: topPadding,
+        left: 8,
+        right: 8,
+      ),
+      child: SizedBox(
+        height: 56,
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.menu, color: AppColors.gold),
+              onPressed: () {
+                setState(() => _sidebarOpen = true);
+                _drawerCtrl.forward();
+              },
+            ),
+            const SizedBox(width: 8),
+            Text(AppStrings.appName, style: AppTextStyles.brandName.copyWith(fontSize: 22)),
+            const SizedBox(width: 6),
+            Text(AppStrings.appSubtitle,
+                style: AppTextStyles.brandSubtitle.copyWith(fontSize: 9)),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildSidebar() {
     final state = AppState();
+    // Use SafeArea so sidebar content clears the status bar on narrow layout
+    final topPadding = MediaQuery.of(context).padding.top;
     return Container(
       width: 240,
       decoration: const BoxDecoration(
@@ -152,7 +162,7 @@ class MainShellState extends State<MainShell>
       ),
       child: Column(
         children: [
-          const SizedBox(height: 32),
+          SizedBox(height: topPadding + 16),
           FadeInLeft(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
