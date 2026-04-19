@@ -128,6 +128,22 @@ class _ProductDialogState extends State<ProductDialog> {
 
     setState(() => _isSaving = true);
 
+    // ── Confirmation prompt ───────────────────────────────────────────────
+    final actionLabel = _isEditing ? 'Save Changes' : 'Add Product';
+    final confirmed = await showConfirmDialog(
+      context,
+      title: _isEditing ? 'Save Changes?' : 'Add Product?',
+      message: _isEditing
+          ? 'Save changes to "$name"?'
+          : 'Add "$name" to inventory?',
+      confirmLabel: actionLabel,
+    );
+    if (!confirmed || !mounted) {
+      setState(() => _isSaving = false);
+      return;
+    }
+    // ── END Confirmation ──────────────────────────────────────────────────
+
     try {
       if (_isEditing) {
         final updated = widget.existing!.copyWith(

@@ -110,6 +110,14 @@ class _EditStockDialogState extends State<EditStockDialog> {
                     height: 44,
                     onPressed: () async {
                       final v = int.tryParse(_ctrl.text) ?? 0;
+                      final confirmed = await showConfirmDialog(
+                        context,
+                        title: 'Update Stock',
+                        message:
+                            'Set stock for "${widget.product.name}" to $v units?',
+                        confirmLabel: 'Update',
+                      );
+                      if (!confirmed || !context.mounted) return;
                       await AppState().updateStock(widget.product.id, v);
                       if (context.mounted) Navigator.pop(context);
                     },

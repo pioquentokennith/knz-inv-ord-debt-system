@@ -103,6 +103,19 @@ class _OrderDialogState extends State<OrderDialog> {
     }
 
     final state = AppState();
+
+    // ── Confirmation prompt ───────────────────────────────────────────────
+    final currency2 = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Create Order?',
+      message:
+          'Create order for $customer with ${_cart.length} item(s) totaling ${currency2.format(_cartTotal)}?',
+      confirmLabel: 'Create Order',
+    );
+    if (!confirmed || !mounted) return;
+    // ── END Confirmation ──────────────────────────────────────────────────
+
     final items = _cart
         .map((e) => OrderItem(
               id: const Uuid().v4(),

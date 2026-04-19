@@ -51,7 +51,8 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
   }
 
   Future<void> _submit() async {
-    final amount = double.tryParse(_amountCtrl.text.trim());
+    final amountText = _amountCtrl.text.trim();
+    final amount = double.tryParse(amountText);
     if (amount == null || amount <= 0) {
       setState(() => _error = 'Please enter a valid amount.');
       return;
@@ -75,6 +76,18 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
         return;
       }
     }
+
+    // ── Confirmation prompt ───────────────────────────────────────────────
+    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Confirm Payment',
+      message:
+          'Record a ${_method} payment of ${currency.format(amount)} for ${widget.debt.customerName}?',
+      confirmLabel: 'Yes, Confirm',
+    );
+    if (!confirmed || !mounted) return;
+    // ── END Confirmation ──────────────────────────────────────────────────
 
     final note = _method == 'GCash'
         ? 'GCash | Ref: ${_refCtrl.text.trim()} | No: ${_gcashNumCtrl.text.trim()} | ${_gcashNameCtrl.text.trim()}'

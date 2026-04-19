@@ -438,3 +438,45 @@ class SectionHeader extends StatelessWidget {
     );
   }
 }
+
+// ── Reusable confirmation dialog helper ──────────────────────────────────────
+/// Returns true if the user confirmed, false/null if cancelled.
+Future<bool> showConfirmDialog(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String confirmLabel = 'Confirm',
+  String cancelLabel  = 'Cancel',
+  Color? confirmColor,
+}) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      title: Text(title,
+          style: const TextStyle(
+              color: AppColors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 16)),
+      content: Text(message,
+          style: const TextStyle(
+              color: AppColors.whiteSecondary, fontSize: 14)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text(cancelLabel,
+              style: const TextStyle(color: AppColors.whiteTertiary)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text(confirmLabel,
+              style: TextStyle(
+                  color: confirmColor ?? AppColors.gold,
+                  fontWeight: FontWeight.w700)),
+        ),
+      ],
+    ),
+  );
+  return result == true;
+}

@@ -91,6 +91,18 @@ class _OrdersScreenState extends State<OrdersScreen> {
     );
 
     if (result == null) return;
+
+    // ── Confirmation prompt ───────────────────────────────────────────────
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Update Status?',
+      message:
+          'Change status of ${order.orderId} to "${result.displayName}"?',
+      confirmLabel: 'Update',
+    );
+    if (!confirmed || !mounted) return;
+    // ── END Confirmation ──────────────────────────────────────────────────
+
     await AppState().updateOrderStatus(order.id, result);
 
     if (result == OrderStatus.utang && mounted) {
