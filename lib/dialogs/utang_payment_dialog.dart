@@ -83,7 +83,7 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
       context,
       title: 'Confirm Payment',
       message:
-          'Record a ${_method} payment of ${currency.format(amount)} for ${widget.debt.customerName}?',
+          'Record a $_method payment of ${currency.format(amount)} for ${widget.debt.customerName}?',
       confirmLabel: 'Yes, Confirm',
     );
     if (!confirmed || !mounted) return;

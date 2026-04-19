@@ -292,15 +292,15 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
           : TabBarView(
               controller: _tabController,
               children: [
-                _OrdersBin(),
-                _ProductsBin(),
+                _ordersBin(),
+                _productsBin(),
               ],
             ),
     );
   }
 
   // ── Deleted Orders Tab ────────────────────────────────────────────────────
-  Widget _OrdersBin() {
+  Widget _ordersBin() {
     final list = _filteredOrders;
     if (list.isEmpty) {
       return _emptyState(
@@ -328,7 +328,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
   }
 
   // ── Deleted Products Tab ──────────────────────────────────────────────────
-  Widget _ProductsBin() {
+  Widget _productsBin() {
     final list = _filteredProducts;
     if (list.isEmpty) {
       return _emptyState(

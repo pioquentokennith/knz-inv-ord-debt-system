@@ -551,14 +551,14 @@ class _PrintPanelState extends State<_PrintPanel> {
   // ── Build ESC/POS bytes for 58mm paper ────────────────────────────────
   Future<List<int>> _buildReceiptBytes() async {
     final profile = await CapabilityProfile.load();
-    final gen    = Generator(PaperSize.mm58, profile);
-    final cur    = NumberFormat.currency(symbol: 'P', decimalDigits: 2);
-    final dateFmt = DateFormat('MM/dd/yyyy hh:mm a');
+    final gen     = Generator(PaperSize.mm58, profile);
+    final cur     = NumberFormat.currency(symbol: 'P', decimalDigits: 2);
+    final dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
 
     List<int> bytes = [];
 
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    // ── Header ─────────────────────────────────────────────────────
+    bytes += gen.emptyLines(1);
     bytes += gen.text('KNZ SCENT',
         styles: const PosStyles(
             align: PosAlign.center,
@@ -567,62 +567,52 @@ class _PrintPanelState extends State<_PrintPanel> {
             width: PosTextSize.size2));
     bytes += gen.text('Luxury Fragrance House',
         styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    bytes += gen.feed(1);
     bytes += gen.text('OFFICIAL RECEIPT',
         styles: const PosStyles(align: PosAlign.center, bold: true));
-    bytes += gen.text('--------------------------------',
-        styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.emptyLines(1);
+    bytes += gen.hr();
 
+    // ── Order Info ─────────────────────────────────────────────────
     bytes += gen.row([
-      PosColumn(text: 'Order ID  :', width: 5),
+      PosColumn(text: 'Order ID :', width: 5),
       PosColumn(
           text: widget.order.orderId,
           width: 7,
           styles: const PosStyles(bold: true)),
     ]);
     bytes += gen.row([
-      PosColumn(text: 'Customer  :', width: 5),
+      PosColumn(text: 'Customer :', width: 5),
       PosColumn(text: widget.order.customerName, width: 7),
     ]);
     bytes += gen.row([
-      PosColumn(text: 'Date      :', width: 5),
+      PosColumn(text: 'Date     :', width: 5),
       PosColumn(text: dateFmt.format(widget.order.orderDate), width: 7),
     ]);
     bytes += gen.row([
-      PosColumn(text: 'Status    :', width: 5),
+      PosColumn(text: 'Status   :', width: 5),
       PosColumn(
           text: widget.order.status.displayName.toUpperCase(),
           width: 7,
           styles: const PosStyles(bold: true)),
     ]);
+    bytes += gen.hr();
 
-    bytes += gen.text('--------------------------------',
-        styles: const PosStyles(align: PosAlign.center));
-
+    // ── Items Header ───────────────────────────────────────────────
     bytes += gen.row([
-      PosColumn(
-          text: 'Item',
-          width: 6,
-          styles: const PosStyles(bold: true, underline: true)),
-      PosColumn(
-          text: 'Qty',
-          width: 2,
-          styles: const PosStyles(
-              bold: true, underline: true, align: PosAlign.center)),
-      PosColumn(
-          text: 'Amount',
-          width: 4,
-          styles: const PosStyles(
-              bold: true, underline: true, align: PosAlign.right)),
+      PosColumn(text: 'Item', width: 6,
+          styles: const PosStyles(bold: true)),
+      PosColumn(text: 'Qty', width: 2,
+          styles: const PosStyles(bold: true, align: PosAlign.center)),
+      PosColumn(text: 'Amount', width: 4,
+          styles: const PosStyles(bold: true, align: PosAlign.right)),
     ]);
+    bytes += gen.hr(ch: '-');
 
+    // ── Items ──────────────────────────────────────────────────────
     for (final item in widget.order.items) {
-      final name = item.productName.length > 18
-          ? '${item.productName.substring(0, 16)}..'
+      final name = item.productName.length > 16
+          ? '${item.productName.substring(0, 14)}..'
           : item.productName;
-
       bytes += gen.row([
         PosColumn(text: name, width: 6),
         PosColumn(
@@ -634,17 +624,12 @@ class _PrintPanelState extends State<_PrintPanel> {
             width: 4,
             styles: const PosStyles(align: PosAlign.right)),
       ]);
-      bytes += gen.row([
-        PosColumn(
-            text: '  @ ${cur.format(item.unitPrice)} each',
-            width: 12,
-            styles: const PosStyles(fontType: PosFontType.fontB)),
-      ]);
+      bytes += gen.text('  @ ${cur.format(item.unitPrice)} each',
+          styles: const PosStyles(fontType: PosFontType.fontB));
     }
 
-    bytes += gen.text('--------------------------------',
-        styles: const PosStyles(align: PosAlign.center));
-
+    // ── Total ──────────────────────────────────────────────────────
+    bytes += gen.hr();
     bytes += gen.row([
       PosColumn(
           text: 'TOTAL:',
@@ -663,23 +648,22 @@ class _PrintPanelState extends State<_PrintPanel> {
               width: PosTextSize.size2)),
     ]);
 
+    // ── Notes ──────────────────────────────────────────────────────
     if (widget.order.notes != null && widget.order.notes!.isNotEmpty) {
-      bytes += gen.text('--------------------------------',
-          styles: const PosStyles(align: PosAlign.center));
+      bytes += gen.hr(ch: '-');
       bytes += gen.text('Note:', styles: const PosStyles(bold: true));
       bytes += gen.text(widget.order.notes!,
           styles: const PosStyles(fontType: PosFontType.fontB));
     }
 
-    bytes += gen.emptyLines(1);
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    // ── Footer ─────────────────────────────────────────────────────
+    bytes += gen.feed(1);
+    bytes += gen.hr();
     bytes += gen.text('Thank you for your purchase!',
         styles: const PosStyles(align: PosAlign.center, bold: true));
     bytes += gen.text('KNZ Scent',
         styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    bytes += gen.hr();
     bytes += gen.emptyLines(3);
     bytes += gen.cut();
 

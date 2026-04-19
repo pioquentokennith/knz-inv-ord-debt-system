@@ -93,6 +93,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (result == null) return;
 
     // ── Confirmation prompt ───────────────────────────────────────────────
+    if (!mounted) return;
     final confirmed = await showConfirmDialog(
       context,
       title: 'Update Status?',

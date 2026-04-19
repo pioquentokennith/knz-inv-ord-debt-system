@@ -439,12 +439,12 @@ class _UtangBtPrintPanelState extends State<_UtangBtPrintPanel> {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     final cur     = NumberFormat.currency(symbol: 'P', decimalDigits: 2);
-    final dateFmt = DateFormat('MM/dd/yyyy hh:mm a');
+    final dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
     final debt    = widget.debt;
     List<int> bytes = [];
 
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    // ── Header ─────────────────────────────────────────────────────
+    bytes += gen.emptyLines(1);
     bytes += gen.text('KNZ SCENT',
         styles: const PosStyles(
             align: PosAlign.center,
@@ -453,52 +453,48 @@ class _UtangBtPrintPanelState extends State<_UtangBtPrintPanel> {
             width: PosTextSize.size2));
     bytes += gen.text('Luxury Fragrance House',
         styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    bytes += gen.feed(1);
     bytes += gen.text('UTANG STATEMENT',
         styles: const PosStyles(align: PosAlign.center, bold: true));
-    bytes += gen.text('--------------------------------',
-        styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.emptyLines(1);
+    bytes += gen.hr();
 
+    // ── Customer Info ──────────────────────────────────────────────
     bytes += gen.row([
-      PosColumn(text: 'Customer:', width: 5),
+      PosColumn(text: 'Customer :', width: 5),
       PosColumn(
           text: debt.customerName,
           width: 7,
-          styles: const PosStyles(bold: true))
+          styles: const PosStyles(bold: true)),
     ]);
     bytes += gen.row([
-      PosColumn(text: 'Order ID:', width: 5),
-      PosColumn(text: debt.orderId, width: 7)
+      PosColumn(text: 'Order ID :', width: 5),
+      PosColumn(text: debt.orderId, width: 7),
     ]);
     bytes += gen.row([
-      PosColumn(text: 'Date:', width: 5),
-      PosColumn(
-          text: dateFmt.format(debt.createdAt), width: 7)
+      PosColumn(text: 'Date     :', width: 5),
+      PosColumn(text: dateFmt.format(debt.createdAt), width: 7),
     ]);
+    bytes += gen.hr();
 
-    bytes += gen.text('--------------------------------',
-        styles: const PosStyles(align: PosAlign.center));
+    // ── Amounts ────────────────────────────────────────────────────
     bytes += gen.row([
       PosColumn(text: 'Order Total:', width: 6),
       PosColumn(
           text: cur.format(debt.totalAmount),
           width: 6,
-          styles: const PosStyles(align: PosAlign.right))
+          styles: const PosStyles(align: PosAlign.right)),
     ]);
     bytes += gen.row([
       PosColumn(text: 'Total Paid:', width: 6),
       PosColumn(
           text: cur.format(debt.amountPaid),
           width: 6,
-          styles: const PosStyles(align: PosAlign.right))
+          styles: const PosStyles(align: PosAlign.right)),
     ]);
-    bytes += gen.text('--------------------------------',
-        styles: const PosStyles(align: PosAlign.center));
+    bytes += gen.hr();
 
-    final balanceLabel =
-        debt.isPaid ? 'FULLY PAID:' : 'BALANCE DUE:';
+    // ── Balance / Fully Paid ───────────────────────────────────────
+    final balanceLabel = debt.isPaid ? 'FULLY PAID:' : 'BALANCE DUE:';
     bytes += gen.row([
       PosColumn(
           text: balanceLabel,
@@ -517,11 +513,12 @@ class _UtangBtPrintPanelState extends State<_UtangBtPrintPanel> {
               width: PosTextSize.size2)),
     ]);
 
+    // ── Payment History ────────────────────────────────────────────
     if (debt.payments.isNotEmpty) {
-      bytes += gen.text('--------------------------------',
-          styles: const PosStyles(align: PosAlign.center));
+      bytes += gen.hr();
       bytes += gen.text('Payment History:',
           styles: const PosStyles(bold: true));
+      bytes += gen.hr(ch: '-');
       for (final p in debt.payments) {
         bytes += gen.row([
           PosColumn(
@@ -530,28 +527,26 @@ class _UtangBtPrintPanelState extends State<_UtangBtPrintPanel> {
           PosColumn(
               text: cur.format(p.amount),
               width: 5,
-              styles:
-                  const PosStyles(align: PosAlign.right)),
+              styles: const PosStyles(align: PosAlign.right)),
         ]);
         if (p.note != null && p.note!.isNotEmpty) {
           bytes += gen.text('  ${p.note!}',
-              styles: const PosStyles(
-                  fontType: PosFontType.fontB));
+              styles: const PosStyles(fontType: PosFontType.fontB));
         }
       }
     }
 
-    bytes += gen.emptyLines(1);
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    // ── Footer ─────────────────────────────────────────────────────
+    bytes += gen.feed(1);
+    bytes += gen.hr();
     bytes += gen.text('Pakibayad po ang inyong balanse.',
         styles: const PosStyles(align: PosAlign.center));
     bytes += gen.text('Salamat! - KNZ Scent',
         styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.text('================================',
-        styles: const PosStyles(align: PosAlign.center));
+    bytes += gen.hr();
     bytes += gen.emptyLines(3);
     bytes += gen.cut();
+
     return bytes;
   }
 
