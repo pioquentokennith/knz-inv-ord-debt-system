@@ -33,6 +33,26 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
   List<Product> _deletedProducts = [];
   bool _isLoading = true;
 
+  // ── Search ────────────────────────────────────────────────────────────────
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+
+  List<Order> get _filteredOrders {
+    if (_searchQuery.isEmpty) return _deletedOrders;
+    final q = _searchQuery.toLowerCase();
+    return _deletedOrders.where((o) =>
+      o.orderId.toLowerCase().contains(q) ||
+      o.customerName.toLowerCase().contains(q)).toList();
+  }
+
+  List<Product> get _filteredProducts {
+    if (_searchQuery.isEmpty) return _deletedProducts;
+    final q = _searchQuery.toLowerCase();
+    return _deletedProducts.where((p) =>
+      p.name.toLowerCase().contains(q) ||
+      p.category.displayName.toLowerCase().contains(q)).toList();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -43,6 +63,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -206,15 +227,64 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
             onPressed: _load,
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: AppColors.gold,
-          unselectedLabelColor: AppColors.whiteTertiary,
-          indicatorColor: AppColors.gold,
-          tabs: [
-            Tab(text: 'Orders (${_deletedOrders.length})'),
-            Tab(text: 'Products (${_deletedProducts.length})'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(96),
+          child: Column(
+            children: [
+              // ── Search Bar ──────────────────────────────────────────────
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: TextField(
+                  controller: _searchCtrl,
+                  onChanged: (v) => setState(() => _searchQuery = v.trim()),
+                  style: const TextStyle(color: AppColors.white, fontSize: 14),
+                  decoration: InputDecoration(
+                    hintText: 'Search by name, ID, category...',
+                    hintStyle: const TextStyle(
+                        color: AppColors.whiteTertiary, fontSize: 13),
+                    prefixIcon: const Icon(Icons.search,
+                        color: AppColors.whiteTertiary, size: 18),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.close,
+                                color: AppColors.whiteTertiary, size: 16),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: AppColors.inputFill,
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 8, horizontal: 12),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: AppColors.cardBorder)),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: AppColors.cardBorder)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: AppColors.gold)),
+                  ),
+                ),
+              ),
+              // ── Tabs ────────────────────────────────────────────────────
+              TabBar(
+                controller: _tabController,
+                labelColor: AppColors.gold,
+                unselectedLabelColor: AppColors.whiteTertiary,
+                indicatorColor: AppColors.gold,
+                tabs: [
+                  Tab(text: 'Orders (${_filteredOrders.length})'),
+                  Tab(text: 'Products (${_filteredProducts.length})'),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
       body: _isLoading
@@ -231,15 +301,19 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
 
   // ── Deleted Orders Tab ────────────────────────────────────────────────────
   Widget _OrdersBin() {
-    if (_deletedOrders.isEmpty) {
-      return _emptyState('No deleted orders', Icons.receipt_long_outlined);
+    final list = _filteredOrders;
+    if (list.isEmpty) {
+      return _emptyState(
+        _searchQuery.isEmpty ? 'No deleted orders' : 'No results for "$_searchQuery"',
+        Icons.receipt_long_outlined,
+      );
     }
     final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _deletedOrders.length,
+      itemCount: list.length,
       itemBuilder: (_, i) {
-        final order = _deletedOrders[i];
+        final order = list[i];
         return _BinCard(
           title: order.orderId,
           subtitle: order.customerName,
@@ -255,15 +329,19 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
 
   // ── Deleted Products Tab ──────────────────────────────────────────────────
   Widget _ProductsBin() {
-    if (_deletedProducts.isEmpty) {
-      return _emptyState('No deleted products', Icons.inventory_2_outlined);
+    final list = _filteredProducts;
+    if (list.isEmpty) {
+      return _emptyState(
+        _searchQuery.isEmpty ? 'No deleted products' : 'No results for "$_searchQuery"',
+        Icons.inventory_2_outlined,
+      );
     }
     final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _deletedProducts.length,
+      itemCount: list.length,
       itemBuilder: (_, i) {
-        final p = _deletedProducts[i];
+        final p = list[i];
         return _BinCard(
           title: p.name,
           subtitle: p.category.displayName,

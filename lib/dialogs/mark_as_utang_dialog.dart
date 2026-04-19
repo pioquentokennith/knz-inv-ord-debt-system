@@ -14,6 +14,7 @@ import '../core/app_state.dart';
 import '../models/debt_model.dart';
 import '../models/order_model.dart';
 import '../screens/main_shell.dart';
+import '../widgets/shared_widgets.dart';
 
 class MarkAsUtangDialog extends StatefulWidget {
   final Order order;
@@ -78,6 +79,21 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
           'Amount must be less than total (₱${_orderTotal.toStringAsFixed(2)}) to record as utang.');
       return;
     }
+
+    // ── Confirmation prompt ───────────────────────────────────────────────
+    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    final remaining = _orderTotal - initialPaid;
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Record Utang?',
+      message:
+          'Record ₱${remaining.toStringAsFixed(2)} utang for ${widget.order.customerName} (${widget.order.orderId})?'
+          '${initialPaid > 0 ? '\n\nInitial payment: ${currency.format(initialPaid)}' : ''}',
+      confirmLabel: 'Yes, Record',
+      confirmColor: AppColors.warning,
+    );
+    if (!confirmed || !mounted) return;
+    // ── END Confirmation ──────────────────────────────────────────────────
 
     final debt = CustomerDebt(
       id:           _uuid.v4(),
