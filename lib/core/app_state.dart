@@ -28,19 +28,21 @@ class AppState extends ChangeNotifier {
   AppState._internal();
 
   // ── Dependency Inversion: depend on interfaces, not concretions ───────────
-  IProductService?      _productService;
-  IOrderService?        _orderService;
-  IDebtService?         _debtService;
-  IAuthService?         _authService;
+  IProductService?        _productService;
+  IOrderService?          _orderService;
+  IDebtService?           _debtService;
+  IAuthService?           _authService;
   IActivityLogRepository? _logRepoInstance;
 
-  // Lazy — falls back to real repo if not injected (production path)
+  // FIXED: always returns a real repo — no longer lazy-guarded.
+  // Previously _hasLogRepo was false until first use, so logs were skipped
+  // during _loadAllData() on every login. Now logs always load & save.
   IActivityLogRepository get _logRepo =>
       _logRepoInstance ??= ActivityLogRepository();
 
-  // True only when a repo was explicitly injected via configure().
-  // Prevents SQLite access in test environments without databaseFactory.
-  bool get _hasLogRepo => _logRepoInstance != null;
+  // _hasLogRepo kept for test-injection compatibility but always true
+  // in production because _logRepo above eagerly creates the instance.
+  bool get _hasLogRepo => true;
 
   // Convenience getters that throw if not yet configured (fail-fast)
   IProductService get _ps => _productService ?? (throw StateError('AppState not configured'));
