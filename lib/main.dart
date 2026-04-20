@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -23,6 +24,10 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // ── Crashlytics: disable in debug to keep production dashboard clean ──
+  await FirebaseCrashlytics.instance
+      .setCrashlyticsCollectionEnabled(!kDebugMode);
 
   // ── Crashlytics: catch Flutter framework errors (widget build, etc.) ──
   FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
