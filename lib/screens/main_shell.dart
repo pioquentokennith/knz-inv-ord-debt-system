@@ -89,9 +89,12 @@ class MainShellState extends State<MainShell>
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 768;
 
-    // Wrap the entire shell in a GestureDetector so any tap/drag resets
-    // the inactivity timer (HitTestBehavior.translucent passes touches through).
-    return GestureDetector(
+    // Wrap the entire shell in a Listener + GestureDetector so any touch,
+    // drag, OR keyboard-triggered pointer event resets the inactivity timer.
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => SessionTimeoutService.instance.bump(),
+      child: GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap:       () => SessionTimeoutService.instance.bump(),
       onPanUpdate: (_) => SessionTimeoutService.instance.bump(),
@@ -99,7 +102,7 @@ class MainShellState extends State<MainShell>
         backgroundColor: AppColors.background,
         body: isWide ? _buildWideLayout() : _buildNarrowLayout(),
       ),
-    );
+    ));
   }
 
   Widget _buildWideLayout() {

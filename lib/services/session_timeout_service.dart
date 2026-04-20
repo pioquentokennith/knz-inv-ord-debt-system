@@ -20,6 +20,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dart:async';
+import 'dart:ui' show VoidCallback;
 
 class SessionTimeoutService {
   SessionTimeoutService._();
@@ -67,7 +68,3 @@ class SessionTimeoutService {
   /// True if the service is currently watching for inactivity.
   bool get isRunning => _timer != null;
 }
-
-/// A convenience typedef matching Flutter's VoidCallback so callers
-/// don't need to import anything extra.
-typedef VoidCallback = void Function();

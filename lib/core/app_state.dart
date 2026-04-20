@@ -520,8 +520,8 @@ class AppState extends ChangeNotifier {
       timestamp: now,
       type:      type,
     );
-    _activityLogs = [log, if (_activityLogs.length < 500) ..._activityLogs
-        else ..._activityLogs.take(499)];
+    _activityLogs = [log, if (_activityLogs.length < 50) ..._activityLogs
+        else ..._activityLogs.take(49)];
     _logRepo.add(log, _activeUser);
   }
 }
