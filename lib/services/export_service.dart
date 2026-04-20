@@ -10,7 +10,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:csv/csv.dart';
-import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -20,6 +19,7 @@ import 'package:share_plus/share_plus.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/debt_model.dart';
+import '../core/app_constants.dart';
 
 class ExportService {
   ExportService._();
@@ -72,7 +72,7 @@ class ExportService {
     }
     await _csvShare(rows,
         'knz_orders_${_dateFormat.format(DateTime.now())}.csv',
-        'KNZ Scent — Orders Export');
+        '${AppStrings.appName} — Orders Export');
   }
 
   static Future<void> exportInventoryCsv(List<Product> products) async {
@@ -94,7 +94,7 @@ class ExportService {
     }
     await _csvShare(rows,
         'knz_inventory_${_dateFormat.format(DateTime.now())}.csv',
-        'KNZ Scent — Inventory Export');
+        '${AppStrings.appName} — Inventory Export');
   }
 
   static Future<void> exportDebtsCsv(List<CustomerDebt> debts) async {
@@ -116,7 +116,7 @@ class ExportService {
     }
     await _csvShare(rows,
         'knz_utang_${_dateFormat.format(DateTime.now())}.csv',
-        'KNZ Scent — Utang Export');
+        '${AppStrings.appName} — Utang Export');
   }
 
   // ════════════════════════════════════════════════════════════════════════════
@@ -131,7 +131,7 @@ class ExportService {
         .save();
     await _pdfShare(bytes,
         'knz_orders_${_dateFormat.format(DateTime.now())}.pdf',
-        'KNZ Scent — Orders Report');
+        '${AppStrings.appName} — Orders Report');
   }
 
   static Future<void> exportInventoryPdf(List<Product> products,
@@ -141,7 +141,7 @@ class ExportService {
         await _buildInventoryPdf(products, businessName: businessName).save();
     await _pdfShare(bytes,
         'knz_inventory_${_dateFormat.format(DateTime.now())}.pdf',
-        'KNZ Scent — Inventory Report');
+        '${AppStrings.appName} — Inventory Report');
   }
 
   static Future<void> exportDebtsPdf(List<CustomerDebt> debts,
@@ -151,35 +151,36 @@ class ExportService {
         await _buildDebtsPdf(debts, businessName: businessName).save();
     await _pdfShare(bytes,
         'knz_utang_${_dateFormat.format(DateTime.now())}.pdf',
-        'KNZ Scent — Utang Report');
+        '${AppStrings.appName} — Utang Report');
   }
 
   // ════════════════════════════════════════════════════════════════════════════
   // PDF — print
   // ════════════════════════════════════════════════════════════════════════════
 
+  /// FIX: Removed unused [context] parameter — Printing.layoutPdf doesn't need it.
   static Future<void> printOrdersPdf(List<Order> orders,
-      {required String businessName, required BuildContext context}) async {
+      {required String businessName}) async {
     await _ensureFonts();
     final pdf = _buildOrdersPdf(orders, businessName: businessName);
     await Printing.layoutPdf(
-        onLayout: (_) async => pdf.save(), name: 'KNZ Orders Report');
+        onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Orders Report');
   }
 
   static Future<void> printInventoryPdf(List<Product> products,
-      {required String businessName, required BuildContext context}) async {
+      {required String businessName}) async {
     await _ensureFonts();
     final pdf = _buildInventoryPdf(products, businessName: businessName);
     await Printing.layoutPdf(
-        onLayout: (_) async => pdf.save(), name: 'KNZ Inventory Report');
+        onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Inventory Report');
   }
 
   static Future<void> printDebtsPdf(List<CustomerDebt> debts,
-      {required String businessName, required BuildContext context}) async {
+      {required String businessName}) async {
     await _ensureFonts();
     final pdf = _buildDebtsPdf(debts, businessName: businessName);
     await Printing.layoutPdf(
-        onLayout: (_) async => pdf.save(), name: 'KNZ Utang Report');
+        onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Utang Report');
   }
 
   // ════════════════════════════════════════════════════════════════════════════

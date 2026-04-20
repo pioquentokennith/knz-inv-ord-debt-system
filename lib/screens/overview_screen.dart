@@ -75,7 +75,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                           ),
                           const SizedBox(height: 4),
                           const Text(
-                            'KNZ Scent Admin Dashboard',
+                            '${AppStrings.appName} Admin Dashboard',
                             style: TextStyle(
                                 color: AppColors.whiteTertiary,
                                 fontSize: 13),

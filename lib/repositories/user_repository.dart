@@ -10,8 +10,9 @@ abstract class UserRepository {
   Future<AppUser?> login(String username, String password);
 
   /// [email] is optional — concrete repo decides whether to persist it.
+  /// FIX: Use String? to match LocalUserRepository's nullable override.
   Future<bool> register(String name, String username, String password,
-      {String email = ''});
+      {String? email});
 
   Future<bool> resetPassword(String username, String newPassword);
   Future<bool> usernameExists(String username);

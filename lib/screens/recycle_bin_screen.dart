@@ -11,10 +11,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../models/debt_model.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
-import '../repositories/local_order_repository.dart';
-import '../repositories/local_product_repository.dart';
 
 class RecycleBinScreen extends StatefulWidget {
   const RecycleBinScreen({super.key});
@@ -26,11 +25,11 @@ class RecycleBinScreen extends StatefulWidget {
 class _RecycleBinScreenState extends State<RecycleBinScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
-  final _orderRepo   = LocalOrderRepository();
-  final _productRepo = LocalProductRepository();
+  final _appState = AppState();
 
-  List<Order>   _deletedOrders   = [];
-  List<Product> _deletedProducts = [];
+  List<Order>        _deletedOrders   = [];
+  List<Product>      _deletedProducts = [];
+  List<CustomerDebt> _deletedDebts    = [];
   bool _isLoading = true;
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -53,10 +52,18 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
       p.category.displayName.toLowerCase().contains(q)).toList();
   }
 
+  List<CustomerDebt> get _filteredDebts {
+    if (_searchQuery.isEmpty) return _deletedDebts;
+    final q = _searchQuery.toLowerCase();
+    return _deletedDebts.where((d) =>
+      d.customerName.toLowerCase().contains(q) ||
+      d.orderId.toLowerCase().contains(q)).toList();
+  }
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this); // FIX: was 2, now 3 tabs
     _load();
   }
 
@@ -69,15 +76,16 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
 
   Future<void> _load() async {
     setState(() => _isLoading = true);
-    final userId = AppState().activeUser;
     final results = await Future.wait([
-      _orderRepo.getDeleted(userId),
-      _productRepo.getDeleted(userId),
+      _appState.getDeletedOrders(),
+      _appState.getDeletedProducts(),
+      _appState.getDeletedDebts(),
     ]);
     if (mounted) {
       setState(() {
         _deletedOrders   = results[0] as List<Order>;
         _deletedProducts = results[1] as List<Product>;
+        _deletedDebts    = results[2] as List<CustomerDebt>;
         _isLoading       = false;
       });
     }
@@ -88,8 +96,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
         'Restore order ${order.orderId}?',
         'This will move it back to your active Orders list.');
     if (confirm != true) return;
-    await _orderRepo.restore(order.id);
-    await AppState().refreshData();
+    await _appState.restoreOrder(order.id);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Order ${order.orderId} restored'),
@@ -104,8 +111,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
         'Restore "${product.name}"?',
         'This will move it back to your active Inventory list.');
     if (confirm != true) return;
-    await _productRepo.restore(product.id);
-    await AppState().refreshData();
+    await _appState.restoreProduct(product.id);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('"${product.name}" restored'),
@@ -119,7 +125,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     final confirm = await _confirmDialog(
         'Permanently delete order ${order.orderId}?\n\nThis cannot be undone.');
     if (confirm != true) return;
-    await _orderRepo.hardDelete(order.id);
+    await _appState.hardDeleteOrder(order.id);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Order permanently deleted'),
@@ -133,10 +139,39 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     final confirm = await _confirmDialog(
         'Permanently delete "${product.name}"?\n\nThis cannot be undone.');
     if (confirm != true) return;
-    await _productRepo.hardDelete(product.id);
+    await _appState.hardDeleteProduct(product.id);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Product permanently deleted'),
+        backgroundColor: AppColors.error,
+      ));
+    }
+    await _load();
+  }
+
+  Future<void> _restoreDebt(CustomerDebt debt) async {
+    final confirm = await _restoreDialog(
+        'Restore utang for ${debt.customerName}?',
+        'This will move it back to your active Utang list.');
+    if (confirm != true) return;
+    await _appState.restoreDebt(debt.id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Utang for ${debt.customerName} restored'),
+        backgroundColor: AppColors.success,
+      ));
+    }
+    await _load();
+  }
+
+  Future<void> _hardDeleteDebt(CustomerDebt debt) async {
+    final confirm = await _confirmDialog(
+        'Permanently delete utang for ${debt.customerName}?\n\nThis cannot be undone.');
+    if (confirm != true) return;
+    await _appState.hardDeleteDebt(debt.id);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Utang record permanently deleted'),
         backgroundColor: AppColors.error,
       ));
     }
@@ -281,6 +316,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
                 tabs: [
                   Tab(text: 'Orders (${_filteredOrders.length})'),
                   Tab(text: 'Products (${_filteredProducts.length})'),
+                  Tab(text: 'Utang (${_filteredDebts.length})'),
                 ],
               ),
             ],
@@ -294,6 +330,7 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
               children: [
                 _ordersBin(),
                 _productsBin(),
+                _debtsBin(),
               ],
             ),
     );
@@ -350,6 +387,38 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
           badgeColor: AppColors.whiteTertiary,
           onRestore: () => _restoreProduct(p),
           onDelete:  () => _hardDeleteProduct(p),
+        );
+      },
+    );
+  }
+
+  // ── Deleted Debts Tab — FIX: debts now have recycle bin support ───────────
+  Widget _debtsBin() {
+    final list = _filteredDebts;
+    if (list.isEmpty) {
+      return _emptyState(
+        _searchQuery.isEmpty ? 'No deleted utang records' : 'No results for "$_searchQuery"',
+        Icons.account_balance_wallet_outlined,
+      );
+    }
+    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: list.length,
+      itemBuilder: (_, i) {
+        final d = list[i];
+        final statusLabel = d.isPaid ? 'Paid' : d.isOverdue ? 'Overdue' : 'Unpaid';
+        final statusColor = d.isPaid
+            ? AppColors.success
+            : d.isOverdue ? AppColors.error : AppColors.warning;
+        return _BinCard(
+          title: d.customerName,
+          subtitle: 'Order: ${d.orderId}',
+          detail: currency.format(d.remainingBalance),
+          badge: statusLabel,
+          badgeColor: statusColor,
+          onRestore: () => _restoreDebt(d),
+          onDelete:  () => _hardDeleteDebt(d),
         );
       },
     );

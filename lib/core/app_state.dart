@@ -27,11 +27,17 @@ class AppState extends ChangeNotifier {
   AppState._internal();
 
   // ── Dependency Inversion: depend on interfaces, not concretions ───────────
-  late final IProductService _productService;
-  late final IOrderService   _orderService;
-  late final IDebtService    _debtService;
-  late final IAuthService    _authService;
+  IProductService? _productService;
+  IOrderService?   _orderService;
+  IDebtService?    _debtService;
+  IAuthService?    _authService;
   final _logRepo = ActivityLogRepository();
+
+  // Convenience getters that throw if not yet configured (fail-fast)
+  IProductService get _ps => _productService ?? (throw StateError('AppState not configured'));
+  IOrderService   get _os => _orderService   ?? (throw StateError('AppState not configured'));
+  IDebtService    get _ds => _debtService    ?? (throw StateError('AppState not configured'));
+  IAuthService    get _as => _authService    ?? (throw StateError('AppState not configured'));
 
   void configure({
     IProductService? productService,
@@ -48,6 +54,16 @@ class AppState extends ChangeNotifier {
     _orderService   = orderService   ?? OrderService(orderRepo, productRepo);
     _debtService    = debtService    ?? DebtService(debtRepo);
     _authService    = authService    ?? AuthService(userRepo);
+  }
+
+  /// FIX: Reset services so a different user's login gets fresh repo instances.
+  /// Call this before configure() when switching accounts.
+  void reset() {
+    _productService = null;
+    _orderService   = null;
+    _debtService    = null;
+    _authService    = null;
+    logout();
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -141,7 +157,7 @@ class AppState extends ChangeNotifier {
   Future<bool> login(String username, String password) async {
     _setLoading(true);
     try {
-      final user = await _authService.login(username, password);
+      final user = await _as.login(username, password);
       if (user == null) { _setLoading(false); return false; }
       _activeUser  = username.toLowerCase();
       _currentUser = user;
@@ -156,14 +172,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<bool> register(String name, String username, String password,
-      {String confirm = '', String email = ''}) async {
+      {String confirm = '', String? email}) async {
     _setLoading(true);
     try {
-      final error = await _authService.register(
+      final error = await _as.register(
           name, username, password,
-          confirm.isEmpty ? password : confirm, email);
+          confirm.isEmpty ? password : confirm, email ?? '');
       if (error != null) { _setLoading(false); return false; }
-      final user = await _authService.login(username, password);
+      final user = await _as.login(username, password);
       // FIX 1: null-check — kung null ang user, huwag i-proceed (crash prevention)
       if (user == null) { _setLoading(false); return false; }
       _activeUser  = username.toLowerCase();
@@ -182,7 +198,7 @@ class AppState extends ChangeNotifier {
   Future<bool> resetPassword(String username, String newPassword) async {
     try {
       final error =
-          await _authService.resetPassword(username, newPassword, newPassword);
+          await _as.resetPassword(username, newPassword, newPassword);
       if (error == null) _addLogSilent('Password reset for: $username', 'auth');
       return error == null;
     } catch (_) {
@@ -203,9 +219,9 @@ class AppState extends ChangeNotifier {
   Future<void> _loadAllData() async {
     try {
       final results = await Future.wait([
-        _productService.getAll(_activeUser),
-        _orderService.getAll(_activeUser),
-        _debtService.getAll(_activeUser),
+        _ps.getAll(_activeUser),
+        _os.getAll(_activeUser),
+        _ds.getAll(_activeUser),
         _logRepo.getAll(_activeUser),
       ]);
       _products     = results[0] as List<Product>;
@@ -225,7 +241,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> addProduct(Product product) async {
     try {
-      await _productService.addProduct(
+      await _ps.addProduct(
         userId:        _activeUser,
         name:          product.name,
         description:   product.description,
@@ -235,9 +251,10 @@ class AppState extends ChangeNotifier {
         minStockLevel: product.minStockLevel,
         imagePath:     product.imagePath,
       );
-      _products = await _productService.getAll(_activeUser);
+      _products = await _ps.getAll(_activeUser);
       _addLogSilent('Product "${product.name}" added', 'product');
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -245,15 +262,16 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateProduct(Product updated) async {
     try {
-      await _productService.updateProduct(updated);
+      await _ps.updateProduct(updated);
       final idx = _products.indexWhere((p) => p.id == updated.id);
       if (idx != -1) {
         _products = List.of(_products)..[idx] = updated;
       } else {
-        _products = await _productService.getAll(_activeUser);
+        _products = await _ps.getAll(_activeUser);
       }
       _addLogSilent('Product "${updated.name}" updated', 'product');
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -261,7 +279,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateStock(String productId, int newQty) async {
     try {
-      await _productService.updateStock(productId, newQty);
+      await _ps.updateStock(productId, newQty);
       final idx = _products.indexWhere((p) => p.id == productId);
       if (idx != -1) {
         // FIX 7: Dati direktang binabago ang object (_products[idx].stockQty = newQty).
@@ -270,7 +288,8 @@ class AppState extends ChangeNotifier {
         _products = List.of(_products)..[idx] = _products[idx].copyWith(stockQty: newQty);
         _addLogSilent('Stock updated for "${_products[idx].name}"', 'stock');
       }
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -279,10 +298,11 @@ class AppState extends ChangeNotifier {
   Future<void> deleteProduct(String productId) async {
     try {
       final product = _products.firstWhere((p) => p.id == productId);
-      await _productService.deleteProduct(productId);
+      await _ps.deleteProduct(productId);
       _products = _products.where((p) => p.id != productId).toList();
       _addLogSilent('Product "${product.name}" removed', 'product');
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -303,9 +323,9 @@ class AppState extends ChangeNotifier {
   /// ```
   Future<bool> addOrder(Order order, {void Function(String)? onError}) async {
     try {
-      await _orderService.createOrder(order, _activeUser, _products);
-      _products = await _productService.getAll(_activeUser);
-      _orders   = await _orderService.getAll(_activeUser);
+      await _os.createOrder(order, _activeUser, _products);
+      _products = await _ps.getAll(_activeUser);
+      _orders   = await _os.getAll(_activeUser);
       _addLogSilent(
           'New order ${order.orderId} created for ${order.customerName}',
           'order');
@@ -321,13 +341,14 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
     try {
-      await _orderService.updateStatus(orderId, status);
+      await _os.updateStatus(orderId, status);
       final idx = _orders.indexWhere((o) => o.id == orderId);
       if (idx != -1) {
         _orders = List.of(_orders)..[idx] = _orders[idx].copyWith(status: status);
       }
       _addLogSilent('Order status updated → ${status.displayName}', 'order');
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -335,9 +356,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteOrder(String orderId) async {
     try {
-      await _orderService.deleteOrder(orderId);
+      await _os.deleteOrder(orderId);
       _orders = _orders.where((o) => o.id != orderId).toList();
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -345,9 +367,98 @@ class AppState extends ChangeNotifier {
 
   Future<String> generateOrderId() async {
     try {
-      return await _orderService.generateOrderId(_activeUser);
+      return await _os.generateOrderId(_activeUser);
     } catch (_) {
       return 'KNZ-001';
+    }
+  }
+
+  // ── Recycle Bin (routes through AppState for DIP consistency) ────────────
+
+  /// Returns all soft-deleted orders for the current user.
+  Future<List<Order>> getDeletedOrders() async {
+    try {
+      final repo = LocalOrderRepository();
+      return await repo.getDeleted(_activeUser);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Returns all soft-deleted products for the current user.
+  Future<List<Product>> getDeletedProducts() async {
+    try {
+      final repo = LocalProductRepository();
+      return await repo.getDeleted(_activeUser);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> restoreOrder(String orderId) async {
+    try {
+      final repo = LocalOrderRepository();
+      await repo.restore(orderId);
+      await refreshData();
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
+    }
+  }
+
+  Future<void> restoreProduct(String productId) async {
+    try {
+      final repo = LocalProductRepository();
+      await repo.restore(productId);
+      await refreshData();
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
+    }
+  }
+
+  Future<void> hardDeleteOrder(String orderId) async {
+    try {
+      final repo = LocalOrderRepository();
+      await repo.hardDelete(orderId);
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
+    }
+  }
+
+  Future<void> hardDeleteProduct(String productId) async {
+    try {
+      final repo = LocalProductRepository();
+      await repo.hardDelete(productId);
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
+    }
+  }
+
+  /// Returns all soft-deleted debts for the current user.
+  Future<List<CustomerDebt>> getDeletedDebts() async {
+    try {
+      final repo = LocalDebtRepository();
+      return await repo.getDeleted(_activeUser);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<void> restoreDebt(String debtId) async {
+    try {
+      final repo = LocalDebtRepository();
+      await repo.restore(debtId);
+      await refreshData();
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] restoreDebt: $e\n$st');
+    }
+  }
+
+  Future<void> hardDeleteDebt(String debtId) async {
+    try {
+      final repo = LocalDebtRepository();
+      await repo.hardDelete(debtId);
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] hardDeleteDebt: $e\n$st');
     }
   }
 
@@ -356,7 +467,7 @@ class AppState extends ChangeNotifier {
   /// FIX 4: [onError] callback — same pattern as addOrder().
   Future<bool> addDebt(CustomerDebt debt, {void Function(String)? onError}) async {
     try {
-      await _debtService.addDebt(debt, _activeUser);
+      await _ds.addDebt(debt, _activeUser);
       _debts = [debt, ..._debts];
       _addLogSilent(
         'Utang recorded for ${debt.customerName} — '
@@ -376,11 +487,12 @@ class AppState extends ChangeNotifier {
   Future<void> addPayment(String debtId, PaymentRecord payment) async {
     try {
       final debt = _debts.firstWhere((d) => d.id == debtId);
-      await _debtService.addPayment(debtId, payment, debt.remainingBalance);
-      _debts = await _debtService.getAll(_activeUser);
+      await _ds.addPayment(debtId, payment, debt.remainingBalance);
+      _debts = await _ds.getAll(_activeUser);
       _addLogSilent(
           'Payment ₱${payment.amount.toStringAsFixed(2)} received', 'payment');
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -388,9 +500,10 @@ class AppState extends ChangeNotifier {
 
   Future<void> deleteDebt(String debtId) async {
     try {
-      await _debtService.deleteDebt(debtId);
+      await _ds.deleteDebt(debtId);
       _debts = _debts.where((d) => d.id != debtId).toList();
-    } catch (_) {
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] $e\n$st');
     } finally {
       _batchNotify();
     }

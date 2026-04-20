@@ -70,33 +70,107 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       }
     }
 
-    final allOrders = await database.query('orders',
-        where: 'user_id = ? AND is_deleted = 0',
-        whereArgs: [userId],
-        orderBy: 'order_date DESC');
-    final orders = <Order>[];
-    for (final orderMap in allOrders) {
-      final itemMaps = await database.query('order_items',
-          where: 'order_id = ?', whereArgs: [orderMap['id']]);
-      orders.add(_orderFromMap(orderMap, itemMaps.map(_itemFromMap).toList()));
+    // FIX N+1: Single JOIN query instead of 1 query per order
+    final joinRows = await database.rawQuery('''
+      SELECT
+        o.id          AS o_id,
+        o.order_id    AS o_order_id,
+        o.customer_name AS o_customer_name,
+        o.total_amount  AS o_total_amount,
+        o.status        AS o_status,
+        o.order_date    AS o_order_date,
+        o.notes         AS o_notes,
+        oi.id           AS oi_id,
+        oi.product_id   AS oi_product_id,
+        oi.product_name AS oi_product_name,
+        oi.unit_price   AS oi_unit_price,
+        oi.quantity     AS oi_quantity
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.user_id = ? AND o.is_deleted = 0
+      ORDER BY o.order_date DESC
+    ''', [userId]);
+
+    // Group rows by order id
+    final ordersMap = <String, Map<String, dynamic>>{};
+    final itemsMap  = <String, List<OrderItem>>{};
+    for (final row in joinRows) {
+      final oid = row['o_id'] as String;
+      ordersMap.putIfAbsent(oid, () => {
+        'id':            row['o_id'],
+        'order_id':      row['o_order_id'],
+        'customer_name': row['o_customer_name'],
+        'total_amount':  row['o_total_amount'],
+        'status':        row['o_status'],
+        'order_date':    row['o_order_date'],
+        'notes':         row['o_notes'],
+      });
+      if (row['oi_id'] != null) {
+        itemsMap.putIfAbsent(oid, () => []).add(_itemFromMap({
+          'id':           row['oi_id'],
+          'product_id':   row['oi_product_id'],
+          'product_name': row['oi_product_name'],
+          'unit_price':   row['oi_unit_price'],
+          'quantity':     row['oi_quantity'],
+        }));
+      }
     }
+    final orders = ordersMap.entries
+        .map((e) => _orderFromMap(e.value, itemsMap[e.key] ?? []))
+        .toList();
     return orders;
   }, []);
 
   // ── NEW: Get soft-deleted orders (Recycle Bin) ────────────────────────────
   Future<List<Order>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
-    final orderMaps = await database.query('orders',
-        where: 'user_id = ? AND is_deleted = 1',
-        whereArgs: [userId],
-        orderBy: 'deleted_at DESC');
-    final orders = <Order>[];
-    for (final orderMap in orderMaps) {
-      final itemMaps = await database.query('order_items',
-          where: 'order_id = ?', whereArgs: [orderMap['id']]);
-      orders.add(_orderFromMap(orderMap, itemMaps.map(_itemFromMap).toList()));
+    // FIX N+1: single JOIN query
+    final joinRows = await database.rawQuery('''
+      SELECT
+        o.id            AS o_id,
+        o.order_id      AS o_order_id,
+        o.customer_name AS o_customer_name,
+        o.total_amount  AS o_total_amount,
+        o.status        AS o_status,
+        o.order_date    AS o_order_date,
+        o.notes         AS o_notes,
+        oi.id           AS oi_id,
+        oi.product_id   AS oi_product_id,
+        oi.product_name AS oi_product_name,
+        oi.unit_price   AS oi_unit_price,
+        oi.quantity     AS oi_quantity
+      FROM orders o
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      WHERE o.user_id = ? AND o.is_deleted = 1
+      ORDER BY o.order_date DESC
+    ''', [userId]);
+
+    final ordersMap = <String, Map<String, dynamic>>{};
+    final itemsMap  = <String, List<OrderItem>>{};
+    for (final row in joinRows) {
+      final oid = row['o_id'] as String;
+      ordersMap.putIfAbsent(oid, () => {
+        'id':            row['o_id'],
+        'order_id':      row['o_order_id'],
+        'customer_name': row['o_customer_name'],
+        'total_amount':  row['o_total_amount'],
+        'status':        row['o_status'],
+        'order_date':    row['o_order_date'],
+        'notes':         row['o_notes'],
+      });
+      if (row['oi_id'] != null) {
+        itemsMap.putIfAbsent(oid, () => []).add(_itemFromMap({
+          'id':           row['oi_id'],
+          'product_id':   row['oi_product_id'],
+          'product_name': row['oi_product_name'],
+          'unit_price':   row['oi_unit_price'],
+          'quantity':     row['oi_quantity'],
+        }));
+      }
     }
-    return orders;
+    return ordersMap.entries
+        .map((e) => _orderFromMap(e.value, itemsMap[e.key] ?? []))
+        .toList();
   }, []);
 
   // ── NEW: Restore a soft-deleted order ─────────────────────────────────────

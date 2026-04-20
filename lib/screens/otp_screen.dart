@@ -42,7 +42,7 @@ class _OtpScreenState extends State<OtpScreen> {
   static String get _senderEmail =>
       dotenv.env['BREVO_SENDER_EMAIL'] ?? '';
   static String get _senderName =>
-      dotenv.env['BREVO_SENDER_NAME'] ?? 'KNZ Scent';
+      dotenv.env['BREVO_SENDER_NAME'] ?? AppStrings.appName;
 
   String _generatedOtp = '';
   int  _resendSeconds  = 0;
@@ -113,7 +113,7 @@ class _OtpScreenState extends State<OtpScreen> {
           'to': [
             {'email': widget.email}
           ],
-          'subject': 'Your KNZ Scent OTP Code',
+          'subject': 'Your ${AppStrings.appName} OTP Code',
           'htmlContent': '''
 <!DOCTYPE html>
 <html>
@@ -135,7 +135,7 @@ class _OtpScreenState extends State<OtpScreen> {
     </div>
     <div style="border-top: 1px solid #333; margin-top: 24px; padding-top: 16px; text-align: center;">
       <p style="color: #555; font-size: 11px; margin: 0;">This email was sent to ${widget.email}</p>
-      <p style="color: #555; font-size: 11px; margin: 4px 0 0;">© KNZ Scent — Luxury Fragrance House</p>
+      <p style="color: #555; font-size: 11px; margin: 4px 0 0;">© ${AppStrings.appName} — ${AppStrings.luxuryFragranceHouse}</p>
     </div>
   </div>
 </body>

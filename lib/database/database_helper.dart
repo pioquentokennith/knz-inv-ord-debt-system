@@ -26,7 +26,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 4, // bumped to 4 — soft-delete columns
+      version: 5, // v5 — added indexes for performance
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
@@ -137,6 +137,14 @@ class DatabaseHelper {
         created_at TEXT NOT NULL
       )
     ''');
+
+    // ── v5: Indexes — speed up WHERE clauses used in every getAll() call ────
+    await db.execute('CREATE INDEX idx_products_user    ON products(user_id, is_deleted)');
+    await db.execute('CREATE INDEX idx_orders_user      ON orders(user_id, is_deleted)');
+    await db.execute('CREATE INDEX idx_order_items_order ON order_items(order_id)');
+    await db.execute('CREATE INDEX idx_debts_user       ON debts(user_id, is_deleted)');
+    await db.execute('CREATE INDEX idx_payments_debt    ON payments(debt_id)');
+    await db.execute('CREATE INDEX idx_logs_user        ON activity_logs(user_id)');
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -168,6 +176,19 @@ class DatabaseHelper {
         'ALTER TABLE orders  ADD COLUMN deleted_at TEXT',
         'ALTER TABLE debts   ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
         'ALTER TABLE debts   ADD COLUMN deleted_at TEXT',
+      ]) {
+        try { await db.execute(stmt); } catch (_) {}
+      }
+    }
+    if (oldVersion < 5) {
+      // Add performance indexes — CREATE INDEX IF NOT EXISTS is safe to repeat
+      for (final stmt in [
+        'CREATE INDEX IF NOT EXISTS idx_products_user    ON products(user_id, is_deleted)',
+        'CREATE INDEX IF NOT EXISTS idx_orders_user      ON orders(user_id, is_deleted)',
+        'CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)',
+        'CREATE INDEX IF NOT EXISTS idx_debts_user       ON debts(user_id, is_deleted)',
+        'CREATE INDEX IF NOT EXISTS idx_payments_debt    ON payments(debt_id)',
+        'CREATE INDEX IF NOT EXISTS idx_logs_user        ON activity_logs(user_id)',
       ]) {
         try { await db.execute(stmt); } catch (_) {}
       }

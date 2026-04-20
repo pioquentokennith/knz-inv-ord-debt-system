@@ -43,10 +43,10 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportOrdersCsv(state.orders);
           } else if (format == 'pdf') {
             await ExportService.exportOrdersPdf(
-              state.orders, businessName: 'KNZ Scent');
+              state.orders, businessName: AppStrings.appName);
           } else {
             await ExportService.printOrdersPdf(
-              state.orders, businessName: 'KNZ Scent', context: context);
+              state.orders, businessName: AppStrings.appName);
           }
           break;
 
@@ -55,10 +55,10 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportInventoryCsv(state.products);
           } else if (format == 'pdf') {
             await ExportService.exportInventoryPdf(
-              state.products, businessName: 'KNZ Scent');
+              state.products, businessName: AppStrings.appName);
           } else {
             await ExportService.printInventoryPdf(
-              state.products, businessName: 'KNZ Scent', context: context);
+              state.products, businessName: AppStrings.appName);
           }
           break;
 
@@ -67,10 +67,10 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportDebtsCsv(state.debts);
           } else if (format == 'pdf') {
             await ExportService.exportDebtsPdf(
-              state.debts, businessName: 'KNZ Scent');
+              state.debts, businessName: AppStrings.appName);
           } else {
             await ExportService.printDebtsPdf(
-              state.debts, businessName: 'KNZ Scent', context: context);
+              state.debts, businessName: AppStrings.appName);
           }
           break;
       }

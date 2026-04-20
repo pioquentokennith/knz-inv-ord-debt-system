@@ -103,7 +103,7 @@ class _UtangReceiptPreview extends StatelessWidget {
                     const Icon(Icons.water_drop_outlined,
                         color: AppColors.gold, size: 30),
                     const SizedBox(height: 6),
-                    const Text('KNZ Scent',
+                    const Text(AppStrings.appName,
                         style: TextStyle(
                             color: AppColors.gold,
                             fontSize: 22,
@@ -277,7 +277,7 @@ class _UtangReceiptPreview extends StatelessWidget {
                       borderRadius: BorderRadius.vertical(
                           bottom: Radius.circular(16))),
                   child: const Text(
-                    'Pakibayad po ang inyong balanse.\nSalamat sa inyong tiwala! - KNZ Scent',
+                    'Pakibayad po ang inyong balanse.\nSalamat sa inyong tiwala! - ${AppStrings.appName}',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                         color: AppColors.whiteTertiary,
@@ -541,7 +541,7 @@ class _UtangBtPrintPanelState extends State<_UtangBtPrintPanel> {
     bytes += gen.hr();
     bytes += gen.text('Pakibayad po ang inyong balanse.',
         styles: const PosStyles(align: PosAlign.center));
-    bytes += gen.text('Salamat! - KNZ Scent',
+    bytes += gen.text('Salamat! - ${AppStrings.appName}',
         styles: const PosStyles(align: PosAlign.center));
     bytes += gen.hr();
     bytes += gen.emptyLines(3);

@@ -142,7 +142,7 @@ class _RegisterScreenState extends State<RegisterScreen>
             children: [
               Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 16),
               SizedBox(width: 8),
-              Text('Account created! Welcome to KNZ Scent.',
+              Text('Account created! Welcome to ${AppStrings.appName}.',
                   style: TextStyle(color: Colors.white)),
             ],
           ),

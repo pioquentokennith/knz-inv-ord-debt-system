@@ -132,7 +132,7 @@ class _PreviewHeader extends StatelessWidget {
         children: [
           Icon(Icons.water_drop_outlined, color: AppColors.gold, size: 32),
           SizedBox(height: 8),
-          Text('KNZ Scent',
+          Text(AppStrings.appName,
               style: TextStyle(
                   color: AppColors.gold,
                   fontSize: 24,
@@ -417,7 +417,7 @@ class _PreviewFooter extends StatelessWidget {
                   fontWeight: FontWeight.w500,
                   letterSpacing: 1)),
           SizedBox(height: 4),
-          Text('KNZ Scent — Luxury Fragrance House',
+          Text('${AppStrings.appName} — ${AppStrings.luxuryFragranceHouse}',
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: AppColors.whiteTertiary,
@@ -661,7 +661,7 @@ class _PrintPanelState extends State<_PrintPanel> {
     bytes += gen.hr();
     bytes += gen.text('Thank you for your purchase!',
         styles: const PosStyles(align: PosAlign.center, bold: true));
-    bytes += gen.text('KNZ Scent',
+    bytes += gen.text(AppStrings.appName,
         styles: const PosStyles(align: PosAlign.center));
     bytes += gen.hr();
     bytes += gen.emptyLines(3);

@@ -44,7 +44,7 @@ class KnzScentApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'KNZ Scent Admin',
+      title: '${AppStrings.appName} Admin',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
       home: const LoginScreen(),

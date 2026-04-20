@@ -49,15 +49,49 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
       }
     }
 
-    final allDebts = await database.query('debts',
-        where: 'user_id = ?', whereArgs: [userId], orderBy: 'created_at DESC');
-    final debts = <CustomerDebt>[];
-    for (final debtMap in allDebts) {
-      final paymentMaps = await database.query('payments',
-          where: 'debt_id = ?', whereArgs: [debtMap['id']], orderBy: 'paid_at ASC');
-      debts.add(_debtFromMap(debtMap, paymentMaps.map(_paymentFromMap).toList()));
+    // FIX N+1: single JOIN query instead of 1 query per debt
+    final joinRows = await database.rawQuery('''
+      SELECT
+        d.id            AS d_id,
+        d.customer_name AS d_customer_name,
+        d.order_id      AS d_order_id,
+        d.total_amount  AS d_total_amount,
+        d.amount_paid   AS d_amount_paid,
+        d.created_at    AS d_created_at,
+        p.id            AS p_id,
+        p.amount        AS p_amount,
+        p.paid_at       AS p_paid_at,
+        p.note          AS p_note
+      FROM debts d
+      LEFT JOIN payments p ON p.debt_id = d.id
+      WHERE d.user_id = ? AND (d.is_deleted IS NULL OR d.is_deleted = 0)
+      ORDER BY d.created_at DESC, p.paid_at ASC
+    ''', [userId]);
+
+    final debtsMap    = <String, Map<String, dynamic>>{};
+    final paymentsMap = <String, List<PaymentRecord>>{};
+    for (final row in joinRows) {
+      final did = row['d_id'] as String;
+      debtsMap.putIfAbsent(did, () => {
+        'id':            row['d_id'],
+        'customer_name': row['d_customer_name'],
+        'order_id':      row['d_order_id'],
+        'total_amount':  row['d_total_amount'],
+        'amount_paid':   row['d_amount_paid'],
+        'created_at':    row['d_created_at'],
+      });
+      if (row['p_id'] != null) {
+        paymentsMap.putIfAbsent(did, () => []).add(_paymentFromMap({
+          'id':      row['p_id'],
+          'amount':  row['p_amount'],
+          'paid_at': row['p_paid_at'],
+          'note':    row['p_note'],
+        }));
+      }
     }
-    return debts;
+    return debtsMap.entries
+        .map((e) => _debtFromMap(e.value, paymentsMap[e.key] ?? []))
+        .toList();
   }, []);
 
   @override
@@ -129,8 +163,112 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     }
   });
 
+  // ── Soft-delete (replaces hard delete) — FIX: debts now consistent with orders/products ──
   @override
   Future<void> delete(String debtId) => safeVoidCall(() async {
+    final database = await db.database;
+    final existing = await database.query('debts',
+        where: 'id = ?', whereArgs: [debtId]);
+    final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
+    final now = DateTime.now().toIso8601String();
+
+    // Soft-delete — mark as deleted, preserve data for RecycleBin
+    await database.update(
+      'debts',
+      {'is_deleted': 1, 'deleted_at': now},
+      where: 'id = ?',
+      whereArgs: [debtId],
+    );
+
+    if (userId.isNotEmpty) {
+      if (_queue.isOnline) {
+        await _cloud.softDeleteDebt(userId, debtId, now);
+      } else {
+        await _queue.enqueue(
+          operation:  'soft_delete_debt',
+          collection: 'debts',
+          userId:     userId,
+          docId:      debtId,
+          data:       {'id': debtId, 'is_deleted': 1, 'deleted_at': now},
+        );
+      }
+    }
+  });
+
+  // ── NEW: Get soft-deleted debts (Recycle Bin) ─────────────────────────────
+  Future<List<CustomerDebt>> getDeleted(String userId) => safeCall(() async {
+    final database = await db.database;
+    final joinRows = await database.rawQuery('''
+      SELECT
+        d.id            AS d_id,
+        d.customer_name AS d_customer_name,
+        d.order_id      AS d_order_id,
+        d.total_amount  AS d_total_amount,
+        d.amount_paid   AS d_amount_paid,
+        d.created_at    AS d_created_at,
+        p.id            AS p_id,
+        p.amount        AS p_amount,
+        p.paid_at       AS p_paid_at,
+        p.note          AS p_note
+      FROM debts d
+      LEFT JOIN payments p ON p.debt_id = d.id
+      WHERE d.user_id = ? AND d.is_deleted = 1
+      ORDER BY d.created_at DESC, p.paid_at ASC
+    ''', [userId]);
+
+    final debtsMap    = <String, Map<String, dynamic>>{};
+    final paymentsMap = <String, List<PaymentRecord>>{};
+    for (final row in joinRows) {
+      final did = row['d_id'] as String;
+      debtsMap.putIfAbsent(did, () => {
+        'id':            row['d_id'],
+        'customer_name': row['d_customer_name'],
+        'order_id':      row['d_order_id'],
+        'total_amount':  row['d_total_amount'],
+        'amount_paid':   row['d_amount_paid'],
+        'created_at':    row['d_created_at'],
+      });
+      if (row['p_id'] != null) {
+        paymentsMap.putIfAbsent(did, () => []).add(_paymentFromMap({
+          'id':      row['p_id'],
+          'amount':  row['p_amount'],
+          'paid_at': row['p_paid_at'],
+          'note':    row['p_note'],
+        }));
+      }
+    }
+    return debtsMap.entries
+        .map((e) => _debtFromMap(e.value, paymentsMap[e.key] ?? []))
+        .toList();
+  }, []);
+
+  // ── NEW: Restore a soft-deleted debt ──────────────────────────────────────
+  Future<void> restore(String debtId) => safeVoidCall(() async {
+    final database = await db.database;
+    await database.update(
+      'debts',
+      {'is_deleted': 0, 'deleted_at': null},
+      where: 'id = ?',
+      whereArgs: [debtId],
+    );
+
+    final rows = await database.query('debts', where: 'id = ?', whereArgs: [debtId]);
+    if (rows.isNotEmpty) {
+      final userId = rows.first['user_id'] as String;
+      final data   = Map<String, dynamic>.from(rows.first);
+      if (_queue.isOnline) {
+        await _cloud.saveDebt(userId, data, []);
+      } else {
+        await _queue.enqueue(
+          operation: 'save_debt', collection: 'debts',
+          userId: userId, docId: debtId, data: data,
+        );
+      }
+    }
+  });
+
+  // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  Future<void> hardDelete(String debtId) => safeVoidCall(() async {
     final database = await db.database;
     final existing = await database.query('debts',
         where: 'id = ?', whereArgs: [debtId]);
@@ -161,6 +299,8 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     'amount_paid':   d.amountPaid,
     'created_at':    d.createdAt.toIso8601String(),
     'user_id':       userId,
+    'is_deleted':    0,
+    'deleted_at':    null,
   };
 
   Map<String, dynamic> _paymentToMap(PaymentRecord p, String debtId) => {
