@@ -7,6 +7,7 @@
 //   • Polymorphism — safeCall<T> works for any return type via generics
 // ─────────────────────────────────────────────────────────────────────────────
 
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 import '../database/database_helper.dart';
 
@@ -36,15 +37,14 @@ abstract class BaseRepository {
     }
   }
 
-  /// Error hook — subclasses may override to plug in a crash reporter.
-  /// FIX 9: Dinagdag ang debugPrint para makita ang errors sa development builds.
-  /// Production: override at i-call ang FirebaseCrashlytics.instance.recordError().
+  /// Error hook — logs in debug, reports to Crashlytics in production.
   void _onError(Object error, StackTrace stackTrace) {
-    // ignore: avoid_print
     if (kDebugMode) {
       debugPrint('[BaseRepository] ERROR: $error');
       debugPrint('[BaseRepository] STACK: $stackTrace');
+    } else {
+      // Production: report to Firebase Crashlytics for monitoring.
+      FirebaseCrashlytics.instance.recordError(error, stackTrace, fatal: false);
     }
-    // FirebaseCrashlytics.instance.recordError(error, stackTrace);
   }
 }

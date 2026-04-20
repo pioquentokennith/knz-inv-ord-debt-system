@@ -13,7 +13,9 @@ class FirestoreSync {
   FirestoreSync._();
   static final FirestoreSync instance = FirestoreSync._();
 
-  final _fs = FirebaseFirestore.instance;
+  // Lazy getter — only accessed during actual sync, not at construction time.
+  // This prevents Firebase-not-initialized crashes during unit tests.
+  FirebaseFirestore get _fs => FirebaseFirestore.instance;
 
   CollectionReference get _users => _fs.collection('users');
   CollectionReference _products(String uid) =>

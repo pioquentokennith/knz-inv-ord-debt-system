@@ -1,17 +1,18 @@
-import '../models/user_model.dart';
+﻿import '../models/user_model.dart';
 import 'base_repository.dart';
 import 'firestore_sync.dart';
+import 'i_activity_log_repository.dart';
 
-class ActivityLogRepository extends BaseRepository {
-  final _cloud = FirestoreSync.instance;
+class ActivityLogRepository extends BaseRepository implements IActivityLogRepository {
+  FirestoreSync get _cloud => FirestoreSync.instance;
 
+  @override
   Future<List<ActivityLog>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
     final maps = await database.query('activity_logs',
         where: 'user_id = ?', whereArgs: [userId],
         orderBy: 'timestamp DESC', limit: 50);
 
-    // Restore from Firestore if empty
     if (maps.isEmpty) {
       final cloudLogs = await _cloud.getLogs(userId);
       for (final l in cloudLogs) {
@@ -43,10 +44,10 @@ class ActivityLogRepository extends BaseRepository {
     )).toList();
   }, []);
 
+  @override
   Future<void> add(ActivityLog log, String userId) => safeVoidCall(() async {
     final database = await db.database;
 
-    // 1. Save sa SQLite
     await database.insert('activity_logs', {
       'message':   log.message,
       'type':      log.type,
@@ -54,7 +55,6 @@ class ActivityLogRepository extends BaseRepository {
       'user_id':   userId,
     });
 
-    // Keep only top 50
     await database.rawDelete('''
       DELETE FROM activity_logs
       WHERE user_id = ? AND id NOT IN (
@@ -65,7 +65,6 @@ class ActivityLogRepository extends BaseRepository {
       )
     ''', [userId, userId]);
 
-    // 2. Sync sa Firestore
     await _cloud.saveLog(userId, {
       'id':        log.id,
       'message':   log.message,
@@ -74,5 +73,4 @@ class ActivityLogRepository extends BaseRepository {
       'user_id':   userId,
     });
   });
-
 }

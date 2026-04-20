@@ -25,6 +25,11 @@ abstract class IProductService {
   Future<void>    updateProduct(Product product);
   Future<String?> updateStock(String productId, int newQty);
   Future<void>    deleteProduct(String productId);
+
+  // Recycle-bin operations
+  Future<List<Product>> getDeleted(String userId);
+  Future<void>          restoreProduct(String productId);
+  Future<void>          hardDeleteProduct(String productId);
 }
 
 /// Concrete implementation — all business logic for products.
@@ -82,4 +87,13 @@ class ProductService implements IProductService {
 
   @override
   Future<void> deleteProduct(String productId) => _repo.delete(productId);
+
+  @override
+  Future<List<Product>> getDeleted(String userId) => _repo.getDeleted(userId);
+
+  @override
+  Future<void> restoreProduct(String productId) => _repo.restore(productId);
+
+  @override
+  Future<void> hardDeleteProduct(String productId) => _repo.hardDelete(productId);
 }

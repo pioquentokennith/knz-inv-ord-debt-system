@@ -11,11 +11,12 @@ import '../models/product_model.dart';
 import '../models/order_model.dart';
 import '../models/user_model.dart';
 import '../models/debt_model.dart';
+import '../repositories/local_user_repository.dart';
 import '../repositories/local_product_repository.dart';
 import '../repositories/local_order_repository.dart';
 import '../repositories/local_debt_repository.dart';
-import '../repositories/local_user_repository.dart';
 import '../repositories/activity_log_repository.dart';
+import '../repositories/i_activity_log_repository.dart';
 import '../services/product_service.dart';
 import '../services/order_service.dart';
 import '../services/debt_service.dart';
@@ -27,11 +28,19 @@ class AppState extends ChangeNotifier {
   AppState._internal();
 
   // ── Dependency Inversion: depend on interfaces, not concretions ───────────
-  IProductService? _productService;
-  IOrderService?   _orderService;
-  IDebtService?    _debtService;
-  IAuthService?    _authService;
-  final _logRepo = ActivityLogRepository();
+  IProductService?      _productService;
+  IOrderService?        _orderService;
+  IDebtService?         _debtService;
+  IAuthService?         _authService;
+  IActivityLogRepository? _logRepoInstance;
+
+  // Lazy — falls back to real repo if not injected (production path)
+  IActivityLogRepository get _logRepo =>
+      _logRepoInstance ??= ActivityLogRepository();
+
+  // True only when a repo was explicitly injected via configure().
+  // Prevents SQLite access in test environments without databaseFactory.
+  bool get _hasLogRepo => _logRepoInstance != null;
 
   // Convenience getters that throw if not yet configured (fail-fast)
   IProductService get _ps => _productService ?? (throw StateError('AppState not configured'));
@@ -40,11 +49,13 @@ class AppState extends ChangeNotifier {
   IAuthService    get _as => _authService    ?? (throw StateError('AppState not configured'));
 
   void configure({
-    IProductService? productService,
-    IOrderService?   orderService,
-    IDebtService?    debtService,
-    IAuthService?    authService,
+    IProductService?       productService,
+    IOrderService?         orderService,
+    IDebtService?          debtService,
+    IAuthService?          authService,
+    IActivityLogRepository? logRepository,   // injectable for tests
   }) {
+    if (logRepository != null) _logRepoInstance = logRepository;
     final productRepo = LocalProductRepository();
     final orderRepo   = LocalOrderRepository();
     final debtRepo    = LocalDebtRepository();
@@ -59,10 +70,11 @@ class AppState extends ChangeNotifier {
   /// FIX: Reset services so a different user's login gets fresh repo instances.
   /// Call this before configure() when switching accounts.
   void reset() {
-    _productService = null;
-    _orderService   = null;
-    _debtService    = null;
-    _authService    = null;
+    _productService  = null;
+    _orderService    = null;
+    _debtService     = null;
+    _authService     = null;
+    _logRepoInstance = null;
     logout();
   }
 
@@ -218,12 +230,16 @@ class AppState extends ChangeNotifier {
 
   Future<void> _loadAllData() async {
     try {
-      final results = await Future.wait([
+      final futures = <Future>[
         _ps.getAll(_activeUser),
         _os.getAll(_activeUser),
         _ds.getAll(_activeUser),
-        _logRepo.getAll(_activeUser),
-      ]);
+        if (_hasLogRepo)
+          _logRepo.getAll(_activeUser)
+        else
+          Future.value(<ActivityLog>[]),
+      ];
+      final results = await Future.wait(futures);
       _products     = results[0] as List<Product>;
       _orders       = results[1] as List<Order>;
       _debts        = results[2] as List<CustomerDebt>;
@@ -373,13 +389,12 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // ── Recycle Bin (routes through AppState for DIP consistency) ────────────
+  // ── Recycle Bin (fully DIP-compliant — routes through service interfaces) ─
 
   /// Returns all soft-deleted orders for the current user.
   Future<List<Order>> getDeletedOrders() async {
     try {
-      final repo = LocalOrderRepository();
-      return await repo.getDeleted(_activeUser);
+      return await _os.getDeleted(_activeUser);
     } catch (_) {
       return [];
     }
@@ -388,8 +403,7 @@ class AppState extends ChangeNotifier {
   /// Returns all soft-deleted products for the current user.
   Future<List<Product>> getDeletedProducts() async {
     try {
-      final repo = LocalProductRepository();
-      return await repo.getDeleted(_activeUser);
+      return await _ps.getDeleted(_activeUser);
     } catch (_) {
       return [];
     }
@@ -397,8 +411,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> restoreOrder(String orderId) async {
     try {
-      final repo = LocalOrderRepository();
-      await repo.restore(orderId);
+      await _os.restoreOrder(orderId);
       await refreshData();
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
@@ -407,8 +420,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> restoreProduct(String productId) async {
     try {
-      final repo = LocalProductRepository();
-      await repo.restore(productId);
+      await _ps.restoreProduct(productId);
       await refreshData();
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
@@ -417,8 +429,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> hardDeleteOrder(String orderId) async {
     try {
-      final repo = LocalOrderRepository();
-      await repo.hardDelete(orderId);
+      await _os.hardDeleteOrder(orderId);
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
     }
@@ -426,8 +437,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> hardDeleteProduct(String productId) async {
     try {
-      final repo = LocalProductRepository();
-      await repo.hardDelete(productId);
+      await _ps.hardDeleteProduct(productId);
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
     }
@@ -436,8 +446,7 @@ class AppState extends ChangeNotifier {
   /// Returns all soft-deleted debts for the current user.
   Future<List<CustomerDebt>> getDeletedDebts() async {
     try {
-      final repo = LocalDebtRepository();
-      return await repo.getDeleted(_activeUser);
+      return await _ds.getDeleted(_activeUser);
     } catch (_) {
       return [];
     }
@@ -445,8 +454,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> restoreDebt(String debtId) async {
     try {
-      final repo = LocalDebtRepository();
-      await repo.restore(debtId);
+      await _ds.restoreDebt(debtId);
       await refreshData();
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] restoreDebt: $e\n$st');
@@ -455,8 +463,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> hardDeleteDebt(String debtId) async {
     try {
-      final repo = LocalDebtRepository();
-      await repo.hardDelete(debtId);
+      await _ds.hardDeleteDebt(debtId);
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] hardDeleteDebt: $e\n$st');
     }
@@ -523,6 +530,6 @@ class AppState extends ChangeNotifier {
     );
     _activityLogs = [log, if (_activityLogs.length < 50) ..._activityLogs
         else ..._activityLogs.take(49)];
-    _logRepo.add(log, _activeUser);
+    if (_hasLogRepo) _logRepo.add(log, _activeUser);
   }
 }

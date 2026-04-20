@@ -196,6 +196,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   });
 
   // ── NEW: Get soft-deleted debts (Recycle Bin) ─────────────────────────────
+  @override
   Future<List<CustomerDebt>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
     final joinRows = await database.rawQuery('''
@@ -243,6 +244,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   }, []);
 
   // ── NEW: Restore a soft-deleted debt ──────────────────────────────────────
+  @override
   Future<void> restore(String debtId) => safeVoidCall(() async {
     final database = await db.database;
     await database.update(
@@ -268,6 +270,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   });
 
   // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  @override
   Future<void> hardDelete(String debtId) => safeVoidCall(() async {
     final database = await db.database;
     final existing = await database.query('debts',

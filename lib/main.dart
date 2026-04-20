@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart'; // ← FIX 1
 import 'core/app_constants.dart';
 import 'core/app_state.dart';
@@ -21,6 +24,9 @@ void main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // ── Crashlytics: catch Flutter framework errors (widget build, etc.) ──
+  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+
   // Wire up concrete implementations via the DIP configure() method.
   // Swap any of these with mock implementations during testing.
   AppState().configure();
@@ -35,7 +41,12 @@ void main() async {
     systemNavigationBarIconBrightness: Brightness.light,
   ));
 
-  runApp(const KnzScentApp());
+  // ── Crashlytics: catch async/platform errors outside the Flutter zone ─
+  runZonedGuarded(
+    () => runApp(const KnzScentApp()),
+    (error, stackTrace) =>
+        FirebaseCrashlytics.instance.recordError(error, stackTrace, fatal: true),
+  );
 }
 
 class KnzScentApp extends StatelessWidget {

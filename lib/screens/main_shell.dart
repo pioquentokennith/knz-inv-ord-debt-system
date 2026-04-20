@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../services/session_timeout_service.dart';
 import 'overview_screen.dart';
 import 'inventory_screen.dart';
 import 'orders_screen.dart';
@@ -46,10 +47,23 @@ class MainShellState extends State<MainShell>
       begin: const Offset(-1, 0),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _drawerCtrl, curve: Curves.easeOut));
+
+    // Start session timeout — auto-logout after 10 minutes of inactivity.
+    SessionTimeoutService.instance.start(onTimeout: _handleSessionTimeout);
+  }
+
+  /// Called when the inactivity timer fires. Logs out and returns to login.
+  void _handleSessionTimeout() {
+    if (!mounted) return;
+    AppState().logout();
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
   }
 
   @override
   void dispose() {
+    SessionTimeoutService.instance.stop();
     _drawerCtrl.dispose();
     super.dispose();
   }
@@ -75,9 +89,16 @@ class MainShellState extends State<MainShell>
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 768;
 
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: isWide ? _buildWideLayout() : _buildNarrowLayout(),
+    // Wrap the entire shell in a GestureDetector so any tap/drag resets
+    // the inactivity timer (HitTestBehavior.translucent passes touches through).
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap:       () => SessionTimeoutService.instance.bump(),
+      onPanUpdate: (_) => SessionTimeoutService.instance.bump(),
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: isWide ? _buildWideLayout() : _buildNarrowLayout(),
+      ),
     );
   }
 

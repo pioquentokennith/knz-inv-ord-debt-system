@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// database_helper.dart — v4: Soft-delete support
-// Changes from v3:
-//   • products  — added is_deleted INTEGER DEFAULT 0, deleted_at TEXT
-//   • orders    — added is_deleted INTEGER DEFAULT 0, deleted_at TEXT
-//   • debts     — added is_deleted INTEGER DEFAULT 0, deleted_at TEXT
-//   • onUpgrade — v3→v4 migration adds the new columns safely
+// database_helper.dart — v5: Performance indexes
+// Changes from v4:
+//   • products  — added index on (user_id, is_deleted) for faster queries
+//   • orders    — added index on (user_id, is_deleted) for faster queries
+//   • debts     — added index on (user_id, is_deleted) for faster queries
+//   • onUpgrade — v4→v5 migration adds the new indexes safely
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:sqflite/sqflite.dart';

@@ -12,6 +12,11 @@ abstract class IDebtService {
   Future<void>    addDebt(CustomerDebt debt, String userId);
   Future<String?> addPayment(String debtId, PaymentRecord payment, double remainingBalance);
   Future<void>    deleteDebt(String debtId);
+
+  // Recycle-bin operations
+  Future<List<CustomerDebt>> getDeleted(String userId);
+  Future<void>               restoreDebt(String debtId);
+  Future<void>               hardDeleteDebt(String debtId);
 }
 
 /// Concrete implementation — all business logic for utang/credit.
@@ -41,4 +46,13 @@ class DebtService implements IDebtService {
 
   @override
   Future<void> deleteDebt(String debtId) => _repo.delete(debtId);
+
+  @override
+  Future<List<CustomerDebt>> getDeleted(String userId) => _repo.getDeleted(userId);
+
+  @override
+  Future<void> restoreDebt(String debtId) => _repo.restore(debtId);
+
+  @override
+  Future<void> hardDeleteDebt(String debtId) => _repo.hardDelete(debtId);
 }

@@ -15,6 +15,11 @@ abstract class IOrderService {
   Future<void>        createOrder(Order order, String userId, List<Product> products);
   Future<void>        updateStatus(String orderId, OrderStatus status);
   Future<void>        deleteOrder(String orderId);
+
+  // Recycle-bin operations
+  Future<List<Order>> getDeleted(String userId);
+  Future<void>        restoreOrder(String orderId);
+  Future<void>        hardDeleteOrder(String orderId);
 }
 
 /// Concrete implementation — all business logic for orders.
@@ -57,4 +62,13 @@ class OrderService implements IOrderService {
 
   @override
   Future<void> deleteOrder(String orderId) => _orderRepo.delete(orderId);
+
+  @override
+  Future<List<Order>> getDeleted(String userId) => _orderRepo.getDeleted(userId);
+
+  @override
+  Future<void> restoreOrder(String orderId) => _orderRepo.restore(orderId);
+
+  @override
+  Future<void> hardDeleteOrder(String orderId) => _orderRepo.hardDelete(orderId);
 }

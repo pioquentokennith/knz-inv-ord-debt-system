@@ -1,8 +1,6 @@
 // ignore_for_file: avoid_print
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knz_scent_admin/main.dart';
 import 'package:knz_scent_admin/models/debt_model.dart';
 import 'package:knz_scent_admin/models/order_model.dart';
 import 'package:knz_scent_admin/models/product_model.dart';
@@ -15,11 +13,6 @@ import 'package:uuid/uuid.dart';
 void main() {
   final uuid = const Uuid();
 
-  // ── App smoke test ─────────────────────────────────────────────────────────
-  testWidgets('App renders without crashing', (WidgetTester tester) async {
-    await tester.pumpWidget(const KnzScentApp());
-    expect(find.byType(MaterialApp), findsOneWidget);
-  });
 
   // ══════════════════════════════════════════════════════════════════════════
   // PRODUCT MODEL

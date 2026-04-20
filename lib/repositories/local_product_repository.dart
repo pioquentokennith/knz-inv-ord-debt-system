@@ -60,6 +60,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
   }, []);
 
   // ── NEW: Get soft-deleted products (Recycle Bin) ──────────────────────────
+  @override
   Future<List<Product>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
     final maps = await database.query('products',
@@ -69,6 +70,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
   }, []);
 
   // ── NEW: Restore a soft-deleted product ───────────────────────────────────
+  @override
   Future<void> restore(String productId) => safeVoidCall(() async {
     final database = await db.database;
     await database.update(
@@ -190,6 +192,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
   });
 
   // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  @override
   Future<void> hardDelete(String productId) => safeVoidCall(() async {
     final database = await db.database;
     final rows = await database.query('products',

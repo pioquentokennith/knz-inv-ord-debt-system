@@ -122,6 +122,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   }, []);
 
   // ── NEW: Get soft-deleted orders (Recycle Bin) ────────────────────────────
+  @override
   Future<List<Order>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
     // FIX N+1: single JOIN query
@@ -174,6 +175,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   }, []);
 
   // ── NEW: Restore a soft-deleted order ─────────────────────────────────────
+  @override
   Future<void> restore(String orderId) => safeVoidCall(() async {
     final database = await db.database;
     await database.update(
@@ -285,6 +287,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   });
 
   // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  @override
   Future<void> hardDelete(String orderId) => safeVoidCall(() async {
     final database = await db.database;
     final existing = await database.query('orders',
