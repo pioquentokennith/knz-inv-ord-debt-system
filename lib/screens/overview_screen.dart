@@ -367,15 +367,17 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                   );
                                 }
 
-                                return ListView.builder(
-                                  shrinkWrap: true,
-                                  physics: const NeverScrollableScrollPhysics(),
-                                  itemCount: filtered.length,
-                                  itemBuilder: (_, idx) {
-                                    final log = filtered[idx];
-                                    return Padding(
-                                        padding:
-                                            const EdgeInsets.only(bottom: 12),
+                                return ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 300,
+                                  ),
+                                  child: ListView.builder(
+                                    shrinkWrap: true,
+                                    itemCount: filtered.length,
+                                    itemBuilder: (_, idx) {
+                                      final log = filtered[idx];
+                                      return Padding(
+                                        padding: const EdgeInsets.only(bottom: 12),
                                         child: Row(
                                           crossAxisAlignment:
                                               CrossAxisAlignment.start,
@@ -394,22 +396,22 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                               child: Text(
                                                 log.message,
                                                 style: const TextStyle(
-                                                    color:
-                                                        AppColors.whiteSecondary,
+                                                    color: AppColors.whiteSecondary,
                                                     fontSize: 13),
                                               ),
                                             ),
+                                            const SizedBox(width: 8),
                                             Text(
                                               log.timeAgo,
                                               style: const TextStyle(
-                                                  color:
-                                                      AppColors.whiteTertiary,
+                                                  color: AppColors.whiteTertiary,
                                                   fontSize: 11),
                                             ),
                                           ],
                                         ),
                                       );
-                                  },
+                                    },
+                                  ),
                                 );
                               }),
                             ],
