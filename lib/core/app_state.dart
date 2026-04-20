@@ -34,15 +34,9 @@ class AppState extends ChangeNotifier {
   IAuthService?           _authService;
   IActivityLogRepository? _logRepoInstance;
 
-  // FIXED: always returns a real repo — no longer lazy-guarded.
-  // Previously _hasLogRepo was false until first use, so logs were skipped
-  // during _loadAllData() on every login. Now logs always load & save.
+  // Always returns a real repo (lazy-init). Injectable via configure() for tests.
   IActivityLogRepository get _logRepo =>
       _logRepoInstance ??= ActivityLogRepository();
-
-  // _hasLogRepo kept for test-injection compatibility but always true
-  // in production because _logRepo above eagerly creates the instance.
-  bool get _hasLogRepo => true;
 
   // Convenience getters that throw if not yet configured (fail-fast)
   IProductService get _ps => _productService ?? (throw StateError('AppState not configured'));
@@ -232,16 +226,12 @@ class AppState extends ChangeNotifier {
 
   Future<void> _loadAllData() async {
     try {
-      final futures = <Future>[
+      final results = await Future.wait([
         _ps.getAll(_activeUser),
         _os.getAll(_activeUser),
         _ds.getAll(_activeUser),
-        if (_hasLogRepo)
-          _logRepo.getAll(_activeUser)
-        else
-          Future.value(<ActivityLog>[]),
-      ];
-      final results = await Future.wait(futures);
+        _logRepo.getAll(_activeUser),
+      ]);
       _products     = results[0] as List<Product>;
       _orders       = results[1] as List<Order>;
       _debts        = results[2] as List<CustomerDebt>;
@@ -530,8 +520,8 @@ class AppState extends ChangeNotifier {
       timestamp: now,
       type:      type,
     );
-    _activityLogs = [log, if (_activityLogs.length < 50) ..._activityLogs
-        else ..._activityLogs.take(49)];
-    if (_hasLogRepo) _logRepo.add(log, _activeUser);
+    _activityLogs = [log, if (_activityLogs.length < 500) ..._activityLogs
+        else ..._activityLogs.take(499)];
+    _logRepo.add(log, _activeUser);
   }
 }

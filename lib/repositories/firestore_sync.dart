@@ -240,7 +240,7 @@ class FirestoreSync {
     try {
       final snap = await _logs(userId)
           .orderBy('timestamp', descending: true)
-          .limit(50)
+          .limit(500)
           .get();
       return snap.docs
           .map((d) => d.data() as Map<String, dynamic>)

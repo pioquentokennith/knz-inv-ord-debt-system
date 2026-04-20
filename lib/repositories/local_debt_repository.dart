@@ -64,7 +64,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         p.note          AS p_note
       FROM debts d
       LEFT JOIN payments p ON p.debt_id = d.id
-      WHERE d.user_id = ? AND (d.is_deleted IS NULL OR d.is_deleted = 0)
+      WHERE d.user_id = ? AND d.is_deleted = 0
       ORDER BY d.created_at DESC, p.paid_at ASC
     ''', [userId]);
 

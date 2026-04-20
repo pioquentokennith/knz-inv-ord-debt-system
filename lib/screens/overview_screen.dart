@@ -367,9 +367,13 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                   );
                                 }
 
-                                return Column(
-                                  children: filtered.take(8).map((log) =>
-                                      Padding(
+                                return ListView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: filtered.length,
+                                  itemBuilder: (_, idx) {
+                                    final log = filtered[idx];
+                                    return Padding(
                                         padding:
                                             const EdgeInsets.only(bottom: 12),
                                         child: Row(
@@ -404,7 +408,8 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                             ),
                                           ],
                                         ),
-                                      )).toList(),
+                                      );
+                                  },
                                 );
                               }),
                             ],

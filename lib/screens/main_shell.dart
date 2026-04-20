@@ -170,7 +170,11 @@ class MainShellState extends State<MainShell>
   }
 
   Widget _buildSidebar() {
-    final state = AppState();
+    // ListenableBuilder scopes badge rebuilds to the sidebar only
+    return ListenableBuilder(
+      listenable: AppState(),
+      builder: (context, _) {
+        final state = AppState();
     // Use SafeArea so sidebar content clears the status bar on narrow layout
     final topPadding = MediaQuery.of(context).padding.top;
     return Container(
@@ -339,6 +343,8 @@ class MainShellState extends State<MainShell>
           ),
         ],
       ),
+    );
+      }, // end ListenableBuilder builder
     );
   }
 

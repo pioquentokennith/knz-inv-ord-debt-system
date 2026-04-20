@@ -12,6 +12,8 @@
 //   3. No more direct FirestoreSync calls in add() — everything via queue.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import 'dart:async';
+
 import '../models/user_model.dart';
 import 'base_repository.dart';
 import 'i_activity_log_repository.dart';
@@ -33,7 +35,7 @@ class ActivityLogRepository extends BaseRepository
       where: 'user_id = ?',
       whereArgs: [userId],
       orderBy: 'timestamp DESC',
-      limit: 50,
+      limit: 500,
     );
 
     // Local cache hit → return immediately (works offline too)
@@ -64,7 +66,7 @@ class ActivityLogRepository extends BaseRepository
         where: 'user_id = ?',
         whereArgs: [userId],
         orderBy: 'timestamp DESC',
-        limit: 50,
+        limit: 500,
       );
       return restored.map(_fromMap).toList();
     }
@@ -93,7 +95,7 @@ class ActivityLogRepository extends BaseRepository
         SELECT id FROM activity_logs
         WHERE user_id = ?
         ORDER BY timestamp DESC
-        LIMIT 50
+        LIMIT 500
       )
     ''', [userId, userId]);
 
@@ -113,7 +115,8 @@ class ActivityLogRepository extends BaseRepository
     );
 
     // 4. Flush queue right away if we're online so it syncs immediately
-    if (_queue.isOnline) _queue.syncPending();
+    // unawaited intentionally — fire-and-forget, don't block the caller
+    if (_queue.isOnline) unawaited(_queue.syncPending());
   });
 
   // ── helpers ───────────────────────────────────────────────────────────────
