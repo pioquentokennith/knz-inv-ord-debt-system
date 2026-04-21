@@ -404,7 +404,7 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
     _scanSub?.cancel();
     _scanSub = FlutterBluePlus.scanResults.listen((r) {
       found = r.where((x) => x.device.platformName.isNotEmpty).toList();
-      if (mounted) _set(BtScanning()); // keep spinner while scanning
+      if (mounted) _set(const BtScanning()); // keep spinner while scanning
     });
 
     await FlutterBluePlus.startScan(timeout: const Duration(seconds: 8));
