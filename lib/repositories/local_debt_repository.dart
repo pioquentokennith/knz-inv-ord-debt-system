@@ -1,3 +1,9 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// local_debt_repository.dart — SQLite-backed debt (utang) repository
+// Purpose : Manages customer debt records and payment installments against
+//           local SQLite with automatic Firestore sync via SyncQueue.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import 'dart:convert';
 import '../models/debt_model.dart';
 import 'base_repository.dart';
@@ -5,21 +11,25 @@ import 'debt_repository.dart';
 import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
+// Concrete SQLite + Firestore implementation of DebtRepository
 class LocalDebtRepository extends BaseRepository implements DebtRepository {
   final _cloud = FirestoreSync.instance;
   final _queue = SyncQueue.instance;
 
+  // Returns all active (non-deleted) debts with their payment records (JOIN query)
   @override
   Future<List<CustomerDebt>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
+    // Basic query used only for cloud fallback check
     final debtMaps = await database.query('debts',
         where: 'user_id = ?', whereArgs: [userId], orderBy: 'created_at DESC');
 
+    // Local is empty and online — restore debts from Firestore
     if (debtMaps.isEmpty && _queue.isOnline) {
       final cloudDebts = await _cloud.getDebts(userId);
       for (final d in cloudDebts) {
         try {
-          // Check muna kung mayroon na para iwas duplicate
+          // Check first to avoid duplicate entries on partial sync
           final existing = await database.query('debts',
               where: 'id = ?', whereArgs: [d['id']]);
           if (existing.isNotEmpty) continue;
@@ -33,6 +43,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
             'created_at':    d['created_at'],
             'user_id':       userId,
           });
+          // Insert each payment record linked to this debt
           final payments = List<Map<String, dynamic>>.from(d['payments'] ?? []);
           for (final p in payments) {
             try {
@@ -49,7 +60,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
       }
     }
 
-    // FIX N+1: single JOIN query instead of 1 query per debt
+    // FIX N+1: Single JOIN query instead of one query per debt for payments
     final joinRows = await database.rawQuery('''
       SELECT
         d.id            AS d_id,
@@ -68,6 +79,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
       ORDER BY d.created_at DESC, p.paid_at ASC
     ''', [userId]);
 
+    // Group flat JOIN rows back into CustomerDebt objects with their PaymentRecord lists
     final debtsMap    = <String, Map<String, dynamic>>{};
     final paymentsMap = <String, List<PaymentRecord>>{};
     for (final row in joinRows) {
@@ -80,6 +92,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         'amount_paid':   row['d_amount_paid'],
         'created_at':    row['d_created_at'],
       });
+      // p_id is null when LEFT JOIN finds no matching payments row
       if (row['p_id'] != null) {
         paymentsMap.putIfAbsent(did, () => []).add(_paymentFromMap({
           'id':      row['p_id'],
@@ -94,9 +107,11 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         .toList();
   }, []);
 
+  // Inserts a new debt record and any initial payments in a single transaction
   @override
   Future<void> add(CustomerDebt debt, String userId) => safeVoidCall(() async {
     final database = await db.database;
+    // Atomic: if any insert fails, neither the debt nor its payments are saved
     await database.transaction((txn) async {
       await txn.insert('debts', _debtToMap(debt, userId));
       for (final payment in debt.payments) {
@@ -104,6 +119,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
       }
     });
 
+    // Sync to Firestore with embedded payments array
     final paymentsData = debt.payments.map((p) => _paymentToMap(p, debt.id)).toList();
     final debtData = _debtToMap(debt, userId);
 
@@ -120,12 +136,15 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     }
   });
 
+  // Appends a payment installment to a debt and updates the running amount_paid total
   @override
   Future<void> addPayment(String debtId, PaymentRecord payment) => safeVoidCall(() async {
     final database = await db.database;
 
+    // Atomic: payment insert and amount_paid update happen together
     await database.transaction((txn) async {
       await txn.insert('payments', _paymentToMap(payment, debtId));
+      // Read the current amount_paid and increment it by the new payment amount
       final debtMaps = await txn.query('debts',
           where: 'id = ?', whereArgs: [debtId]);
       if (debtMaps.isNotEmpty) {
@@ -135,11 +154,13 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
       }
     });
 
+    // Fetch updated debt row to build Firestore sync payload
     final debtMaps = await database.query('debts',
         where: 'id = ?', whereArgs: [debtId]);
     if (debtMaps.isNotEmpty) {
       final userId     = debtMaps.first['user_id']     as String;
       final amountPaid = (debtMaps.first['amount_paid'] as num).toDouble();
+      // Fetch all payments to send the full list in the Firestore update
       final allPayments = await database.query('payments',
           where: 'debt_id = ?', whereArgs: [debtId]);
       final paymentsData = allPayments
@@ -163,7 +184,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     }
   });
 
-  // ── Soft-delete (replaces hard delete) — FIX: debts now consistent with orders/products ──
+  // Soft-deletes a debt: sets is_deleted=1 and records deleted_at timestamp
   @override
   Future<void> delete(String debtId) => safeVoidCall(() async {
     final database = await db.database;
@@ -172,7 +193,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
     final now = DateTime.now().toIso8601String();
 
-    // Soft-delete — mark as deleted, preserve data for RecycleBin
+    // Soft-delete — preserves payment history for Recycle Bin recovery
     await database.update(
       'debts',
       {'is_deleted': 1, 'deleted_at': now},
@@ -195,10 +216,11 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     }
   });
 
-  // ── NEW: Get soft-deleted debts (Recycle Bin) ─────────────────────────────
+  // Returns all soft-deleted debts for the Recycle Bin screen (JOIN query)
   @override
   Future<List<CustomerDebt>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
+    // Same JOIN pattern as getAll() but filters is_deleted = 1
     final joinRows = await database.rawQuery('''
       SELECT
         d.id            AS d_id,
@@ -243,10 +265,11 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         .toList();
   }, []);
 
-  // ── NEW: Restore a soft-deleted debt ──────────────────────────────────────
+  // Restores a soft-deleted debt back to active and re-syncs it to Firestore
   @override
   Future<void> restore(String debtId) => safeVoidCall(() async {
     final database = await db.database;
+    // Clear soft-delete flags
     await database.update(
       'debts',
       {'is_deleted': 0, 'deleted_at': null},
@@ -259,7 +282,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
       final userId = rows.first['user_id'] as String;
       final data   = Map<String, dynamic>.from(rows.first);
       if (_queue.isOnline) {
-        await _cloud.saveDebt(userId, data, []);
+        await _cloud.saveDebt(userId, data, []); // Payments synced separately
       } else {
         await _queue.enqueue(
           operation: 'save_debt', collection: 'debts',
@@ -269,7 +292,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     }
   });
 
-  // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  // Permanently removes a debt and its payments from SQLite and Firestore
   @override
   Future<void> hardDelete(String debtId) => safeVoidCall(() async {
     final database = await db.database;
@@ -277,6 +300,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         where: 'id = ?', whereArgs: [debtId]);
     final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
 
+    // ON DELETE CASCADE on payments ensures all payment rows are removed with the debt
     await database.delete('debts', where: 'id = ?', whereArgs: [debtId]);
 
     if (userId.isNotEmpty) {
@@ -294,6 +318,9 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     }
   });
 
+  // ── Private mapping helpers ───────────────────────────────────────────────
+
+  // Converts a CustomerDebt model to a SQLite column map
   Map<String, dynamic> _debtToMap(CustomerDebt d, String userId) => {
     'id':            d.id,
     'customer_name': d.customerName,
@@ -306,6 +333,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     'deleted_at':    null,
   };
 
+  // Converts a PaymentRecord model to a SQLite column map for the payments table
   Map<String, dynamic> _paymentToMap(PaymentRecord p, String debtId) => {
     'id':      p.id,
     'debt_id': debtId,
@@ -314,6 +342,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     'note':    p.note,
   };
 
+  // Assembles a CustomerDebt model from a flat column map and its payments list
   CustomerDebt _debtFromMap(Map<String, dynamic> m, List<PaymentRecord> payments) =>
       CustomerDebt(
         id:           m['id']            as String,
@@ -325,6 +354,7 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         payments:     payments,
       );
 
+  // Converts a raw SQLite row map into a PaymentRecord model instance
   PaymentRecord _paymentFromMap(Map<String, dynamic> m) => PaymentRecord(
     id:     m['id']    as String,
     amount: (m['amount'] as num).toDouble(),

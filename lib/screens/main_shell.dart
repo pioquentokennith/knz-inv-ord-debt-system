@@ -1,3 +1,14 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// main_shell.dart
+// Purpose : The root scaffold that wraps all main screens behind authentication.
+// Function: Manages navigation between Overview, Inventory, Orders, Products,
+//           Analytics, and Utang screens via a sidebar (desktop) or slide-out
+//           drawer (mobile). The sidebar uses ListenableBuilder scoped to AppState
+//           so only the nav badges (lowStockCount, pendingCount) rebuild. A session
+//           timeout service auto-logs out after 10 minutes of inactivity.
+//           navigateTo(NavItem) is a public method used by dialogs to deep-link
+//           to a specific tab (e.g., after recording a new utang).
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import '../core/app_constants.dart';
@@ -26,7 +37,8 @@ class MainShellState extends State<MainShell>
   NavItem _selected = NavItem.overview;
   bool _sidebarOpen = false;
 
-  // Public method para ma-navigate from anywhere
+  // Public method — allows child dialogs/screens to navigate to a specific tab
+  // (e.g., MarkAsUtangDialog calls this to jump to the Utang tab after recording)
   void navigateTo(NavItem item) {
     setState(() {
       _selected    = item;
@@ -48,11 +60,12 @@ class MainShellState extends State<MainShell>
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _drawerCtrl, curve: Curves.easeOut));
 
-    // Start session timeout — auto-logout after 10 minutes of inactivity.
+    // Start the inactivity timer; fires _handleSessionTimeout after 10 minutes
     SessionTimeoutService.instance.start(onTimeout: _handleSessionTimeout);
   }
 
-  /// Called when the inactivity timer fires. Logs out and returns to login.
+  // Called by SessionTimeoutService when no user interaction is detected
+  // for 10 minutes. Logs out the current user and redirects to LoginScreen.
   void _handleSessionTimeout() {
     if (!mounted) return;
     AppState().logout();
@@ -89,8 +102,8 @@ class MainShellState extends State<MainShell>
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 768;
 
-    // Wrap the entire shell in a Listener + GestureDetector so any touch,
-    // drag, OR keyboard-triggered pointer event resets the inactivity timer.
+    // Listener catches all pointer events (including from child widgets)
+    // to reset the session inactivity timer on any user interaction.
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => SessionTimeoutService.instance.bump(),
@@ -172,6 +185,9 @@ class MainShellState extends State<MainShell>
     );
   }
 
+  // Builds the left navigation sidebar.
+  // Uses ListenableBuilder so only the sidebar (specifically the badge counts)
+  // rebuilds when AppState notifies — not the entire shell.
   Widget _buildSidebar() {
     // ListenableBuilder scopes badge rebuilds to the sidebar only
     return ListenableBuilder(
@@ -363,6 +379,8 @@ class MainShellState extends State<MainShell>
     );
   }
 
+  // Renders a single navigation row with icon, label, active highlight,
+  // and an optional numeric badge (e.g., pending order count).
   Widget _navItem(NavItem item, IconData icon, String label, {int? badge}) {
     final isActive = _selected == item;
     return GestureDetector(

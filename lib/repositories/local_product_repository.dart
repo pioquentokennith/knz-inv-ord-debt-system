@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// local_product_repository.dart — Soft-delete support
+// local_product_repository.dart — SQLite-backed product repository
+// Purpose : Manages product CRUD against the local SQLite 'products' table
+//           with automatic Firestore sync via SyncQueue (offline-first).
 // Changes:
-//   • getAll()   — now filters WHERE is_deleted = 0 (active only)
-//   • delete()   — soft-delete: sets is_deleted=1, deleted_at=now
-//   • getDeleted() — NEW: returns all soft-deleted products (Recycle Bin)
-//   • restore()    — NEW: un-deletes a product (is_deleted=0, deleted_at=NULL)
-//   • hardDelete() — NEW: permanently remove (for admin purge only)
+//   • getAll()     — filters WHERE is_deleted = 0 (active only)
+//   • delete()     — soft-delete: sets is_deleted=1, deleted_at=now
+//   • getDeleted() — returns all soft-deleted products (Recycle Bin)
+//   • restore()    — un-deletes a product (is_deleted=0, deleted_at=NULL)
+//   • hardDelete() — permanently removes a product (admin purge only)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import '../models/product_model.dart';
@@ -14,23 +16,26 @@ import 'product_repository.dart';
 import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
+// Concrete SQLite + Firestore implementation of ProductRepository
 class LocalProductRepository extends BaseRepository implements ProductRepository {
-  final _cloud = FirestoreSync.instance;
-  final _queue = SyncQueue.instance;
+  final _cloud = FirestoreSync.instance; // Firestore adapter for cloud sync
+  final _queue = SyncQueue.instance;     // Offline queue for deferred Firestore writes
 
+  // Returns all active (non-deleted) products for a user, newest first
   @override
   Future<List<Product>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
-    // Only return non-deleted products
+    // Only fetch rows where is_deleted = 0 (soft-deleted rows are excluded)
     final maps = await database.query('products',
         where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId],
         orderBy: 'created_at DESC');
 
-    // Kung walang local data at online, restore mula Firestore
+    // Local is empty and device is online — restore products from Firestore
     if (maps.isEmpty && _queue.isOnline) {
       final cloud = await _cloud.getProducts(userId);
       for (final p in cloud) {
         try {
+          // Avoid inserting duplicates if a partial sync already ran
           final exists = await database.query('products',
               where: 'id = ?', whereArgs: [p['id']]);
           if (exists.isNotEmpty) continue;
@@ -50,6 +55,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
           });
         } catch (_) {}
       }
+      // Re-query after caching cloud products
       final restored = await database.query('products',
           where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId],
           orderBy: 'created_at DESC');
@@ -59,20 +65,22 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     return maps.map(_fromMap).toList();
   }, []);
 
-  // ── NEW: Get soft-deleted products (Recycle Bin) ──────────────────────────
+  // Returns all soft-deleted products for the Recycle Bin screen
   @override
   Future<List<Product>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
+    // Only fetch rows where is_deleted = 1
     final maps = await database.query('products',
         where: 'user_id = ? AND is_deleted = 1', whereArgs: [userId],
-        orderBy: 'deleted_at DESC');
+        orderBy: 'deleted_at DESC'); // Most recently deleted appears first
     return maps.map(_fromMap).toList();
   }, []);
 
-  // ── NEW: Restore a soft-deleted product ───────────────────────────────────
+  // Restores a soft-deleted product back to the active list and re-syncs to Firestore
   @override
   Future<void> restore(String productId) => safeVoidCall(() async {
     final database = await db.database;
+    // Clear the soft-delete flags to make the product active again
     await database.update(
       'products',
       {'is_deleted': 0, 'deleted_at': null},
@@ -80,7 +88,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
       whereArgs: [productId],
     );
 
-    // Re-sync the restored product to Firestore
+    // Re-sync the restored product to Firestore so cloud reflects the un-delete
     final rows = await database.query('products',
         where: 'id = ?', whereArgs: [productId]);
     if (rows.isNotEmpty) {
@@ -97,12 +105,14 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
+  // Inserts a new product into SQLite and syncs to Firestore
   @override
   Future<void> add(Product product, String userId) => safeVoidCall(() async {
     final database = await db.database;
     final data = _toMap(product, userId);
     await database.insert('products', data);
 
+    // Sync immediately if online; otherwise queue for later
     if (_queue.isOnline) {
       await _cloud.saveProduct(userId, data);
     } else {
@@ -113,9 +123,11 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
+  // Updates all fields of an existing product in SQLite and Firestore
   @override
   Future<void> update(Product product) => safeVoidCall(() async {
     final database = await db.database;
+    // Retrieve the userId from the existing row (not available on the model)
     final rows = await database.query('products',
         where: 'id = ?', whereArgs: [product.id]);
     final userId = rows.isNotEmpty ? rows.first['user_id'] as String : '';
@@ -136,18 +148,20 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
+  // Updates only the stock_qty column for a single product (called after order creation)
   @override
   Future<void> updateStock(String productId, int newQty) => safeVoidCall(() async {
     final database = await db.database;
     await database.update('products', {'stock_qty': newQty},
         where: 'id = ?', whereArgs: [productId]);
 
+    // Fetch the full row so we can sync the complete product data to Firestore
     final rows = await database.query('products',
         where: 'id = ?', whereArgs: [productId]);
     if (rows.isNotEmpty) {
       final userId = rows.first['user_id'] as String;
       final data = Map<String, dynamic>.from(rows.first);
-      data['stock_qty'] = newQty;
+      data['stock_qty'] = newQty; // Ensure updated value is in sync payload
 
       if (_queue.isOnline) {
         await _cloud.saveProduct(userId, data);
@@ -160,7 +174,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
-  // ── Soft-delete (replaces hard delete) ────────────────────────────────────
+  // Soft-deletes a product: sets is_deleted=1 and records deleted_at timestamp
   @override
   Future<void> delete(String productId) => safeVoidCall(() async {
     final database = await db.database;
@@ -169,7 +183,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     final userId = rows.isNotEmpty ? rows.first['user_id'] as String : '';
     final now = DateTime.now().toIso8601String();
 
-    // Soft-delete: mark as deleted, set timestamp
+    // Mark as deleted — data is preserved for Recycle Bin recovery
     await database.update(
       'products',
       {'is_deleted': 1, 'deleted_at': now},
@@ -177,7 +191,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
       whereArgs: [productId],
     );
 
-    // Sync soft-delete flag to Firestore
+    // Sync the soft-delete flag to Firestore
     if (userId.isNotEmpty) {
       if (_queue.isOnline) {
         await _cloud.softDeleteProduct(userId, productId, now);
@@ -191,7 +205,7 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
-  // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  // Permanently removes a product from SQLite and Firestore — no recovery possible
   @override
   Future<void> hardDelete(String productId) => safeVoidCall(() async {
     final database = await db.database;
@@ -213,24 +227,26 @@ class LocalProductRepository extends BaseRepository implements ProductRepository
     }
   });
 
+  // Converts a Product model into a SQLite-compatible column map
   Map<String, dynamic> _toMap(Product p, String? userId) {
     final m = <String, dynamic>{
       'id':              p.id,
       'name':            p.name,
       'description':     p.description,
-      'category':        p.category.displayName,
+      'category':        p.category.displayName, // Store display name string
       'price':           p.price,
       'stock_qty':       p.stockQty,
       'min_stock_level': p.minStockLevel,
       'image_path':      p.imagePath,
       'created_at':      p.createdAt.toIso8601String(),
-      'is_deleted':      0,
+      'is_deleted':      0,   // New products are always active
       'deleted_at':      null,
     };
     if (userId != null && userId.isNotEmpty) m['user_id'] = userId;
     return m;
   }
 
+  // Converts a raw SQLite row map into a typed Product model instance
   Product _fromMap(Map<String, dynamic> m) => Product(
     id:            m['id']              as String,
     name:          m['name']            as String,

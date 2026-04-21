@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// order_dialog.dart
+// Purpose : Dialog for creating a new order with one or more products.
+// Function: Provides a product picker dropdown, price input, and quantity field
+//           to build a cart. Enforces stock limits when adding items. The cart
+//           list supports inline quantity steppers and item removal. On submit,
+//           validates that the customer name and cart are not empty, shows a
+//           confirmation dialog, generates an order ID, then saves the order
+//           via AppState.addOrder(). Displays an error snackbar if saving fails.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
@@ -20,7 +30,7 @@ class _OrderDialogState extends State<OrderDialog> {
   final _notesCtrl = TextEditingController();
   OrderStatus _status = OrderStatus.pending;
 
-  // Cart items: list of {product, qty, customPrice}
+  // Cart items holding each selected product with its quantity and custom price
   final List<_CartEntry> _cart = [];
 
   // For the "add item" row
@@ -37,9 +47,13 @@ class _OrderDialogState extends State<OrderDialog> {
     super.dispose();
   }
 
+  // Computed total: sum of (customPrice * qty) across all cart entries
   double get _cartTotal =>
       _cart.fold(0, (sum, e) => sum + e.customPrice * e.qty);
 
+  // Validates and adds the currently selected product to the cart.
+  // Merges with an existing cart entry if the same product is already in the cart.
+  // Enforces stock availability before adding.
   void _addToCart() {
     final product = _pickedProduct;
     if (product == null) return;
@@ -83,10 +97,13 @@ class _OrderDialogState extends State<OrderDialog> {
     });
   }
 
+  // Removes a cart entry by its index in the _cart list
   void _removeFromCart(int index) {
     setState(() => _cart.removeAt(index));
   }
 
+  // Validates the form, shows a confirmation dialog, builds the Order object,
+  // assigns a generated order ID, and saves it via AppState.addOrder().
   Future<void> _submit() async {
     final customer = _customerCtrl.text.trim();
     if (customer.isEmpty) {

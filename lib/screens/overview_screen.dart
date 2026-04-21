@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// overview_screen.dart
+// Purpose : Dashboard home screen showing key business metrics and recent activity.
+// Function: Uses AppStateBuilder (FIX 6) to scope all data-driven rebuilds to the
+//           scrollable body. Displays a greeting with the current user's name, a
+//           responsive stat card grid (1 or 2 columns based on width), a low-stock
+//           alert list, and a Recent Activity log panel. The activity log supports
+//           collapse/expand animation and filter chips (All, Auth, Orders,
+//           Payments/Utang, Products/Stock) that filter log entries by type.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:intl/intl.dart';
@@ -29,6 +39,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     'Products/Stock',
   ];
 
+  // Returns a time-appropriate greeting based on the current hour of day
   String _greeting() {
     final h = DateTime.now().hour;
     if (h < 12) return 'Good Morning';
@@ -435,7 +446,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     );
   }
 
-  // I-map ang filter label sa log.type value
+  // Maps the display filter label to the internal log.type string stored in ActivityLog
   String _filterType(String filter) {
     switch (filter) {
       case 'Auth':
@@ -451,7 +462,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
     }
   }
 
-  // ✅ Kulay ng bawat filter button
+  // Returns the highlight color for each activity filter chip button
   Color _filterColor(String filter) {
     switch (filter) {
       case 'Auth':
@@ -468,6 +479,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
   }
 
 
+  // Returns the dot color for each activity log entry based on its type
   Color _logColor(String type) {
     switch (type) {
       case 'auth':

@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// login_screen.dart
+// Purpose : The entry point screen where users authenticate with username & password.
+// Function: Renders a two-panel layout (brand panel + form panel) on wide screens,
+//           and a stacked layout on narrow screens. A pulsing gold logo animation
+//           plays continuously via AnimationController. On submit, calls
+//           AppState.login() and navigates to MainShell on success or shows an
+//           error message on failure. Also provides links to RegisterScreen and
+//           ForgotPasswordScreen.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import '../core/app_constants.dart';
@@ -43,6 +53,9 @@ class _LoginScreenState extends State<LoginScreen>
     super.dispose();
   }
 
+  // Calls AppState.login() with the entered credentials.
+  // On success, navigates to MainShell with a fade transition.
+  // On failure, shows an 'Invalid username or password' error.
   void _login() async {
     setState(() {
       _isLoading = true;
@@ -173,6 +186,8 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
+  // Builds three concentric animated rings around the app logo icon.
+  // Opacity pulses with the _pulse animation for a breathing effect.
   Widget _buildPulsingLogo({double size = 110}) {
     return AnimatedBuilder(
       animation: _pulse,

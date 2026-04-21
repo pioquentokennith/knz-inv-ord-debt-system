@@ -1,3 +1,14 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// product_dialog.dart
+// Purpose : Dialog for adding a new product or editing an existing one.
+// Function: In "add" mode, all fields start blank; in "edit" mode, fields are
+//           pre-filled from the existing Product object. Supports picking a product
+//           image from the camera or gallery, copying it to the app's permanent
+//           documents directory (so it survives temp file clears), and storing the
+//           local path in the product model. On save, validates the product name,
+//           shows a confirmation dialog, then calls AppState.addProduct() or
+//           AppState.updateProduct() accordingly.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -26,7 +37,9 @@ class _ProductDialogState extends State<ProductDialog> {
 
   ProductCategory _category = ProductCategory.eauDeParfum;
   String? _imagePath;
+  // Tracks whether this dialog was opened for editing (true) or adding (false)
   bool _isEditing  = false;
+  // Prevents double-submission while an async save is in progress
   bool _isSaving   = false;
 
   @override
@@ -55,7 +68,9 @@ class _ProductDialogState extends State<ProductDialog> {
     super.dispose();
   }
 
-  // ── Pick image from camera or gallery — i-save sa local storage ───────────
+  // Opens a bottom sheet to choose between Camera and Gallery.
+  // Copies the selected image to the app's permanent documents directory
+  // so it persists across temp file clears. Stores the absolute path.
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final source = await showModalBottomSheet<ImageSource>(
@@ -112,7 +127,8 @@ class _ProductDialogState extends State<ProductDialog> {
     }
   }
 
-  // ── Submit — save product with local image path ───────────────────────────
+  // Validates product name, shows a confirmation dialog, then either
+  // creates a new Product or updates the existing one via AppState.
   Future<void> _submit() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
@@ -175,7 +191,8 @@ class _ProductDialogState extends State<ProductDialog> {
     }
   }
 
-  // ── Image preview — local file only ──────────────────────────────────────
+  // Loads the product image from the local file system path.
+  // Falls back to a placeholder icon if the file is missing or unreadable.
   Widget _buildImagePreview() {
     if (_imagePath != null) {
       final file = File(_imagePath!);

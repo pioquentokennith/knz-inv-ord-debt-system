@@ -1,24 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// orders_screen.dart — FIX 6: ListenableBuilder instead of addListener pattern
-//
-// BEFORE (old pattern):
-//   class _OrdersScreenState extends State<OrdersScreen> {
-//     late AppState _state;
-//     void initState() { _state.addListener(_onStateChange); }
-//     void dispose()   { _state.removeListener(_onStateChange); }
-//     void _onStateChange() { if (mounted) setState(() {}); }  // rebuilds WHOLE tree
-//   }
-//
-// AFTER (FIX 6):
-//   - Removed _state field, addListener, removeListener, _onStateChange
-//   - Removed `late AppState _state` field entirely
-//   - Wrap ONLY the order list in AppStateBuilder — header/search never rebuild
-//   - StatefulWidget kept only for local UI state: _searchCtrl, _filterStatus
-//
-// Apply the same pattern to: inventory_screen, products_screen,
-//   analytics_screen, overview_screen, utang_screen
+// orders_screen.dart
+// Purpose : Order tracker showing all customer orders with status management.
+// Function: Applies FIX 6 pattern — header and search bar are outside AppStateBuilder
+//           so they never rebuild from AppState changes. Only the order list subtree
+//           rebuilds. Supports searching by order ID, customer name, or product name,
+//           and filtering by order status. Each order shows a status badge, total,
+//           and action buttons (update status, view receipt, delete). Updating a
+//           status to "utang" automatically opens the MarkAsUtangDialog.
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:intl/intl.dart';
@@ -51,7 +40,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     super.dispose();
   }
 
-  // Pure filter function — uses AppState() singleton directly
+  // Filters the order list by search query and/or status dropdown.
+  // Pure function — takes the current list and returns a filtered copy.
   List<Order> _filtered(List<Order> orders) {
     var list = orders.toList();
     final q = _searchCtrl.text.toLowerCase();
@@ -69,6 +59,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return list;
   }
 
+  // Opens a status picker dialog then confirms the change with the user.
+  // If the new status is 'utang', automatically opens MarkAsUtangDialog.
   void _updateStatus(Order order) async {
     final result = await showDialog<OrderStatus>(
       context: context,
@@ -111,6 +103,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
   }
 
+  // Shows a confirmation dialog then soft-deletes the order via AppState.
   void _deleteOrder(Order order) async {
     final confirm = await showDialog<bool>(
       context: context,

@@ -1,6 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // app_state_builder.dart
-// FIX 6: Drop-in replacement for the addListener + setState({}) pattern.
+// Purpose : Scoped UI rebuild helper for AppState.
+//           Wraps ListenableBuilder so only the subtree that reads AppState
+//           data is rebuilt — not the entire screen.
+//  Drop-in replacement for the addListener + setState({}) pattern.
 //
 // WHY:  The old pattern rebuilds the ENTIRE screen widget tree on every
 //       AppState change — even if only one card at the bottom needs updating.
@@ -26,6 +29,7 @@ import 'app_state.dart';
 /// Rebuilds [builder] whenever [AppState] notifies listeners.
 /// Scopes rebuilds to only the returned subtree — not the entire screen.
 class AppStateBuilder extends StatelessWidget {
+  // builder receives the BuildContext and current AppState snapshot
   final Widget Function(BuildContext context, AppState state) builder;
 
   const AppStateBuilder({super.key, required this.builder});
@@ -33,7 +37,8 @@ class AppStateBuilder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: AppState(),
+      listenable: AppState(), // Subscribe to the singleton ChangeNotifier
+      // Rebuild only this widget's subtree when AppState calls notifyListeners()
       builder: (context, _) => builder(context, AppState()),
     );
   }

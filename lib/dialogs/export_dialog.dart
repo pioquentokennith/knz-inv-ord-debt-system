@@ -1,9 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// export_dialog.dart — Export options dialog
-// Shows: Export as CSV | Export as PDF | Print PDF
-// Supports: Orders, Inventory, Utang/Debts
+// export_dialog.dart
+// Purpose : Dialog that lets the admin export data as CSV, PDF, or direct print.
+// Function: Accepts an ExportType enum (orders, inventory, or debts) and presents
+//           three export options as tappable tiles. Delegates the actual export
+//           work to ExportService methods. Shows a loading spinner while busy
+//           and an error message if the export fails. The showExportDialog()
+//           convenience function can be called from any screen.
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:flutter/material.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';

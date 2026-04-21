@@ -1,3 +1,14 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// inventory_screen.dart
+// Purpose : Tabular inventory management screen showing all products with stock
+//           levels, category badges, and action buttons.
+// Function: Local state (_searchCtrl, _filterCategory) controls filtering without
+//           triggering AppState rebuilds. AppStateBuilder (FIX 6) scopes rebuilds
+//           to the product list only so the header and search bar are unaffected.
+//           Renders _ProductCard (mobile) or _ProductRowWide (desktop >= 600px)
+//           per product. Supports editing product details, editing stock quantity,
+//           and soft-deleting products with confirmation.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
@@ -28,6 +39,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
     super.dispose();
   }
 
+  // Filters the product list by search query and/or category selection.
+  // Returns a new list — does not mutate the original.
   List<Product> _filtered(List<Product> products) {
     var list = products.toList();
     final q = _searchCtrl.text.toLowerCase();
@@ -44,6 +57,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
     return list;
   }
 
+  // Shows a confirmation AlertDialog then calls AppState.deleteProduct()
+  // to soft-delete the product (moves it to the Recycle Bin).
   void _deleteProduct(Product p) async {
     final confirm = await showDialog<bool>(
       context: context,

@@ -1,3 +1,14 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// register_screen.dart
+// Purpose : New account registration screen with OTP email verification.
+// Function: Collects full name, username, email, password, and password confirmation.
+//           Validates all fields including email format, minimum password length,
+//           and password match. Shows a live password strength indicator (Weak /
+//           Medium / Strong) based on length, uppercase, digits, and special chars.
+//           Navigates to OtpScreen for email verification before calling
+//           AppState.register(). On success, navigates to MainShell and clears
+//           the navigation stack.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import '../core/app_constants.dart';
@@ -52,7 +63,8 @@ class _RegisterScreenState extends State<RegisterScreen>
     super.dispose();
   }
 
-  // ─── Password strength ────────────────────────────────────────────────
+  // Scores the current password from 0 (empty) to 5 (very strong).
+  // Adds 1 point each for: length>=6, length>=10, uppercase letter, digit, special char.
   int get _passwordStrength {
     final p = _passCtrl.text;
     if (p.isEmpty) return 0;
@@ -85,7 +97,8 @@ class _RegisterScreenState extends State<RegisterScreen>
     }
   }
 
-  // ─── Validation then go to OTP ────────────────────────────────────────
+  // Validates all form fields then navigates to OtpScreen.
+  // The OTP screen calls _register() in its onVerified callback.
   void _proceed() {
     final name     = _nameCtrl.text.trim();
     final username = _userCtrl.text.trim();
@@ -125,6 +138,8 @@ class _RegisterScreenState extends State<RegisterScreen>
     );
   }
 
+  // Called after OTP verification succeeds. Calls AppState.register()
+  // to create the account, then navigates to MainShell on success.
   Future<void> _register(
       String name, String username, String email, String password) async {
     setState(() => _isLoading = true);

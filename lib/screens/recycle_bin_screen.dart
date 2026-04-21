@@ -1,12 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// recycle_bin_screen.dart — View and restore soft-deleted items
-// Features:
-//   • Tab view: Products | Orders
-//   • Restore button — un-deletes and puts back to active list
-//   • Permanent delete button — hard purge with confirmation dialog
-//   • Shows deleted_at timestamp for audit trail
+// recycle_bin_screen.dart
+// Purpose : Shows soft-deleted items (orders, products, utang) and lets the admin
+//           restore or permanently delete them.
+// Function: Loads deleted records from AppState on mount via parallel Future.wait().
+//           Provides three tabs (Orders, Products, Utang) each with their own
+//           filtered list. A shared search bar filters results in real time across
+//           all tabs. Restore triggers AppState.restoreX() and hard-delete triggers
+//           AppState.hardDeleteX(), both with confirmation dialogs. Each item is
+//           rendered as a _BinCard with restore and delete-forever action buttons.
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
@@ -74,6 +76,8 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     super.dispose();
   }
 
+  // Loads all soft-deleted items from AppState in parallel using Future.wait().
+  // Updates local lists and clears the loading flag on completion.
   Future<void> _load() async {
     setState(() => _isLoading = true);
     final results = await Future.wait([
@@ -91,6 +95,8 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     }
   }
 
+  // Shows a restore confirmation dialog, then calls AppState.restoreOrder()
+  // to move the order back to the active list. Refreshes the bin list after.
   Future<void> _restoreOrder(Order order) async {
     final confirm = await _restoreDialog(
         'Restore order ${order.orderId}?',
@@ -121,6 +127,8 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     await _load();
   }
 
+  // Shows a permanent-delete confirmation dialog, then calls hardDeleteOrder()
+  // to irreversibly remove the record from the database.
   Future<void> _hardDeleteOrder(Order order) async {
     final confirm = await _confirmDialog(
         'Permanently delete order ${order.orderId}?\n\nThis cannot be undone.');

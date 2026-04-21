@@ -1,13 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// local_order_repository.dart — Soft-delete support
+// local_order_repository.dart — SQLite-backed order repository
+// Purpose : Manages order and order_items CRUD against local SQLite with
+//           automatic Firestore sync via SyncQueue (offline-first).
 // Changes:
-//   • getAll()     — filters WHERE is_deleted = 0
-//   • delete()     — soft-delete only (is_deleted=1, deleted_at=now)
-//   • getDeleted() — NEW: Recycle Bin for orders
-//   • restore()    — NEW: un-delete an order
-//   • hardDelete() — NEW: permanent purge
-//   • getNextOrderNumber() — now queries ALL orders (including deleted)
-//                            to prevent order ID reuse
+//   • getAll()           — filters WHERE is_deleted = 0
+//   • delete()           — soft-delete only (is_deleted=1, deleted_at=now)
+//   • getDeleted()       — Recycle Bin for orders
+//   • restore()          — un-delete an order
+//   • hardDelete()       — permanent purge
+//   • getNextOrderNumber — queries ALL orders (including deleted) to prevent ID reuse
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'dart:convert';
@@ -18,29 +19,32 @@ import 'order_repository.dart';
 import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
+// Concrete SQLite + Firestore implementation of OrderRepository
 class LocalOrderRepository extends BaseRepository implements OrderRepository {
-  final _uuid  = const Uuid();
+  final _uuid  = const Uuid();           // UUID generator for item IDs without one
   final _cloud = FirestoreSync.instance;
   final _queue = SyncQueue.instance;
 
+  // Returns all active orders for a user using a JOIN query (N+1 fix)
   @override
   Future<List<Order>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
-    // Only return non-deleted orders
+    // Fetch only non-deleted orders first (basic query for cloud fallback check)
     final orderMaps = await database.query('orders',
         where: 'user_id = ? AND is_deleted = 0',
         whereArgs: [userId],
         orderBy: 'order_date DESC');
 
+    // Local is empty and online — restore orders from Firestore
     if (orderMaps.isEmpty && _queue.isOnline) {
       final cloudOrders = await _cloud.getOrders(userId);
       for (final o in cloudOrders) {
-        // Skip cloud orders that are soft-deleted
+        // Skip cloud orders that are also soft-deleted in Firestore
         if ((o['is_deleted'] as int? ?? 0) == 1) continue;
         try {
           final exists = await database.query('orders',
               where: 'id = ?', whereArgs: [o['id']]);
-          if (exists.isNotEmpty) continue;
+          if (exists.isNotEmpty) continue; // Already cached locally
           await database.insert('orders', {
             'id':            o['id'],
             'order_id':      o['order_id'],
@@ -53,6 +57,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
             'is_deleted':    0,
             'deleted_at':    null,
           });
+          // Insert each line item linked to this order
           final items = List<Map<String, dynamic>>.from(o['items'] ?? []);
           for (final item in items) {
             try {
@@ -70,7 +75,8 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       }
     }
 
-    // FIX N+1: Single JOIN query instead of 1 query per order
+    // FIX N+1: Single JOIN query instead of one query per order for items
+    // This replaces the old pattern of looping and querying order_items per order
     final joinRows = await database.rawQuery('''
       SELECT
         o.id          AS o_id,
@@ -91,11 +97,12 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       ORDER BY o.order_date DESC
     ''', [userId]);
 
-    // Group rows by order id
+    // Group flat JOIN rows back into Order objects with their OrderItem lists
     final ordersMap = <String, Map<String, dynamic>>{};
     final itemsMap  = <String, List<OrderItem>>{};
     for (final row in joinRows) {
       final oid = row['o_id'] as String;
+      // putIfAbsent ensures we only create the order entry once per unique order ID
       ordersMap.putIfAbsent(oid, () => {
         'id':            row['o_id'],
         'order_id':      row['o_order_id'],
@@ -105,6 +112,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         'order_date':    row['o_order_date'],
         'notes':         row['o_notes'],
       });
+      // oi_id is null when the LEFT JOIN finds no matching order_items row
       if (row['oi_id'] != null) {
         itemsMap.putIfAbsent(oid, () => []).add(_itemFromMap({
           'id':           row['oi_id'],
@@ -115,17 +123,17 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         }));
       }
     }
-    final orders = ordersMap.entries
+    // Assemble each order with its corresponding items list
+    return ordersMap.entries
         .map((e) => _orderFromMap(e.value, itemsMap[e.key] ?? []))
         .toList();
-    return orders;
   }, []);
 
-  // ── NEW: Get soft-deleted orders (Recycle Bin) ────────────────────────────
+  // Returns all soft-deleted orders for the Recycle Bin screen (JOIN query)
   @override
   Future<List<Order>> getDeleted(String userId) => safeCall(() async {
     final database = await db.database;
-    // FIX N+1: single JOIN query
+    // Same JOIN pattern as getAll() but filters is_deleted = 1
     final joinRows = await database.rawQuery('''
       SELECT
         o.id            AS o_id,
@@ -174,10 +182,11 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         .toList();
   }, []);
 
-  // ── NEW: Restore a soft-deleted order ─────────────────────────────────────
+  // Restores a soft-deleted order back to active and re-syncs it to Firestore
   @override
   Future<void> restore(String orderId) => safeVoidCall(() async {
     final database = await db.database;
+    // Clear the soft-delete flags
     await database.update(
       'orders',
       {'is_deleted': 0, 'deleted_at': null},
@@ -185,6 +194,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       whereArgs: [orderId],
     );
 
+    // Re-sync the order and its items to Firestore
     final rows = await database.query('orders',
         where: 'id = ?', whereArgs: [orderId]);
     if (rows.isNotEmpty) {
@@ -205,9 +215,11 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
+  // Inserts a new order and its line items in a single atomic SQLite transaction
   @override
   Future<void> add(Order order, String userId) => safeVoidCall(() async {
     final database = await db.database;
+    // Transaction ensures both the order row and all item rows are saved atomically
     await database.transaction((txn) async {
       await txn.insert('orders', _orderToMap(order, userId));
       for (final item in order.items) {
@@ -215,12 +227,14 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       }
     });
 
+    // Build Firestore payload with embedded items array
     final itemsData = order.items.map((i) => _itemToMap(i, order.id)).toList();
     final orderData = _orderToMap(order, userId);
 
     if (_queue.isOnline) {
       await _cloud.saveOrder(userId, orderData, itemsData);
     } else {
+      // Embed items inside the queue data using a '_items' key (decoded on flush)
       await _queue.enqueue(
         operation:  'save_order',
         collection: 'orders',
@@ -231,12 +245,14 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
+  // Updates the status column of a single order and syncs the change to Firestore
   @override
   Future<void> updateStatus(String orderId, OrderStatus status) => safeVoidCall(() async {
     final database = await db.database;
     await database.update('orders', {'status': status.displayName},
         where: 'id = ?', whereArgs: [orderId]);
 
+    // Retrieve userId from the row so we can address the correct Firestore document
     final existing = await database.query('orders',
         where: 'id = ?', whereArgs: [orderId]);
     if (existing.isNotEmpty) {
@@ -255,7 +271,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
-  // ── Soft-delete (replaces hard delete) ────────────────────────────────────
+  // Soft-deletes an order: sets is_deleted=1 and records deleted_at timestamp
   @override
   Future<void> delete(String orderId) => safeVoidCall(() async {
     final database = await db.database;
@@ -264,6 +280,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
     final now = DateTime.now().toIso8601String();
 
+    // Mark as deleted — data and items are preserved for Recycle Bin recovery
     await database.update(
       'orders',
       {'is_deleted': 1, 'deleted_at': now},
@@ -286,7 +303,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
-  // ── Hard delete (permanent purge — admin only) ────────────────────────────
+  // Permanently removes an order and its items from SQLite and Firestore
   @override
   Future<void> hardDelete(String orderId) => safeVoidCall(() async {
     final database = await db.database;
@@ -294,6 +311,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         where: 'id = ?', whereArgs: [orderId]);
     final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
 
+    // ON DELETE CASCADE on order_items ensures items are removed with the order
     await database.delete('orders', where: 'id = ?', whereArgs: [orderId]);
 
     if (userId.isNotEmpty) {
@@ -311,10 +329,12 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
-  // ── getNextOrderNumber queries ALL orders (inc. deleted) to prevent ID reuse
+  // Queries ALL orders (including soft-deleted) to compute the next order number
+  // This prevents ID gaps or reuse if a deleted order had the highest number
   @override
   Future<int> getNextOrderNumber(String userId) => safeCall(() async {
     final database = await db.database;
+    // Extract the numeric suffix from order_id (e.g. 'KNZ-042' → 42) and return max+1
     final result = await database.rawQuery(
         'SELECT COALESCE(MAX(CAST(SUBSTR(order_id, 5) AS INTEGER)), 0) + 1 AS next_num '
         'FROM orders WHERE user_id = ?',
@@ -322,6 +342,9 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     return (result.first['next_num'] as int? ?? 1);
   }, 1);
 
+  // ── Private mapping helpers ───────────────────────────────────────────────
+
+  // Converts an Order model to a SQLite column map (excludes items — stored separately)
   Map<String, dynamic> _orderToMap(Order o, String userId) => {
     'id':            o.id,
     'order_id':      o.orderId,
@@ -335,8 +358,9 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     'deleted_at':    null,
   };
 
+  // Converts an OrderItem model to a SQLite column map for the order_items table
   Map<String, dynamic> _itemToMap(OrderItem item, String orderId) => {
-    'id':           item.id.isEmpty ? _uuid.v4() : item.id,
+    'id':           item.id.isEmpty ? _uuid.v4() : item.id, // Generate ID if missing
     'order_id':     orderId,
     'product_id':   item.productId,
     'product_name': item.productName,
@@ -344,6 +368,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     'quantity':     item.quantity,
   };
 
+  // Assembles an Order model from a flat column map and its pre-fetched items list
   Order _orderFromMap(Map<String, dynamic> m, List<OrderItem> items) => Order(
     id:           m['id']            as String,
     orderId:      m['order_id']      as String,
@@ -355,6 +380,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     notes:        m['notes']         as String?,
   );
 
+  // Converts a raw SQLite row map into an OrderItem model instance
   OrderItem _itemFromMap(Map<String, dynamic> m) => OrderItem(
     id:          m['id']           as String? ?? _uuid.v4(),
     productId:   m['product_id']   as String,

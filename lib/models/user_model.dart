@@ -1,19 +1,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// user_model.dart — AppUser & ActivityLog entities
-// Demonstrates: Inheritance (extends BaseModel), Encapsulation (private fields
-// exposed via getters — no mutation allowed on user data).
+// user_model.dart — AppUser and ActivityLog entities
+// Purpose : Represents an authenticated admin user and an immutable audit log
+//           entry. Both are read-only after construction — no mutation allowed.
+// Demonstrates: Inheritance (extends BaseModel), Encapsulation (all fields
+// private, exposed via getters only — no public setters).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'base_model.dart';
 
-/// Authenticated user — immutable after creation (Encapsulation).
+/// Authenticated admin user — fully immutable after construction (Encapsulation).
+/// Changing user data always requires a new object; no in-place mutation.
 class AppUser extends BaseModel {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
   final String   _username;
-  final String   _role;
+  final String   _role;      // e.g. 'Administrator'
   final DateTime _createdAt;
 
-  // super.id — Dart super-parameter syntax (fixes use_super_parameters lint)
   const AppUser({
     required super.id,
     required String   username,
@@ -23,15 +25,20 @@ class AppUser extends BaseModel {
         _role      = role,
         _createdAt = createdAt;
 
-  // ── Getters (Encapsulation) ───────────────────────────────────────────────
+  // ── Public read-only getters (Encapsulation — no public setters) ──────────
   String   get username  => _username;
   String   get role      => _role;
   DateTime get createdAt => _createdAt;
 
-  // ── Computed getters ──────────────────────────────────────────────────────
+  // ── Computed display helpers ───────────────────────────────────────────────
+
+  // Capitalizes the first letter of the username for friendly display (e.g. "Admin")
   String get displayName  => _username[0].toUpperCase() + _username.substring(1).toLowerCase();
+
+  // Single uppercase letter used as the avatar placeholder in the sidebar
   String get avatarLetter => _username[0].toUpperCase();
 
+  // Serializes to a map for storage or Firestore writes
   @override
   Map<String, dynamic> toMap() => {
     'id':        id,
@@ -40,24 +47,25 @@ class AppUser extends BaseModel {
     'createdAt': _createdAt.toIso8601String(),
   };
 
-  // FIX 8: Dinagdag ang fromMap() factory — consistent sa OOP pattern ng
-  // Product, Order, at CustomerDebt na lahat ay may fromMap().
+  // FIX 8: Added fromMap() factory — consistent with OOP deserialization pattern
+  // used by Product, Order, and CustomerDebt.
+  // Note: reads 'name' (not 'username') and 'created_at' to match SQLite column names
   factory AppUser.fromMap(Map<String, dynamic> m) => AppUser(
     id:        m['id']         as String,
-    username:  m['name']       as String,
+    username:  m['name']       as String,   // SQLite column is 'name', not 'username'
     role:      m['role']       as String,
     createdAt: DateTime.parse(m['created_at'] as String),
   );
 }
 
-/// Activity log entry — immutable record of a past action.
+/// Activity log entry — an immutable record of a past user action.
+/// Entries are never updated after creation; audit integrity depends on this.
 class ActivityLog extends BaseModel {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
-  final String   _message;
+  final String   _message;   // Human-readable description of the action
   final DateTime _timestamp;
-  final String   _type;
+  final String   _type;      // Category tag: 'auth', 'product', 'order', 'payment', 'stock'
 
-  // super.id — Dart super-parameter syntax (fixes use_super_parameters lint)
   ActivityLog({
     required super.id,
     required String   message,
@@ -67,12 +75,14 @@ class ActivityLog extends BaseModel {
         _timestamp = timestamp,
         _type      = type;
 
-  // ── Getters (Encapsulation) ───────────────────────────────────────────────
+  // ── Public read-only getters (Encapsulation) ──────────────────────────────
   String   get message   => _message;
   DateTime get timestamp => _timestamp;
   String   get type      => _type;
 
-  // ── Computed getter ───────────────────────────────────────────────────────
+  // ── Computed display helper ────────────────────────────────────────────────
+
+  // Returns a friendly relative time string shown in the activity feed (e.g. "5m ago")
   String get timeAgo {
     final diff = DateTime.now().difference(_timestamp);
     if (diff.inSeconds < 60)  return 'just now';
@@ -81,6 +91,7 @@ class ActivityLog extends BaseModel {
     return '${diff.inDays}d ago';
   }
 
+  // Serializes to a map for SQLite activity_logs table or Firestore document
   @override
   Map<String, dynamic> toMap() => {
     'id':        id,

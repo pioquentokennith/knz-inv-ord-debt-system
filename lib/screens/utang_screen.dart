@@ -1,3 +1,14 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// utang_screen.dart
+// Purpose : Debt (utang) tracker screen showing all customer debts with payment
+//           management and receipt printing.
+// Function: Applies FIX 5 (extracted dialogs) and FIX 6 (AppStateBuilder scoping).
+//           The header summary (_UtangHeader) and the debt list are each wrapped in
+//           separate AppStateBuilder instances so only the affected subtrees rebuild.
+//           Local state (_search, _showPaidOnly) filters the debt list without
+//           triggering AppState rebuilds. Each debt card (_DebtCard) is expandable
+//           to show payment history and supports Add Payment, Receipt, and Delete.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
@@ -36,6 +47,8 @@ class _UtangScreenState extends State<UtangScreen> {
     super.dispose();
   }
 
+  // Filters debts by search query (customer name or order ID) and paid/unpaid toggle.
+  // Sorts overdue debts to the top, then by most recently created.
   List<CustomerDebt> _filtered(List<CustomerDebt> debts) {
     return debts.where((d) {
       final matchSearch =
@@ -108,12 +121,12 @@ class _UtangScreenState extends State<UtangScreen> {
     );
   }
 
-  // ── FIX 5: Now delegates to UtangReceiptScreen (from utang_receipt_printer.dart)
+  // Navigates to the full-screen utang receipt viewer and BT printer
   void _showUtangReceipt(CustomerDebt debt) {
     UtangReceiptScreen.show(context, debt);
   }
 
-  // ── FIX 5: Now delegates to UtangPaymentDialog (from utang_payment_dialog.dart)
+  // Opens the payment recording dialog for the given debt record
   void _showPaymentDialog(CustomerDebt debt) {
     showDialog(
       context: context,
@@ -121,7 +134,8 @@ class _UtangScreenState extends State<UtangScreen> {
     );
   }
 
-  // ── Confirm Delete (kept here — it's screen-level logic) ─────────────
+  // Shows a confirmation dialog then soft-deletes the debt via AppState.
+  // Soft-delete moves the record to the Recycle Bin rather than permanently removing it.
   void _confirmDelete(CustomerDebt debt) {
     showDialog(
       context: context,

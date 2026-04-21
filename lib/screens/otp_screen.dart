@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// otp_screen.dart
+// Purpose : Email OTP verification screen used for registration and password reset.
+// Function: Generates a 6-digit OTP on load, sends it via the Brevo SMTP API
+//           (credentials loaded from .env — never hardcoded), and displays six
+//           individual digit input boxes. Auto-advances focus to the next box on
+//           each digit entry and auto-submits when all 6 digits are filled.
+//           A 60-second countdown timer controls the "Resend OTP" button.
+//           Calls the onVerified callback and navigates back on success.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
@@ -68,7 +78,8 @@ class _OtpScreenState extends State<OtpScreen> {
     super.dispose();
   }
 
-  // ── Generate OTP at i-send via Brevo ──────────────────────────────────
+  // Generates a secure 6-digit OTP and sends it to the user's email via Brevo SMTP API.
+  // Guards against missing API key and no internet connection. Starts the 60s resend timer.
   Future<void> _sendOtp({bool resend = false}) async {
     if (!mounted) return;
 
@@ -168,7 +179,9 @@ class _OtpScreenState extends State<OtpScreen> {
     }
   }
 
-  // ── Verify OTP ────────────────────────────────────────────────────────
+  // Compares the entered 6-digit code against the generated OTP.
+  // On match, calls onVerified and pops back to the previous screen.
+  // On mismatch, shows an error and clears all input boxes.
   void _verify() async {
     if (_enteredOtp.length < 6) {
       setState(() {
@@ -202,7 +215,7 @@ class _OtpScreenState extends State<OtpScreen> {
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────
+  // Joins the 6 individual digit controller values into a single OTP string
   String get _enteredOtp => _controllers.map((c) => c.text).join();
 
   void _startResendTimer() {

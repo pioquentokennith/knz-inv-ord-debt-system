@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// products_screen.dart
+// Purpose : Product catalogue grid showing all products as visual cards.
+// Function: Uses AppStateBuilder (FIX 6) to scope rebuilds to the grid only.
+//           Renders a 2-column grid (or 1 column if screen width < 400px) of
+//           _ProductCard widgets. Each card shows the product image, name, category,
+//           price, stock badge, stock progress bar, and action buttons (Edit Stock,
+//           Edit, Delete). Cards have a hover elevation animation via MouseRegion
+//           for desktop users.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
@@ -130,6 +140,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 }
+// Product catalogue card with a hover elevation effect for desktop users.
+// Displays the product image, name, category, price, stock badge, progress bar,
+// and action buttons (Edit Stock, Edit, Delete).
 class _ProductCard extends StatefulWidget {
   final Product product;
   final double stockPct;

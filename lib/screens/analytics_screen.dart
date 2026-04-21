@@ -1,3 +1,13 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// analytics_screen.dart
+// Purpose : Displays business analytics including revenue stats, order breakdowns,
+//           debt summaries, and top-selling products.
+// Function: Uses AppStateBuilder (FIX 6) so only the data section rebuilds on
+//           AppState changes. Renders a pie chart of orders by status via fl_chart,
+//           a utang breakdown with payment progress bars, and a top-5 products list
+//           with per-day sales that expand/collapse on tap. All data is derived from
+//           AppState.orders and AppState.debts at build time.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
@@ -20,7 +30,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // FIX 6: No _state, no addListener, no _onStateChange — removed.
   final Set<String> _expandedProducts = {};
 
-  /// Returns top 5 products by all-time sales
+  // Aggregates all non-cancelled order items into a map of product name → (date → qty sold).
+  // Returns the top 5 products sorted by total units sold, each with a per-day breakdown.
   List<_ProductSalesData> _topProductsAllTime() {
     final map = <String, Map<String, int>>{};
     for (final order in AppState().orders) {
@@ -46,6 +57,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return result.take(5).toList();
   }
 
+  // Returns the chart/badge color for a given order status for the pie chart sections
   Color _statusColor(OrderStatus status) {
     switch (status) {
       case OrderStatus.pending:

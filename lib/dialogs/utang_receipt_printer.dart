@@ -1,15 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // utang_receipt_printer.dart
-// Usage: UtangReceiptScreen.show(context, debt);
-//
-// OOP Pillars applied (mirrors receipt_screen.dart pattern):
-//   • Abstraction   — UtangReceiptPrinter separates ESC/POS logic from the UI.
-//   • Encapsulation — all state lives inside _UtangPrintPanelState; sealed
-//                     BtPrintState prevents invalid state combinations.
-//   • Inheritance   — all preview widgets extend ReceiptWidget<T>.
-//   • Polymorphism  — BtPrintPanelShell + BtStatusBar dispatch on sealed state.
+// Purpose : Full-screen receipt viewer and Bluetooth thermal printer for utang
+//           (debt) statements.
+// Function: UtangReceiptPrinter builds ESC/POS byte sequences from a CustomerDebt
+//           object for 58mm thermal printers. UtangReceiptScreen shows an on-screen
+//           preview using shared receipt widgets (ReceiptCard, ReceiptHeader, etc.)
+//           and embeds a Bluetooth print panel (_UtangPrintPanel) that manages the
+//           full BT scan → connect → print → disconnect lifecycle using the sealed
+//           BtPrintState hierarchy defined in receipt_shared_widgets.dart.
+// Usage   : UtangReceiptScreen.show(context, debt);
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';

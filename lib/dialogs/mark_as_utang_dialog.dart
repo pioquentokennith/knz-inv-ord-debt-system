@@ -1,11 +1,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // mark_as_utang_dialog.dart
-// FIX 5: Extracted from utang_screen.dart
-// NEW:   Duplicate check — kung may existing na utang ang orderId, hindi
-//        na pwedeng mag-record ulit para hindi malito ang admin/user.
-// Usage: MarkAsUtangDialog.show(context, order);
+// Purpose : Dialog for converting a completed order into a debt (utang) record.
+// Function: First checks if the order already has an existing debt record to prevent
+//           duplicates. If not, shows a form where the admin can enter an initial
+//           payment amount (0 if nothing was paid). Validates the amount, shows a
+//           confirmation dialog, then creates a CustomerDebt record in AppState.
+//           Updates the order status to 'utang' and auto-navigates to the Utang tab.
+// Usage   : MarkAsUtangDialog.show(context, order);
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
@@ -21,6 +23,8 @@ class MarkAsUtangDialog extends StatefulWidget {
 
   const MarkAsUtangDialog({super.key, required this.order});
 
+  // Factory method that checks for an existing debt record before opening the dialog.
+  // Shows a snackbar error and returns early if a duplicate is found.
   static void show(BuildContext context, Order order) {
     // ── DUPLICATE CHECK ───────────────────────────────────────────────────
     // Bago buksan ang dialog, tingnan kung may existing na utang ang order.
@@ -58,6 +62,7 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
   final _uuid = const Uuid();
   String? _error;
 
+  // Calculates the total order amount by summing all item subtotals
   double get _orderTotal =>
       widget.order.items.fold(0.0, (sum, i) => sum + i.subtotal);
 
@@ -67,6 +72,9 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
     super.dispose();
   }
 
+  // Validates the initial payment amount, confirms with the user, creates
+  // a CustomerDebt record, updates the order status to 'utang', then
+  // navigates to the Utang tab automatically.
   Future<void> _submit() async {
     final initialPaid = double.tryParse(_amountCtrl.text.trim()) ?? 0;
 

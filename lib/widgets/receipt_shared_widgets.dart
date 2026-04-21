@@ -1,24 +1,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // receipt_shared_widgets.dart
-// Shared base widgets used by both ReceiptScreen and UtangReceiptScreen.
+// Purpose : Shared base classes and UI components used by both ReceiptScreen
+//           (order receipts) and UtangReceiptScreen (utang statements).
+// Function: Defines the abstract ReceiptWidget<T> base class that enforces a
+//           typed-data contract via generics. Provides concrete widgets:
+//           ReceiptDivider, ReceiptInfoRow, ReceiptHeader, ReceiptCard,
+//           ReceiptFooter, and ReceiptSection — all extending ReceiptWidget<T>.
+//           Also defines the sealed BtPrintState hierarchy (BtIdle, BtScanning,
+//           BtScanned, BtConnecting, BtConnected, BtPrinting, BtError) and
+//           Bluetooth UI components: BtStatusBar, BtDeviceList, BtGoldButton,
+//           BtOutlineButton, BtActionButtons, BtPrintPanelShell.
 //
 // OOP Pillars applied:
-//   • Abstraction   — abstract class ReceiptWidget enforces a typed-data contract
-//                     via the generic [data] getter; every receipt widget must
-//                     declare what data it owns.
-//   • Encapsulation — all fields are final + constructor-injected; no public
-//                     mutable state.  BtPrintState is a sealed class so only
-//                     the declared subtypes can exist — illegal states become
-//                     compile-time errors.
-//   • Inheritance   — ReceiptDivider / ReceiptInfoRow / ReceiptHeader /
-//                     ReceiptCard / ReceiptFooter / ReceiptSection all extend
-//                     ReceiptWidget, which itself extends StatelessWidget.
-//   • Polymorphism  — BtStatusBar resolves _color / _icon / _isBusy from the
-//                     runtime BtPrintState subtype; BtActionButtons branches
-//                     on the same sealed type — exhaustive pattern matching
-//                     ensures every state is handled.
+//   Abstraction   — abstract class ReceiptWidget enforces a typed-data contract
+//                   via the generic [data] getter.
+//   Encapsulation — all fields are final + constructor-injected; BtPrintState is
+//                   sealed so only declared subtypes can exist.
+//   Inheritance   — ReceiptDivider / ReceiptInfoRow / ReceiptHeader / ReceiptCard /
+//                   ReceiptFooter / ReceiptSection all extend ReceiptWidget.
+//   Polymorphism  — BtStatusBar and BtActionButtons branch on the sealed BtPrintState
+//                   subtype with exhaustive pattern matching.
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter/foundation.dart';

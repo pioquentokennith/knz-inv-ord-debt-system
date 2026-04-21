@@ -1,3 +1,11 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// edit_stock_dialog.dart
+// Purpose : Dialog for directly editing the stock quantity of a specific product.
+// Function: Displays a numeric text field pre-filled with the current stock value,
+//           plus increment (+) and decrement (-) icon buttons for quick adjustments.
+//           On "Update", shows a confirmation dialog then calls AppState.updateStock()
+//           to persist the change. Closes itself after a successful update.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/app_constants.dart';
@@ -5,6 +13,7 @@ import '../core/app_state.dart';
 import '../models/product_model.dart';
 import '../widgets/shared_widgets.dart';
 
+// Dialog widget for editing the stock quantity of a single product
 class EditStockDialog extends StatefulWidget {
   final Product product;
   const EditStockDialog({super.key, required this.product});
@@ -14,6 +23,7 @@ class EditStockDialog extends StatefulWidget {
 }
 
 class _EditStockDialogState extends State<EditStockDialog> {
+  // Controller pre-filled with the product's current stock quantity
   late TextEditingController _ctrl;
 
   @override
@@ -53,6 +63,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
                 DarkIconButton(
                   icon: Icons.remove,
                   color: AppColors.error,
+                  // Decrement stock — floor at 0 to prevent negative stock values
                   onPressed: () {
                     final v = int.tryParse(_ctrl.text) ?? 0;
                     if (v > 0) _ctrl.text = (v - 1).toString();
@@ -71,6 +82,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
                 DarkIconButton(
                   icon: Icons.add,
                   color: AppColors.success,
+                  // Increment stock — no upper limit enforced here
                   onPressed: () {
                     final v = int.tryParse(_ctrl.text) ?? 0;
                     _ctrl.text = (v + 1).toString();
@@ -108,6 +120,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
                   child: GoldButton(
                     label: 'Update',
                     height: 44,
+                    // Parse the field value, confirm with the user, then persist the update
                     onPressed: () async {
                       final v = int.tryParse(_ctrl.text) ?? 0;
                       final confirmed = await showConfirmDialog(

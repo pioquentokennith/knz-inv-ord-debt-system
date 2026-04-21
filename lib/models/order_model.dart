@@ -1,26 +1,32 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// order_model.dart — Order & OrderItem entities
+// order_model.dart — Order and OrderItem entities
+// Purpose : Represents a customer purchase and its individual line items.
+//           OrderStatus uses map-based dispatch instead of switch statements
+//           for a cleaner, extensible polymorphic design.
 // OOP Pillars:
 //   • Inheritance  — OrderItem and Order both extend BaseModel
 //   • Encapsulation— private fields; public access via getters only
-//   • Polymorphism — toMap() overrides BaseModel; OrderStatus extension replaces
-//                    switch-statement with map-based dispatch (Polymorphism)
+//   • Polymorphism — toMap() overrides BaseModel; OrderStatus extension uses
+//                    map-based dispatch instead of switch blocks
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
 import 'base_model.dart';
 
+// All possible lifecycle states for an order
 enum OrderStatus {
-  pending,
-  processing,
-  shipped,
-  delivered,
-  cancelled,
-  utang,
+  pending,    // Newly created, not yet processed
+  processing, // Being prepared / packed
+  shipped,    // Dispatched to the customer
+  delivered,  // Received by the customer (counts as collected revenue)
+  cancelled,  // Voided — excluded from revenue calculations
+  utang,      // Customer owes payment (debt recorded separately)
 }
 
+// Extension adds display name, color, and parse helper to OrderStatus
 extension OrderStatusExtension on OrderStatus {
-  // ── Polymorphic map dispatch — replaces repetitive switch blocks ──────────
+  // ── Map-based dispatch — replaces repetitive switch blocks (Polymorphism) ──
+  // Centralizing these in a map makes adding a new status a one-line change
   static const _displayNames = {
     OrderStatus.pending:    'Pending',
     OrderStatus.processing: 'Processing',
@@ -30,21 +36,23 @@ extension OrderStatusExtension on OrderStatus {
     OrderStatus.utang:      'Utang',
   };
 
+  // Semantic UI colors for status badges — one place to change all badge colors
   static const _colors = {
-    OrderStatus.pending:    Color(0xFFFFA726),
-    OrderStatus.processing: Color(0xFF29B6F6),
-    OrderStatus.shipped:    Color(0xFFAB47BC),
-    OrderStatus.delivered:  Color(0xFF43A047),
-    OrderStatus.cancelled:  Color(0xFFE53935),
-    OrderStatus.utang:      Color(0xFFD4AF37),
+    OrderStatus.pending:    Color(0xFFFFA726), // Orange — waiting
+    OrderStatus.processing: Color(0xFF29B6F6), // Blue — in progress
+    OrderStatus.shipped:    Color(0xFFAB47BC), // Purple — on the way
+    OrderStatus.delivered:  Color(0xFF43A047), // Green — completed
+    OrderStatus.cancelled:  Color(0xFFE53935), // Red — voided
+    OrderStatus.utang:      Color(0xFFD4AF37), // Gold — credit/debt
   };
 
-  /// Display-friendly name — no switch needed (map-based Polymorphism).
+  /// User-friendly display name for this status (no switch needed)
   String get displayName => _displayNames[this] ?? name;
 
-  /// Semantic color for UI badges — centralised, no scattered switch blocks.
+  /// Color used in status badges across the UI
   Color get color => _colors[this] ?? const Color(0xFF888888);
 
+  // Parses a stored status string back to the enum; defaults to pending on unknown
   static OrderStatus fromString(String value) {
     return OrderStatus.values.firstWhere(
       (e) => e.displayName.toLowerCase() == value.toLowerCase(),
@@ -53,11 +61,11 @@ extension OrderStatusExtension on OrderStatus {
   }
 }
 
-/// A single line item inside an order (Inheritance from BaseModel).
+/// A single line item inside an order (one row per product per order).
 class OrderItem extends BaseModel {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
   final String _productId;
-  final String _productName;
+  final String _productName; // Denormalized — preserves the name even if product is later edited
   final double _unitPrice;
   final int    _quantity;
 
@@ -72,13 +80,15 @@ class OrderItem extends BaseModel {
         _unitPrice   = unitPrice,
         _quantity    = quantity;
 
-  // ── Getters (Encapsulation) ───────────────────────────────────────────────
+  // ── Public read-only getters (Encapsulation) ──────────────────────────────
   String get productId   => _productId;
   String get productName => _productName;
   double get unitPrice   => _unitPrice;
   int    get quantity    => _quantity;
+  // Computed subtotal — derived from price and quantity, never stored separately
   double get subtotal    => _unitPrice * _quantity;
 
+  // Returns a new OrderItem with an updated quantity (used when editing order items)
   OrderItem copyWith({int? quantity}) => OrderItem(
     id:          id,
     productId:   _productId,
@@ -87,7 +97,7 @@ class OrderItem extends BaseModel {
     quantity:    quantity ?? _quantity,
   );
 
-  /// Polymorphism: overrides BaseModel.toMap()
+  // Serializes to a map for SQLite order_items table or Firestore array element
   @override
   Map<String, dynamic> toMap() => {
     'id':          id,
@@ -97,6 +107,7 @@ class OrderItem extends BaseModel {
     'quantity':    _quantity,
   };
 
+  // Deserializes a map back into an OrderItem (used when reading from DB or Firestore)
   factory OrderItem.fromMap(Map<String, dynamic> map) => OrderItem(
     id:          map['id']           as String? ?? '',
     productId:   map['productId']    as String? ?? '',
@@ -106,17 +117,17 @@ class OrderItem extends BaseModel {
   );
 }
 
-/// Order entity — inherits from BaseModel (Inheritance).
+/// Order entity — the parent record that groups OrderItems under one customer purchase.
 class Order extends BaseModel {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
-  final String          _orderId;
+  final String          _orderId;       // Human-readable ID e.g. "KNZ-042"
   final String          _customerName;
   final List<OrderItem> _items;
   final double          _totalAmount;
   final DateTime        _orderDate;
   final String?         _notes;
 
-  /// [status] is intentionally mutable — orders change status over their lifecycle.
+  /// [status] is intentionally mutable — orders change state over their lifecycle
   OrderStatus status;
 
   Order({
@@ -135,23 +146,28 @@ class Order extends BaseModel {
         _orderDate    = orderDate,
         _notes        = notes;
 
-  // ── Getters (Encapsulation) ───────────────────────────────────────────────
+  // ── Public read-only getters (Encapsulation) ──────────────────────────────
   String          get orderId      => _orderId;
   String          get customerName => _customerName;
+  // Unmodifiable view prevents external code from mutating the items list
   List<OrderItem> get items        => List.unmodifiable(_items);
   double          get totalAmount  => _totalAmount;
   DateTime        get orderDate    => _orderDate;
   String?         get notes        => _notes;
 
-  // ── Computed getters ──────────────────────────────────────────────────────
+  // ── Computed properties ───────────────────────────────────────────────────
+
+  // Returns a display-friendly product summary (e.g. "Rose Oud +2 more")
   String get productName {
     if (_items.isEmpty) return '';
     if (_items.length == 1) return _items.first.productName;
     return '${_items.first.productName} +${_items.length - 1} more';
   }
 
+  // Total number of units ordered across all line items
   int get quantity => _items.fold(0, (sum, i) => sum + i.quantity);
 
+  // Returns a new Order with only the specified fields changed
   Order copyWith({
     String?           id,
     String?           orderId,
@@ -174,7 +190,7 @@ class Order extends BaseModel {
     );
   }
 
-  /// Polymorphism: overrides BaseModel.toMap()
+  // Serializes the order to a map (items as a nested list of maps)
   @override
   Map<String, dynamic> toMap() => {
     'id':           id,
@@ -187,13 +203,17 @@ class Order extends BaseModel {
     'notes':        _notes,
   };
 
+  // Deserializes a map back into an Order, handling both new (items list) and
+  // legacy (single productName) formats for backward compatibility
   factory Order.fromMap(Map<String, dynamic> map) {
     final List<OrderItem> items;
     if (map['items'] != null) {
+      // New format — items stored as an array
       items = (map['items'] as List)
           .map((i) => OrderItem.fromMap(i as Map<String, dynamic>))
           .toList();
     } else if (map['productName'] != null) {
+      // Legacy format — single product stored as flat fields
       final total = (map['totalAmount'] as num?)?.toDouble() ?? 0;
       final qty   = map['quantity'] as int? ?? 1;
       items = [
@@ -206,7 +226,7 @@ class Order extends BaseModel {
         )
       ];
     } else {
-      items = [];
+      items = []; // No item data available
     }
 
     return Order(

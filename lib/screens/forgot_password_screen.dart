@@ -1,3 +1,12 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// forgot_password_screen.dart
+// Purpose : Allows an existing user to reset their password via OTP verification.
+// Function: Collects username, email, new password, and confirmation. Validates
+//           all fields (email format, password length, password match) before
+//           navigating to OtpScreen for email verification. Once the OTP is
+//           confirmed, calls AppState.resetPassword() to update the stored password.
+//           Shows a success view with a "Back to Sign In" button on completion.
+// ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import '../core/app_constants.dart';
@@ -49,6 +58,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     super.dispose();
   }
 
+  // Validates all fields then navigates to OtpScreen for email verification.
+  // The OTP screen calls _resetPassword() in its onVerified callback.
   void _proceed() {
     final username = _userCtrl.text.trim();
     final email    = _emailCtrl.text.trim();
@@ -87,6 +98,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen>
     );
   }
 
+  // Called after OTP verification. Updates the stored password via AppState.
+  // Shows a success view on completion or an error message if username not found.
   Future<void> _resetPassword(String username, String newPass) async {
     setState(() => _isLoading = true);
     final success = await AppState().resetPassword(username, newPass);

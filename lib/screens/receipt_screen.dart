@@ -1,3 +1,14 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// receipt_screen.dart
+// Purpose : Full-screen receipt viewer and Bluetooth thermal printer for orders.
+// Function: OrderReceiptPrinter is a static utility class (Abstraction / Single
+//           Responsibility) that builds ESC/POS byte sequences for 58mm printers.
+//           ReceiptScreen shows an on-screen preview using the shared receipt
+//           widget hierarchy (ReceiptCard, ReceiptHeader, ReceiptInfoRow, etc.)
+//           and embeds _OrderPrintPanel which manages the full Bluetooth lifecycle
+//           (scan → connect → print → disconnect) using the sealed BtPrintState.
+// Usage   : ReceiptScreen.show(context, order);
+// ─────────────────────────────────────────────────────────────────────────────
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
@@ -24,8 +35,9 @@ class OrderReceiptPrinter {
   static final _cur     = NumberFormat.currency(symbol: 'P', decimalDigits: 2);
   static final _dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
 
-  /// Builds the ESC/POS byte sequence for [order].
-  /// Returns an empty list on failure.
+  // Builds the full ESC/POS byte sequence for a 58mm thermal printer.
+  // Outputs: store header, order metadata, itemized list with prices,
+  // total, optional notes, and a cut command at the end.
   static Future<List<int>> buildBytes(Order order) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
@@ -100,8 +112,8 @@ class ReceiptScreen extends StatelessWidget {
 
   const ReceiptScreen({super.key, required this.order});
 
-  /// Factory navigation method — callers never instantiate ReceiptScreen
-  /// directly, keeping the navigation contract stable.
+  // Static factory navigation method — callers never construct ReceiptScreen directly.
+  // Pushes a MaterialPageRoute so the back button always returns to the calling screen.
   static void show(BuildContext context, Order order) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => ReceiptScreen(order: order)),

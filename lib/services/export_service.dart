@@ -1,9 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // export_service.dart — CSV and PDF export for orders, inventory, and utang
+// Purpose : Generates shareable/printable reports from in-memory data lists.
+//           Abstracts all file I/O, font loading, and platform share-sheet logic
+//           so screens only call a single static method per report type.
 //
 // FIX: Peso sign (₱) rendering fix —
-//   • PDF  : loads NotoSans from Google Fonts (supports ₱ natively)
-//   • CSV  : uses "PHP" label in column headers + UTF-8 BOM for Excel
+//   • PDF : loads NotoSans from Google Fonts (supports ₱ natively)
+//   • CSV : uses "PHP" label in column headers + UTF-8 BOM for Excel
 //   • Values in CSV: plain numbers (no symbol) so Excel can sum them
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -21,41 +24,47 @@ import '../models/product_model.dart';
 import '../models/debt_model.dart';
 import '../core/app_constants.dart';
 
+// All methods are static — ExportService is a namespace, not an instance
 class ExportService {
-  ExportService._();
+  ExportService._(); // Private constructor prevents instantiation
 
+  // ── Shared formatters ─────────────────────────────────────────────────────
   static final _pdfCurrency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
   static final _dateFormat  = DateFormat('yyyy-MM-dd');
   static final _dateTimeFmt = DateFormat('yyyy-MM-dd HH:mm');
 
-  // ── Font cache ─────────────────────────────────────────────────────────────
+  // ── Font cache — loaded once and reused for all PDF builds ────────────────
   static pw.Font? _regular;
   static pw.Font? _bold;
 
-  /// Load NotoSans from Google Fonts — has full Unicode coverage (₱ included).
-  /// Falls back to Helvetica if offline (peso will render as box, rest is fine).
+  /// Loads NotoSans from Google Fonts — has full Unicode coverage including ₱.
+  /// Falls back to Helvetica if offline (peso will render as a box, rest is fine).
   static Future<void> _ensureFonts() async {
-    if (_regular != null) return;
+    if (_regular != null) return; // Already loaded — skip network request
     try {
       _regular = await PdfGoogleFonts.notoSansRegular();
       _bold    = await PdfGoogleFonts.notoSansBold();
     } catch (_) {
+      // Offline fallback — built-in Helvetica does not support ₱ but is always available
       _regular = pw.Font.helvetica();
       _bold    = pw.Font.helveticaBold();
     }
   }
 
+  // Builds a ThemeData using the loaded fonts for consistent PDF typography
   static pw.ThemeData _theme() => pw.ThemeData.withFont(
         base: _regular ?? pw.Font.helvetica(),
         bold: _bold    ?? pw.Font.helveticaBold(),
       );
 
   // ════════════════════════════════════════════════════════════════════════════
-  // CSV
+  // CSV EXPORTS — lightweight tabular data for spreadsheet use
   // ════════════════════════════════════════════════════════════════════════════
 
+  // Exports all orders to a CSV file and opens the system share sheet
   static Future<void> exportOrdersCsv(List<Order> orders) async {
     final rows = <List<dynamic>>[
+      // Header row — PHP label instead of ₱ so Excel parses it correctly
       ['Order ID', 'Customer', 'Date', 'Status', 'Items',
        'Total Amount (PHP)', 'Notes'],
     ];
@@ -65,8 +74,9 @@ class ExportService {
         o.customerName,
         _dateFormat.format(o.orderDate),
         o.status.displayName,
+        // Join multiple items into a single readable cell
         o.items.map((i) => '${i.productName} x${i.quantity}').join(' | '),
-        o.totalAmount.toStringAsFixed(2),
+        o.totalAmount.toStringAsFixed(2), // Plain number — Excel can sum these
         o.notes ?? '',
       ]);
     }
@@ -75,6 +85,7 @@ class ExportService {
         '${AppStrings.appName} — Orders Export');
   }
 
+  // Exports all inventory products to a CSV file and opens the share sheet
   static Future<void> exportInventoryCsv(List<Product> products) async {
     final rows = <List<dynamic>>[
       ['Name', 'Category', 'Price (PHP)', 'Stock Qty',
@@ -87,7 +98,7 @@ class ExportService {
         p.price.toStringAsFixed(2),
         p.stockQty,
         p.minStockLevel,
-        p.isLowStock ? 'Low Stock' : 'OK',
+        p.isLowStock ? 'Low Stock' : 'OK', // Human-readable status flag
         p.description,
         _dateFormat.format(p.createdAt),
       ]);
@@ -97,6 +108,7 @@ class ExportService {
         '${AppStrings.appName} — Inventory Export');
   }
 
+  // Exports all debt records to a CSV file and opens the share sheet
   static Future<void> exportDebtsCsv(List<CustomerDebt> debts) async {
     final rows = <List<dynamic>>[
       ['Customer', 'Order ID', 'Total (PHP)', 'Paid (PHP)',
@@ -120,9 +132,10 @@ class ExportService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // PDF — export (share)
+  // PDF EXPORTS — formatted reports for sharing as files
   // ════════════════════════════════════════════════════════════════════════════
 
+  // Builds an orders PDF and opens the system share sheet
   static Future<void> exportOrdersPdf(List<Order> orders,
       {required String businessName, String? subtitle}) async {
     await _ensureFonts();
@@ -134,6 +147,7 @@ class ExportService {
         '${AppStrings.appName} — Orders Report');
   }
 
+  // Builds an inventory PDF and opens the system share sheet
   static Future<void> exportInventoryPdf(List<Product> products,
       {required String businessName}) async {
     await _ensureFonts();
@@ -144,6 +158,7 @@ class ExportService {
         '${AppStrings.appName} — Inventory Report');
   }
 
+  // Builds a debts PDF and opens the system share sheet
   static Future<void> exportDebtsPdf(List<CustomerDebt> debts,
       {required String businessName}) async {
     await _ensureFonts();
@@ -155,18 +170,20 @@ class ExportService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // PDF — print
+  // PDF PRINTING — sends the report directly to a physical printer
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// FIX: Removed unused [context] parameter — Printing.layoutPdf doesn't need it.
+  // FIX: Removed unused [context] parameter — Printing.layoutPdf doesn't need it.
   static Future<void> printOrdersPdf(List<Order> orders,
       {required String businessName}) async {
     await _ensureFonts();
     final pdf = _buildOrdersPdf(orders, businessName: businessName);
+    // layoutPdf triggers the system print dialog
     await Printing.layoutPdf(
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Orders Report');
   }
 
+  // Prints the inventory report via the system print dialog
   static Future<void> printInventoryPdf(List<Product> products,
       {required String businessName}) async {
     await _ensureFonts();
@@ -175,6 +192,7 @@ class ExportService {
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Inventory Report');
   }
 
+  // Prints the debts report via the system print dialog
   static Future<void> printDebtsPdf(List<CustomerDebt> debts,
       {required String businessName}) async {
     await _ensureFonts();
@@ -184,13 +202,15 @@ class ExportService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // PDF BUILDERS
+  // PDF DOCUMENT BUILDERS — construct the pw.Document object
   // ════════════════════════════════════════════════════════════════════════════
 
+  // Builds the multi-page orders PDF document with summary boxes and a data table
   static pw.Document _buildOrdersPdf(List<Order> orders,
       {required String businessName, String? subtitle}) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
+    // Only delivered orders count as collected revenue
     final revenue = orders
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
@@ -203,6 +223,7 @@ class ExportService {
           subtitle ?? 'Generated: $now', ctx.pageNumber, ctx.pagesCount),
       footer: (ctx) => _footer(businessName),
       build: (ctx) => [
+        // Summary metric boxes at the top of the report
         pw.Row(children: [
           _box('Total Orders', '${orders.length}'),
           pw.SizedBox(width: 12),
@@ -212,6 +233,7 @@ class ExportService {
               '${orders.where((o) => o.status == OrderStatus.pending).length}'),
         ]),
         pw.SizedBox(height: 20),
+        // Data table with alternating row colors for readability
         pw.Table(
           border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           columnWidths: {
@@ -219,14 +241,14 @@ class ExportService {
             1: const pw.FixedColumnWidth(100),
             2: const pw.FixedColumnWidth(75),
             3: const pw.FixedColumnWidth(65),
-            4: const pw.FlexColumnWidth(),
+            4: const pw.FlexColumnWidth(), // Items column takes remaining space
             5: const pw.FixedColumnWidth(80),
           },
           children: [
             _headerRow(['Order ID', 'Customer', 'Date', 'Status', 'Items', 'Total']),
             ...orders.asMap().entries.map((e) {
               final o = e.value;
-              final even = e.key % 2 == 0;
+              final even = e.key % 2 == 0; // Zebra striping for readability
               return pw.TableRow(
                 decoration: pw.BoxDecoration(
                     color: even ? PdfColors.grey50 : PdfColors.white),
@@ -249,11 +271,13 @@ class ExportService {
     return pdf;
   }
 
+  // Builds the multi-page inventory PDF document
   static pw.Document _buildInventoryPdf(List<Product> products,
       {required String businessName}) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
     final lowStock  = products.where((p) => p.isLowStock).length;
+    // Estimated stock value = sum of (price × qty) for all products
     final totalVal  = products.fold(0.0, (s, p) => s + p.price * p.stockQty);
 
     pdf.addPage(pw.MultiPage(
@@ -275,7 +299,7 @@ class ExportService {
         pw.Table(
           border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           columnWidths: {
-            0: const pw.FlexColumnWidth(2),
+            0: const pw.FlexColumnWidth(2),   // Name column is widest
             1: const pw.FixedColumnWidth(90),
             2: const pw.FixedColumnWidth(80),
             3: const pw.FixedColumnWidth(55),
@@ -294,13 +318,12 @@ class ExportService {
                   _cell(p.name, bold: true),
                   _cell(p.category.displayName),
                   _cell(_pdfCurrency.format(p.price)),
+                  // Highlight low-stock quantities in red as a visual warning
                   _cell('${p.stockQty}',
                       color: p.isLowStock ? PdfColors.red700 : PdfColors.black),
                   _cell('${p.minStockLevel}'),
                   _cell(p.isLowStock ? 'Low Stock' : 'OK',
-                      color: p.isLowStock
-                          ? PdfColors.red700
-                          : PdfColors.green700),
+                      color: p.isLowStock ? PdfColors.red700 : PdfColors.green700),
                 ],
               );
             }),
@@ -311,6 +334,7 @@ class ExportService {
     return pdf;
   }
 
+  // Builds the multi-page debts/utang PDF document
   static pw.Document _buildDebtsPdf(List<CustomerDebt> debts,
       {required String businessName}) {
     final pdf = pw.Document();
@@ -353,9 +377,7 @@ class ExportService {
             ...debts.asMap().entries.map((e) {
               final d    = e.value;
               final even = e.key % 2 == 0;
-              final statusLabel = d.isPaid
-                  ? 'Paid'
-                  : d.isOverdue ? 'Overdue' : 'Unpaid';
+              final statusLabel = d.isPaid ? 'Paid' : d.isOverdue ? 'Overdue' : 'Unpaid';
               final statusColor = d.isPaid
                   ? PdfColors.green700
                   : d.isOverdue ? PdfColors.red700 : PdfColors.orange700;
@@ -367,6 +389,7 @@ class ExportService {
                   _cell(d.orderId),
                   _cell(_pdfCurrency.format(d.totalAmount)),
                   _cell(_pdfCurrency.format(d.amountPaid)),
+                  // Remaining balance: green when paid, red when still owed
                   _cell(_pdfCurrency.format(d.remainingBalance),
                       bold: true,
                       color: d.isPaid ? PdfColors.green700 : PdfColors.red700),
@@ -382,9 +405,10 @@ class ExportService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // PDF WIDGET HELPERS
+  // PDF WIDGET HELPERS — reusable layout components for PDF pages
   // ════════════════════════════════════════════════════════════════════════════
 
+  // Page header: business name, report title, subtitle, and page number
   static pw.Widget _header(String biz, String title, String sub,
           int pageNum, int pageCount) =>
       pw.Column(children: [
@@ -396,29 +420,28 @@ class ExportService {
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.grey800)),
             pw.Text(title,
-                style: const pw.TextStyle(
-                    fontSize: 13, color: PdfColors.grey600)),
+                style: const pw.TextStyle(fontSize: 13, color: PdfColors.grey600)),
             pw.Text(sub,
-                style: const pw.TextStyle(
-                    fontSize: 9, color: PdfColors.grey500)),
+                style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
           ]),
+          // Page number shown in the top-right corner
           pw.Text('Page $pageNum / $pageCount',
-              style: const pw.TextStyle(
-                  fontSize: 9, color: PdfColors.grey500)),
+              style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
         ]),
         pw.Divider(color: PdfColors.grey400, thickness: 0.5),
         pw.SizedBox(height: 8),
       ]);
 
+  // Page footer: confidentiality notice centered at the bottom
   static pw.Widget _footer(String biz) => pw.Column(children: [
         pw.Divider(color: PdfColors.grey300, thickness: 0.5),
         pw.SizedBox(height: 4),
         pw.Text('$biz — Confidential Business Record',
-            style: const pw.TextStyle(
-                fontSize: 8, color: PdfColors.grey400),
+            style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey400),
             textAlign: pw.TextAlign.center),
       ]);
 
+  // Summary metric box — label on top, bold value below; used in report headers
   static pw.Widget _box(String label, String value) => pw.Expanded(
         child: pw.Container(
           padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -429,8 +452,7 @@ class ExportService {
           ),
           child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
             pw.Text(label,
-                style: const pw.TextStyle(
-                    fontSize: 8, color: PdfColors.grey600)),
+                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
             pw.SizedBox(height: 2),
             pw.Text(value,
                 style: pw.TextStyle(
@@ -441,12 +463,12 @@ class ExportService {
         ),
       );
 
+  // Dark-background header row for the top of each data table
   static pw.TableRow _headerRow(List<String> cols) => pw.TableRow(
         decoration: const pw.BoxDecoration(color: PdfColors.grey800),
         children: cols
             .map((t) => pw.Padding(
-                  padding: const pw.EdgeInsets.symmetric(
-                      vertical: 6, horizontal: 6),
+                  padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 6),
                   child: pw.Text(t,
                       style: pw.TextStyle(
                           fontSize: 9,
@@ -456,18 +478,18 @@ class ExportService {
             .toList(),
       );
 
-  static pw.Widget _cell(String text,
-          {bool bold = false, PdfColor? color}) =>
+  // Single data cell with optional bold and color overrides
+  static pw.Widget _cell(String text, {bool bold = false, PdfColor? color}) =>
       pw.Padding(
         padding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 6),
         child: pw.Text(text,
             style: pw.TextStyle(
                 fontSize: 8,
-                fontWeight:
-                    bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+                fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
                 color: color ?? PdfColors.grey800)),
       );
 
+  // Maps an OrderStatus to its corresponding PDF color for the status column
   static PdfColor _statusColor(OrderStatus status) {
     switch (status) {
       case OrderStatus.delivered: return PdfColors.green700;
@@ -479,16 +501,17 @@ class ExportService {
   }
 
   // ════════════════════════════════════════════════════════════════════════════
-  // FILE HELPERS
+  // FILE I/O HELPERS
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// Write CSV with UTF-8 BOM so Excel opens ₱/special chars correctly.
+  /// Writes a CSV file to the temp directory with a UTF-8 BOM so Excel opens
+  /// special characters (₱, accented letters) correctly, then shares it.
   static Future<void> _csvShare(
       List<List<dynamic>> rows, String filename, String subject) async {
     final csv = const ListToCsvConverter().convert(rows);
-    final dir  = await getTemporaryDirectory();
+    final dir  = await getTemporaryDirectory(); // Platform temp folder
     final file = File('${dir.path}/$filename');
-    // BOM (\uFEFF) tells Excel this is UTF-8 — prevents garbled characters
+    // BOM (\uFEFF) signals to Excel that this is a UTF-8 file
     await file.writeAsString('\uFEFF$csv', encoding: utf8);
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'text/csv')],
@@ -496,6 +519,7 @@ class ExportService {
     );
   }
 
+  // Writes PDF bytes to the temp directory then opens the system share sheet
   static Future<void> _pdfShare(
       List<int> bytes, String filename, String subject) async {
     final dir  = await getTemporaryDirectory();

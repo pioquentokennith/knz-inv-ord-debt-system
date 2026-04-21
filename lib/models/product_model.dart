@@ -1,11 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // product_model.dart — Product entity
+// Purpose : Represents a single fragrance product in the catalog.
+//           Enforces business rules (no negative stock/price) through a
+//           validated setter and computed properties.
 // Demonstrates: Inheritance (extends BaseModel), Encapsulation (private fields
-// exposed through getters), Setter with validation for mutable stockQty.
+// exposed through getters), validated setter for mutable stockQty.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'base_model.dart';
 
+// Enum listing all fragrance product categories supported by the app
 enum ProductCategory {
   eauDeParfum,
   eauDeToilette,
@@ -14,7 +18,9 @@ enum ProductCategory {
   giftSet,
 }
 
+// Extension adds display/parse helpers to the ProductCategory enum
 extension ProductCategoryExtension on ProductCategory {
+  // Full display name shown in UI dropdowns and PDF reports
   String get displayName {
     switch (this) {
       case ProductCategory.eauDeParfum:   return 'Eau de Parfum';
@@ -25,6 +31,7 @@ extension ProductCategoryExtension on ProductCategory {
     }
   }
 
+  // Short uppercase version used in product badge labels
   String get shortName {
     switch (this) {
       case ProductCategory.eauDeParfum:   return 'EAU DE PARFUM';
@@ -35,31 +42,32 @@ extension ProductCategoryExtension on ProductCategory {
     }
   }
 
+  // Parses a category from a stored string (case-insensitive); defaults to eauDeParfum
   static ProductCategory fromString(String value) {
     return ProductCategory.values.firstWhere(
       (e) =>
           e.displayName.toLowerCase() == value.toLowerCase() ||
           e.shortName.toLowerCase() == value.toLowerCase(),
-      orElse: () => ProductCategory.eauDeParfum,
+      orElse: () => ProductCategory.eauDeParfum, // Safe fallback for unknown strings
     );
   }
 }
 
-/// Product — inherits identity & serialization contract from [BaseModel].
+/// Product — inherits identity and serialization contract from [BaseModel].
 /// All fields are private; public access is via getters (Encapsulation).
 /// [stockQty] exposes a validated setter since stock changes frequently.
 class Product extends BaseModel {
-  // ── Private fields (Encapsulation) ────────────────────────────────────────
+  // ── Private fields (Encapsulation — external code cannot mutate these directly) ──
   final String          _name;
   final String          _description;
   final ProductCategory _category;
   final double          _price;
-  int                   _stockQty;
-  final int             _minStockLevel;
+  int                   _stockQty;      // Mutable — stock changes after each order
+  final int             _minStockLevel; // Immutable threshold that triggers low-stock alerts
   final String?         _imagePath;
   final DateTime        _createdAt;
 
-  // super.id — Dart super-parameter syntax (fixes use_super_parameters lint)
+  // super.id uses Dart super-parameter syntax to pass id up to BaseModel
   Product({
     required super.id,
     required String          name,
@@ -77,9 +85,9 @@ class Product extends BaseModel {
         _stockQty      = stockQty,
         _minStockLevel = minStockLevel,
         _imagePath     = imagePath,
-        _createdAt     = createdAt ?? DateTime.now();
+        _createdAt     = createdAt ?? DateTime.now(); // Default to now if not provided
 
-  // ── Getters (Encapsulation) ───────────────────────────────────────────────
+  // ── Public read-only getters (Encapsulation) ──────────────────────────────
   String          get name          => _name;
   String          get description   => _description;
   ProductCategory get category      => _category;
@@ -89,15 +97,17 @@ class Product extends BaseModel {
   String?         get imagePath     => _imagePath;
   DateTime        get createdAt     => _createdAt;
 
-  // ── Validated setter (Encapsulation) ─────────────────────────────────────
+  // ── Validated setter — prevents negative stock from being set externally ──
   set stockQty(int value) {
     if (value < 0) throw ArgumentError('Stock quantity cannot be negative.');
     _stockQty = value;
   }
 
-  // ── Computed getters ──────────────────────────────────────────────────────
+  // ── Computed property — true when stock is at or below the minimum level ──
+  // Used by the dashboard to surface low-stock alerts
   bool get isLowStock => _stockQty <= _minStockLevel;
 
+  // Returns a new Product with only the specified fields changed (immutable-style update)
   Product copyWith({
     String?          id,
     String?          name,
@@ -122,12 +132,13 @@ class Product extends BaseModel {
     );
   }
 
+  // Serializes the product to a map used for SQLite inserts and Firestore writes
   @override
   Map<String, dynamic> toMap() => {
     'id':            id,
     'name':          _name,
     'description':   _description,
-    'category':      _category.displayName,
+    'category':      _category.displayName, // Store display name string, not enum index
     'price':         _price,
     'stockQty':      _stockQty,
     'minStockLevel': _minStockLevel,
@@ -135,6 +146,7 @@ class Product extends BaseModel {
     'createdAt':     _createdAt.toIso8601String(),
   };
 
+  // Deserializes a map (from SQLite or Firestore) back into a Product instance
   factory Product.fromMap(Map<String, dynamic> map) => Product(
     id:            map['id']            as String? ?? '',
     name:          map['name']          as String? ?? '',

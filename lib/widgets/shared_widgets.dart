@@ -1,9 +1,20 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// shared_widgets.dart
+// Purpose : Reusable UI components shared across all screens in the app.
+// Contains: GoldButton, DarkTextField, DarkDropdown, StatCard,
+//           OrderStatusBadge, CategoryBadge, StockBadge, DarkIconButton,
+//           SectionHeader, and showConfirmDialog helper.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../core/app_constants.dart';
 import '../models/order_model.dart';
 
 // ─── Gold Gradient Button ──────────────────────────────────────────────────
+// Purpose : A primary call-to-action button with a gold gradient background.
+// Function: Animates a subtle scale-down (96%) on tap using AnimationController
+//           to give tactile press feedback, then fires the onPressed callback.
 class GoldButton extends StatefulWidget {
   final String label;
   final VoidCallback onPressed;
@@ -26,16 +37,19 @@ class GoldButton extends StatefulWidget {
 
 class _GoldButtonState extends State<GoldButton>
     with SingleTickerProviderStateMixin {
+  // Animation controller that drives the press-scale effect
   late AnimationController _ctrl;
   late Animation<double> _scale;
 
   @override
   void initState() {
     super.initState();
+    // Short 100ms duration for a snappy press response
     _ctrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 100),
     );
+    // Scale from 1.0 (normal) to 0.96 (slightly smaller) when tapped
     _scale = Tween<double>(begin: 1.0, end: 0.96).animate(
       CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
     );
@@ -50,12 +64,12 @@ class _GoldButtonState extends State<GoldButton>
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTapDown: (_) => _ctrl.forward(),
+      onTapDown: (_) => _ctrl.forward(),   // Shrink on finger down
       onTapUp: (_) {
-        _ctrl.reverse();
-        widget.onPressed();
+        _ctrl.reverse();                    // Restore on finger up
+        widget.onPressed();                // Fire the callback
       },
-      onTapCancel: () => _ctrl.reverse(),
+      onTapCancel: () => _ctrl.reverse(), // Restore if tap is cancelled
       child: AnimatedBuilder(
         animation: _scale,
         builder: (_, child) =>
@@ -91,6 +105,10 @@ class _GoldButtonState extends State<GoldButton>
 }
 
 // ─── Dark Input Field ──────────────────────────────────────────────────────
+// Purpose : A consistently styled text input for dark-themed forms.
+// Function: Wraps Flutter's TextField with the app's dark color palette,
+//           optional label, prefix icon, obscure text, and formatter support.
+//           Highlights border in gold when focused.
 class DarkTextField extends StatelessWidget {
   final String hint;
   final TextEditingController? controller;
@@ -112,7 +130,7 @@ class DarkTextField extends StatelessWidget {
     this.maxLines = 1,
     this.inputFormatters,
     this.onChanged,
-    this.prefixIcon, // optional — no required
+    this.prefixIcon,
   });
 
   @override
@@ -120,6 +138,7 @@ class DarkTextField extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Render label text above the input field if provided
         if (label != null) ...[
           Text(label!, style: AppTextStyles.labelSmall),
           const SizedBox(height: 6),
@@ -151,6 +170,7 @@ class DarkTextField extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: AppColors.cardBorder),
             ),
+            // Gold border appears when the field is focused
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide:
@@ -164,6 +184,10 @@ class DarkTextField extends StatelessWidget {
 }
 
 // ─── Dark Dropdown ─────────────────────────────────────────────────────────
+// Purpose : A generic dropdown selector that matches the app's dark theme.
+// Function: Accepts any type T, renders a styled DropdownButton inside a
+//           dark container, and calls onChanged when the user picks an option.
+//           Supports an optional label rendered above the dropdown.
 class DarkDropdown<T> extends StatelessWidget {
   final String? label;
   final T value;
@@ -183,6 +207,7 @@ class DarkDropdown<T> extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Render label text above the dropdown if provided
         if (label != null) ...[
           Text(label!, style: AppTextStyles.labelSmall),
           const SizedBox(height: 6),
@@ -213,6 +238,10 @@ class DarkDropdown<T> extends StatelessWidget {
 }
 
 // ─── Stat Card ─────────────────────────────────────────────────────────────
+// Purpose : A summary metric card displayed on the Overview and Analytics screens.
+// Function: Shows an emoji icon, a large value (number or currency), a label,
+//           and an optional subtitle with a configurable color. Has a gold
+//           top border accent for visual emphasis.
 class StatCard extends StatelessWidget {
   final String emoji;
   final String value;
@@ -236,6 +265,7 @@ class StatCard extends StatelessWidget {
       decoration: const BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.all(Radius.circular(12)),
+        // Gold top border acts as a visual accent line
         border: Border(top: BorderSide(color: AppColors.gold, width: 2)),
       ),
       child: Column(
@@ -245,6 +275,7 @@ class StatCard extends StatelessWidget {
         children: [
           Text(emoji, style: const TextStyle(fontSize: 22)),
           const SizedBox(height: 6),
+          // FittedBox scales down the value text if it overflows the card width
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
@@ -270,14 +301,17 @@ class StatCard extends StatelessWidget {
 }
 
 // ─── Order Status Badge ────────────────────────────────────────────────────
+// Purpose : A colored pill badge showing the current status of an order.
+// Function: Reads the color from OrderStatusExtension (single source of truth)
+//           to avoid duplication. Renders a semi-transparent background with
+//           a border and uppercase status text.
 class OrderStatusBadge extends StatelessWidget {
   final OrderStatus status;
 
   const OrderStatusBadge({super.key, required this.status});
 
-  // FIX 4: Tinanggal ang duplicate switch statement.
-  // Ginagamit na ngayon ang status.color mula sa OrderStatusExtension —
-  // isa lang ang source of truth para sa colors, walang mismatch.
+  // Delegates color resolution to the extension on OrderStatus
+  // so there is only one place where status colors are defined
   Color get _color => status.color;
 
   @override
@@ -303,6 +337,9 @@ class OrderStatusBadge extends StatelessWidget {
 }
 
 // ─── Category Badge ────────────────────────────────────────────────────────
+// Purpose : A small informational badge showing a product's category.
+// Function: Renders the category label with a blue (info) color scheme
+//           on a semi-transparent background with a matching border.
 class CategoryBadge extends StatelessWidget {
   final String label;
 
@@ -332,6 +369,9 @@ class CategoryBadge extends StatelessWidget {
 }
 
 // ─── Stock Badge ───────────────────────────────────────────────────────────
+// Purpose : A badge that visually indicates whether a product's stock is low.
+// Function: Shows "LOW STOCK" in warning yellow or "IN STOCK" in success green
+//           based on the isLowStock flag passed from the product model.
 class StockBadge extends StatelessWidget {
   final bool isLowStock;
 
@@ -362,6 +402,9 @@ class StockBadge extends StatelessWidget {
 }
 
 // ─── Dark Icon Button ──────────────────────────────────────────────────────
+// Purpose : A square 36x36 icon-only button styled for the dark theme.
+// Function: Wraps an icon in a GestureDetector with a dark elevated background
+//           and border. Used for quick actions (edit, delete, etc.) in list rows.
 class DarkIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
@@ -393,6 +436,9 @@ class DarkIconButton extends StatelessWidget {
 }
 
 // ─── Section Header ────────────────────────────────────────────────────────
+// Purpose : A row header used to label sections within a screen.
+// Function: Shows a title on the left and an optional pill badge (e.g., item count)
+//           on the right. The title truncates with ellipsis if it overflows.
 class SectionHeader extends StatelessWidget {
   final String title;
   final String? trailing;
@@ -417,6 +463,7 @@ class SectionHeader extends StatelessWidget {
         ),
         if (trailing != null) ...[
           const SizedBox(width: 8),
+          // Gold pill badge showing a count or status on the right side
           Container(
             padding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -440,7 +487,10 @@ class SectionHeader extends StatelessWidget {
 }
 
 // ── Reusable confirmation dialog helper ──────────────────────────────────────
-/// Returns true if the user confirmed, false/null if cancelled.
+// Purpose : Shows a modal AlertDialog asking the user to confirm or cancel an action.
+// Function: Displays a title, message, and two buttons (cancel + confirm).
+//           Returns true if the user confirmed, false or null if they cancelled.
+//           Used before destructive or irreversible actions (delete, update, etc.).
 Future<bool> showConfirmDialog(
   BuildContext context, {
   required String title,
@@ -463,11 +513,13 @@ Future<bool> showConfirmDialog(
           style: const TextStyle(
               color: AppColors.whiteSecondary, fontSize: 14)),
       actions: [
+        // Cancel button — dismisses dialog and returns false
         TextButton(
           onPressed: () => Navigator.pop(context, false),
           child: Text(cancelLabel,
               style: const TextStyle(color: AppColors.whiteTertiary)),
         ),
+        // Confirm button — dismisses dialog and returns true
         TextButton(
           onPressed: () => Navigator.pop(context, true),
           child: Text(confirmLabel,

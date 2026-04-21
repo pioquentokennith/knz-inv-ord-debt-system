@@ -1,12 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // utang_payment_dialog.dart
-// FIX 5: Extracted from utang_screen.dart
-// NEW:   Auto-deliver — pag fully paid na ang utang (remainingBalance == 0),
-//        awtomatikong mag-a-update ang order status sa "delivered" at
-//        mag-aalis ng utang status.
-// Usage: showDialog(context: context, builder: (_) => UtangPaymentDialog(debt: debt));
+// Purpose : Dialog for recording a payment towards an existing customer debt.
+// Function: Shows the customer name, order ID, and remaining balance. Supports
+//           Cash and GCash payment methods; GCash requires a reference number,
+//           phone number, and account name. Validates the payment amount (cannot
+//           exceed the remaining balance). On confirm, creates a PaymentRecord and
+//           calls AppState.addPayment(). If the payment fully clears the balance,
+//           auto-updates the linked order's status to "delivered" and shows a
+//           success snackbar.
+// Usage   : UtangPaymentDialog.show(context, debt);
 // ─────────────────────────────────────────────────────────────────────────────
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
@@ -50,6 +53,9 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
     super.dispose();
   }
 
+  // Validates the payment amount and GCash fields (if applicable),
+  // shows a confirmation dialog, records the payment in AppState,
+  // then checks if the balance is now fully cleared.
   Future<void> _submit() async {
     final amountText = _amountCtrl.text.trim();
     final amount = double.tryParse(amountText);
@@ -104,7 +110,9 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
     );
 
     // ── AUTO-DELIVER CHECK ────────────────────────────────────────────────
-    // Kapag ang binayad ay katumbas ng remaining balance (fully paid na),
+    // When the remaining balance drops to zero (debt fully paid),
+    // automatically update the linked order status to 'delivered'.
+    // This keeps order status in sync with debt payment status.
     // awtomatikong i-update ang order status sa "delivered".
     // Hindi na "utang" ang status — bayad na kasi lahat.
     final newRemaining = widget.debt.remainingBalance - amount;
