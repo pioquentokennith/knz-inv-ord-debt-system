@@ -1,4 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
+﻿// ─────────────────────────────────────────────────────────────────────────────
 // i_activity_log_repository.dart — Abstract IActivityLogRepository interface
 // Purpose : Defines the minimal contract for reading and writing activity logs.
 //           AppState depends on this interface so tests can inject a stub

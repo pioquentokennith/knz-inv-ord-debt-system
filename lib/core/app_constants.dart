@@ -62,7 +62,7 @@ class AppStrings {
 
   // ── Brand identity ────────────────────────────────────────────────────────
   static const String appName              = 'KNZ Scent';        // App / brand name
-  static const String appSubtitle         = 'S C E N T';         // Spaced tagline on login screen
+  static const String appSubtitle         = 'TRUSTED BY SCENT LOVERS'; // Spaced tagline on login screen
   static const String adminPortal         = 'Admin Portal';      // Shown in app header
   static const String luxuryFragranceHouse = 'Luxury Fragrance House'; // Sub-branding
 
@@ -114,12 +114,12 @@ class AppTextStyles {
     letterSpacing: 4,
   );
 
-  // Slim spaced subtitle beneath the brand name (e.g. "S C E N T")
+  // Slim spaced subtitle beneath the brand name (e.g. "TRUSTED BY SCENT LOVERS")
   static const TextStyle brandSubtitle = TextStyle(
     fontSize: 13,
     fontWeight: FontWeight.w300,
     color: AppColors.gold,
-    letterSpacing: 8,
+    letterSpacing: 2,
   );
 
   // Screen section headings (e.g. "Recent Orders", "Low Stock Alerts")

@@ -36,13 +36,18 @@ class OrderReceiptPrinter {
   static final _dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
 
   // Builds the full ESC/POS byte sequence for a 58mm thermal printer.
-  // Outputs: store header, order metadata, itemized list with prices,
-  // total, optional notes, and a cut command at the end.
+  // Layout mirrors the utang receipt for consistency:
+  //   header → dashed divider → info block → dashed divider →
+  //   items with row-aligned amounts → === divider → big TOTAL →
+  //   footer with dashed borders
   static Future<List<int>> buildBytes(Order order) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     List<int> b   = [];
 
+    
+
+    // ── Header ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     b += gen.text('KNZ SCENT',
         styles: const PosStyles(
@@ -53,46 +58,77 @@ class OrderReceiptPrinter {
     b += gen.feed(1);
     b += gen.text('ORDER RECEIPT',
         styles: const PosStyles(align: PosAlign.center, bold: true));
-    b += gen.hr();
+    b += gen.hr(ch: '-');
 
+    // ── Order info ───────────────────────────────────────────────────────────
     b += gen.text('Order ID : ${order.orderId}',
         styles: const PosStyles(bold: true));
     b += gen.text('Customer : ${order.customerName}');
     b += gen.text('Date     : ${_dateFmt.format(order.orderDate)}');
     b += gen.text('Status   : ${order.status.displayName.toUpperCase()}',
         styles: const PosStyles(bold: true));
-    b += gen.hr();
+    b += gen.hr(ch: '-');
 
-    b += gen.text('Item', styles: const PosStyles(bold: true));
+    // ── Items ────────────────────────────────────────────────────────────────
+    b += gen.row([
+      PosColumn(text: 'Item', width: 8,
+          styles: const PosStyles(bold: true)),
+      PosColumn(text: 'Amount', width: 4,
+          styles: const PosStyles(bold: true, align: PosAlign.right)),
+    ]);
     b += gen.hr(ch: '-');
     for (final item in order.items) {
-      b += gen.text(item.productName, styles: const PosStyles(bold: true));
-      b += gen.text(
-          '  ${item.quantity} x ${_cur.format(item.unitPrice)} = ${_cur.format(item.subtotal)}',
-          styles: const PosStyles(fontType: PosFontType.fontB));
+      b += gen.text(item.productName,
+          styles: const PosStyles(bold: true));
+      b += gen.row([
+        PosColumn(
+            text: '  ${item.quantity} x ${_cur.format(item.unitPrice)}',
+            width: 7,
+            styles: const PosStyles()),
+        PosColumn(
+            text: _cur.format(item.subtotal),
+            width: 5,
+            styles: const PosStyles(
+                bold: true,
+                align: PosAlign.right)),
+      ]);
     }
 
-    b += gen.hr();
-    b += gen.text('TOTAL: ${_cur.format(order.totalAmount)}',
-        styles: const PosStyles(
-            bold: true,
-            height: PosTextSize.size2,
-            width: PosTextSize.size2));
+    // ── Total ────────────────────────────────────────────────────────────────
+    b += gen.hr(ch: '=');
+    b += gen.row([
+      PosColumn(
+          text: 'TOTAL:',
+          width: 5,
+          styles: const PosStyles(
+              bold: true,
+              height: PosTextSize.size2,
+              width: PosTextSize.size2)),
+      PosColumn(
+          text: _cur.format(order.totalAmount),
+          width: 7,
+          styles: const PosStyles(
+              bold: true,
+              align: PosAlign.right,
+              height: PosTextSize.size2,
+              width: PosTextSize.size2)),
+    ]);
 
+    // ── Notes (optional) ─────────────────────────────────────────────────────
     if (order.notes != null && order.notes!.isNotEmpty) {
       b += gen.hr(ch: '-');
       b += gen.text('Note:', styles: const PosStyles(bold: true));
-      b += gen.text(order.notes!,
-          styles: const PosStyles(fontType: PosFontType.fontB));
+      b += gen.text(order.notes!);
     }
 
+    // ── Footer ───────────────────────────────────────────────────────────────
     b += gen.feed(1);
-    b += gen.hr();
+    b += gen.hr(ch: '-');
     b += gen.text('Thank you for your purchase!',
         styles: const PosStyles(align: PosAlign.center, bold: true));
     b += gen.text(AppStrings.appName,
         styles: const PosStyles(align: PosAlign.center));
-    b += gen.hr();
+    b += gen.hr(ch: '-');
     b += gen.emptyLines(3);
     b += gen.cut();
     return b;

@@ -12,7 +12,7 @@ import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../services/export_service.dart';
 
-enum ExportType { orders, inventory, debts }
+enum ExportType { orders, inventory, debts, analytics }
 
 class ExportDialog extends StatefulWidget {
   final ExportType type;
@@ -32,6 +32,7 @@ class _ExportDialogState extends State<ExportDialog> {
       case ExportType.orders:    return 'Orders';
       case ExportType.inventory: return 'Inventory';
       case ExportType.debts:     return 'Utang / Debts';
+      case ExportType.analytics: return 'Analytics Report';
     }
   }
 
@@ -74,6 +75,27 @@ class _ExportDialogState extends State<ExportDialog> {
           } else {
             await ExportService.printDebtsPdf(
               state.debts, businessName: AppStrings.appName);
+          }
+          break;
+
+        case ExportType.analytics:
+          if (format == 'csv') {
+            await ExportService.exportAnalyticsCsv(
+              orders: state.orders,
+              debts: state.debts,
+            );
+          } else if (format == 'pdf') {
+            await ExportService.exportAnalyticsPdf(
+              orders: state.orders,
+              debts: state.debts,
+              businessName: AppStrings.appName,
+            );
+          } else {
+            await ExportService.printAnalyticsPdf(
+              orders: state.orders,
+              debts: state.debts,
+              businessName: AppStrings.appName,
+            );
           }
           break;
       }

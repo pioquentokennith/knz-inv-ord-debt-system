@@ -36,62 +36,102 @@ class UtangReceiptPrinter {
   static final _shortDt = DateFormat('MM/dd/yy');
 
   /// Builds the ESC/POS byte sequence for [debt].
+  /// Layout mirrors the order receipt exactly for consistency:
+  ///   header → dashed divider → info block → dashed divider →
+  ///   amount rows → === divider → big BALANCE DUE →
+  ///   payment history (if any) → footer with dashed borders
   static Future<List<int>> buildBytes(CustomerDebt debt) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     List<int> b   = [];
 
+    
+
+    // ── Header ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     b += gen.text('KNZ SCENT',
         styles: const PosStyles(
             align: PosAlign.center, bold: true,
             height: PosTextSize.size2, width: PosTextSize.size2));
     b += gen.text('Luxury Fragrance House',
-        styles: const PosStyles(align: PosAlign.center));
+        styles: const PosStyles(align: PosAlign.center,
+            ));
     b += gen.feed(1);
     b += gen.text('UTANG STATEMENT',
         styles: const PosStyles(align: PosAlign.center, bold: true));
-    b += gen.hr();
+    b += gen.hr(ch: '-');
 
+    // ── Customer info ────────────────────────────────────────────────────────
     b += gen.text('Customer : ${debt.customerName}',
         styles: const PosStyles(bold: true));
-    b += gen.text('Order ID : ${debt.orderId}');
-    b += gen.text('Date     : ${_dateFmt.format(debt.createdAt)}');
-    b += gen.hr();
+    b += gen.text('Order ID : ${debt.orderId}',
+        styles: const PosStyles());
+    b += gen.text('Date     : ${_dateFmt.format(debt.createdAt)}',
+        styles: const PosStyles());
+    b += gen.hr(ch: '-');
 
-    b += gen.text('Order Total : ${_cur.format(debt.totalAmount)}');
-    b += gen.text('Total Paid  : ${_cur.format(debt.amountPaid)}');
-    b += gen.hr();
+    // ── Amounts ──────────────────────────────────────────────────────────────
+    b += gen.row([
+      PosColumn(text: 'Order Total', width: 5,
+          styles: const PosStyles()),
+      PosColumn(text: _cur.format(debt.totalAmount), width: 7,
+          styles: const PosStyles(bold: true, align: PosAlign.right,
+              )),
+    ]);
+    b += gen.row([
+      PosColumn(text: 'Total Paid', width: 5,
+          styles: const PosStyles()),
+      PosColumn(text: _cur.format(debt.amountPaid), width: 7,
+          styles: const PosStyles(bold: true, align: PosAlign.right,
+              )),
+    ]);
 
+    // ── Balance ───────────────────────────────────────────────────────────────
+    b += gen.hr(ch: '=');
     final balanceLabel = debt.isPaid ? 'FULLY PAID' : 'BALANCE DUE';
-    b += gen.text('$balanceLabel : ${_cur.format(debt.remainingBalance)}',
-        styles: const PosStyles(
-            bold: true,
-            height: PosTextSize.size2,
-            width: PosTextSize.size2));
+    b += gen.row([
+      PosColumn(text: '$balanceLabel:',
+          width: 5,
+          styles: const PosStyles(bold: true,
+              height: PosTextSize.size2, width: PosTextSize.size2)),
+      PosColumn(text: _cur.format(debt.remainingBalance),
+          width: 7,
+          styles: const PosStyles(bold: true, align: PosAlign.right,
+              height: PosTextSize.size2, width: PosTextSize.size2)),
+    ]);
 
+    // ── Payment History (optional) ────────────────────────────────────────────
     if (debt.payments.isNotEmpty) {
-      b += gen.hr();
+      b += gen.feed(1);
+      b += gen.hr(ch: '-');
       b += gen.text('Payment History:',
           styles: const PosStyles(bold: true));
       b += gen.hr(ch: '-');
       for (final p in debt.payments) {
-        b += gen.text(
-            '${_shortDt.format(p.paidAt)}  ${_cur.format(p.amount)}');
+        b += gen.row([
+          PosColumn(text: _shortDt.format(p.paidAt), width: 5,
+              styles: const PosStyles()),
+          PosColumn(text: _cur.format(p.amount), width: 7,
+              styles: const PosStyles(bold: true, align: PosAlign.right,
+                  )),
+        ]);
         if (p.note != null && p.note!.isNotEmpty) {
           b += gen.text('  ${p.note!}',
-              styles: const PosStyles(fontType: PosFontType.fontB));
+              styles: const PosStyles());
         }
       }
     }
 
+    // ── Footer ───────────────────────────────────────────────────────────────
     b += gen.feed(1);
-    b += gen.hr();
+    b += gen.hr(ch: '-');
     b += gen.text('Pakibayad po ang inyong balanse.',
-        styles: const PosStyles(align: PosAlign.center));
+        styles: const PosStyles(align: PosAlign.center,
+            ));
     b += gen.text('Salamat! - ${AppStrings.appName}',
-        styles: const PosStyles(align: PosAlign.center));
-    b += gen.hr();
+        styles: const PosStyles(align: PosAlign.center,
+            ));
+    b += gen.hr(ch: '-');
     b += gen.emptyLines(3);
     b += gen.cut();
     return b;

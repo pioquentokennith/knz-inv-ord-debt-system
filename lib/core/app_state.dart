@@ -120,15 +120,22 @@ class AppState extends ChangeNotifier {
   // Filtered list helpers used by UI widgets
   List<Product>      get lowStockProducts => _products.where((p) => p.isLowStock).toList();
   List<CustomerDebt> get unpaidDebts      => _debts.where((d) => !d.isPaid).toList();
+  List<CustomerDebt> get paidDebts        => _debts.where((d) => d.isPaid).toList();
   List<CustomerDebt> get overdueDebts     => _debts.where((d) => d.isOverdue).toList();
 
+  // Total amount collected from utang payments (initial + additional payments)
+  double get totalUtangCollected => _debts.fold(0.0, (s, d) => s + d.amountPaid);
+
   // FIX 5: Dati kasama ang utang sa revenue — misleading kasi hindi pa nababayaran.
-  // Ngayon: delivered lang = actual collected revenue.
+  // Ngayon: delivered + utang payments = actual collected revenue.
   // Ang utang ay tracked na separately sa totalDebtAmount getter.
-  // Only counts delivered orders as revenue (cash actually collected)
-  double get totalRevenue => _orders
-      .where((o) => o.status == OrderStatus.delivered)
-      .fold(0.0, (s, o) => s + o.totalAmount);
+  // Counts delivered orders + all payments collected from utang orders
+  double get totalRevenue {
+    final deliveredRevenue = _orders
+        .where((o) => o.status == OrderStatus.delivered)
+        .fold(0.0, (s, o) => s + o.totalAmount);
+    return deliveredRevenue + totalUtangCollected;
+  }
 
   // Billed revenue (lahat maliban cancelled) — para sa analytics na gusto ng gross view
   // Gross revenue including pending/processing/utang orders (not yet cancelled)

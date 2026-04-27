@@ -1,4 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
+﻿// ─────────────────────────────────────────────────────────────────────────────
 // activity_log_repository.dart — Offline-first activity log storage
 // Purpose : Saves activity log entries to SQLite immediately (works offline),
 //           then enqueues a Firestore sync via SyncQueue for later upload.

@@ -15,6 +15,7 @@ import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../core/app_state_builder.dart'; // ← FIX 6
+import '../dialogs/export_dialog.dart';
 import '../models/order_model.dart';
 import '../models/debt_model.dart';
 import '../widgets/shared_widgets.dart';
@@ -29,6 +30,7 @@ class AnalyticsScreen extends StatefulWidget {
 class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // FIX 6: No _state, no addListener, no _onStateChange — removed.
   final Set<String> _expandedProducts = {};
+  String _utangTab = 'Unpaid'; // 'Unpaid' or 'Paid'
 
   // Aggregates all non-cancelled order items into a map of product name → (date → qty sold).
   // Returns the top 5 products sorted by total units sold, each with a per-day breakdown.
@@ -54,7 +56,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return _ProductSalesData(name: e.key, total: total, byDay: days);
     }).toList()
       ..sort((a, b) => b.total.compareTo(a.total));
-    return result.take(5).toList();
+    return result; // show all products, scrollable
   }
 
   // Returns the chart/badge color for a given order status for the pie chart sections
@@ -90,6 +92,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           final topProducts = _topProductsAllTime();
           final totalDebt = state.totalDebtAmount;
           final unpaidDebts = state.unpaidDebts;
+          final paidDebts = state.paidDebts;
           final overdueDebts = state.overdueDebts;
 
           // Pie chart data
@@ -115,14 +118,36 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     child: FadeInAnimation(child: w),
                   ),
                   children: [
-                    const Row(children: [
-                      Icon(Icons.trending_up, color: AppColors.gold, size: 28),
-                      SizedBox(width: 12),
-                      Text('Analytics & Reports',
-                          style: TextStyle(
-                              color: AppColors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.w700)),
+                    Row(children: [
+                      const Icon(Icons.trending_up, color: AppColors.gold, size: 28),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text('Analytics & Reports',
+                            style: TextStyle(
+                                color: AppColors.white,
+                                fontSize: 24,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                      GestureDetector(
+                        onTap: () => showExportDialog(context, ExportType.analytics),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppColors.gold.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
+                          ),
+                          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(Icons.download_outlined, color: AppColors.gold, size: 16),
+                            SizedBox(width: 5),
+                            Text('Export',
+                                style: TextStyle(
+                                    color: AppColors.gold,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600)),
+                          ]),
+                        ),
+                      ),
                     ]),
                     const SizedBox(height: 24),
 
@@ -167,44 +192,48 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     const SizedBox(height: 20),
                     const SizedBox(height: 4),
 
-                    // Utang stat cards
-                    IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                    // Utang stat cards — same 2-column grid as the top cards
+                    LayoutBuilder(builder: (ctx, constraints) {
+                      final cols = constraints.maxWidth > 600 ? 4 : 2;
+                      return GridView.count(
+                        crossAxisCount: cols,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: 1.05,
                         children: [
-                          Expanded(
-                            child: StatCard(
-                              emoji: '💳',
-                              value: currency.format(totalDebt),
-                              label: 'TOTAL UTANG',
-                              subtitleColor: totalDebt > 0 ? AppColors.error : AppColors.success,
-                            ),
+                          StatCard(
+                            emoji: '💳',
+                            value: currency.format(totalDebt),
+                            label: 'TOTAL UTANG',
+                            subtitleColor: totalDebt > 0 ? AppColors.error : AppColors.success,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: StatCard(
-                              emoji: '⏳',
-                              value: unpaidDebts.length.toString(),
-                              label: 'UNPAID',
-                              subtitleColor: unpaidDebts.isNotEmpty ? AppColors.warning : AppColors.success,
-                            ),
+                          StatCard(
+                            emoji: '⏳',
+                            value: unpaidDebts.length.toString(),
+                            label: 'UNPAID',
+                            subtitleColor: unpaidDebts.isNotEmpty ? AppColors.warning : AppColors.success,
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: StatCard(
-                              emoji: '🚨',
-                              value: overdueDebts.length.toString(),
-                              label: 'OVERDUE',
-                              subtitleColor: overdueDebts.isNotEmpty ? AppColors.error : AppColors.success,
-                            ),
+                          StatCard(
+                            emoji: '✅',
+                            value: paidDebts.length.toString(),
+                            label: 'PAID',
+                            subtitleColor: AppColors.success,
+                          ),
+                          StatCard(
+                            emoji: '🚨',
+                            value: overdueDebts.length.toString(),
+                            label: 'OVERDUE',
+                            subtitleColor: overdueDebts.isNotEmpty ? AppColors.error : AppColors.success,
                           ),
                         ],
-                      ),
-                    ),
+                      );
+                    }),
                     const SizedBox(height: 20),
 
                     // Utang breakdown section
-                    _buildUtangBreakdown(unpaidDebts, currency),
+                    _buildUtangBreakdown(unpaidDebts, paidDebts, currency),
                     const SizedBox(height: 20),
 
                     // Orders by status + Top products
@@ -241,8 +270,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildUtangBreakdown(
-      List<CustomerDebt> debts, NumberFormat currency) {
+      List<CustomerDebt> unpaidDebts, List<CustomerDebt> paidDebts, NumberFormat currency) {
     final dateFmt = DateFormat('MMM dd');
+    final displayDebts = _utangTab == 'Unpaid' ? unpaidDebts : paidDebts;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -253,140 +283,208 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [
-            const Text('💳', style: TextStyle(fontSize: 20)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+            const Text('💳', style: TextStyle(fontSize: 18)),
+            const SizedBox(width: 6),
+            const Flexible(
+              child: Text('Utang Breakdown',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      color: AppColors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 15)),
+            ),
             const SizedBox(width: 8),
-            const Text('Utang Breakdown',
-                style: TextStyle(
-                    color: AppColors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16)),
-            const Spacer(),
+            // Unpaid / Paid tab toggle
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: AppColors.error.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.error.withValues(alpha: 0.3)),
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.cardBorder),
               ),
-              child: Text(
-                '${debts.length} unpaid',
-                style: const TextStyle(
-                    color: AppColors.error, fontSize: 11, fontWeight: FontWeight.w600),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: ['Unpaid', 'Paid'].map((tab) {
+                  final isActive = _utangTab == tab;
+                  final tabColor = tab == 'Unpaid' ? AppColors.error : AppColors.success;
+                  final count = tab == 'Unpaid' ? unpaidDebts.length : paidDebts.length;
+                  return GestureDetector(
+                    onTap: () => setState(() => _utangTab = tab),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isActive ? tabColor.withValues(alpha: 0.2) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(16),
+                        border: isActive ? Border.all(color: tabColor, width: 1.0) : null,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(tab,
+                              style: TextStyle(
+                                color: isActive ? tabColor : AppColors.whiteTertiary,
+                                fontSize: 10,
+                                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                              )),
+                          const SizedBox(width: 3),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: isActive ? tabColor.withValues(alpha: 0.3) : AppColors.cardBorder,
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text('$count',
+                                style: TextStyle(
+                                  color: isActive ? tabColor : AppColors.whiteTertiary,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                )),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
               ),
             ),
           ]),
           const SizedBox(height: 16),
-          if (debts.isEmpty)
-            const Center(
+          if (displayDebts.isEmpty)
+            Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(vertical: 20),
-                child: Text('No unpaid utang! 🎉',
-                    style: TextStyle(color: AppColors.whiteTertiary)),
+                padding: const EdgeInsets.symmetric(vertical: 20),
+                child: Text(
+                  _utangTab == 'Unpaid' ? 'No unpaid utang! 🎉' : 'No paid utang yet.',
+                  style: const TextStyle(color: AppColors.whiteTertiary),
+                ),
               ),
             )
           else
-            ...debts.take(5).map((d) {
-              final pct = (d.amountPaid / d.totalAmount).clamp(0.0, 1.0);
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 14),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 320),
+              child: SingleChildScrollView(
                 child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: d.isOverdue ? AppColors.error : AppColors.warning,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                  children: displayDebts.map((d) {
+                    final pct = (d.amountPaid / d.totalAmount).clamp(0.0, 1.0);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 14),
+                      child: Column(
+                        children: [
+                          Row(
                             children: [
-                              Text(d.customerName,
-                                  style: const TextStyle(
-                                      color: AppColors.white,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500)),
-                              Row(children: [
-                                Text(d.orderId,
-                                    style: const TextStyle(
-                                        color: AppColors.gold, fontSize: 11)),
-                                const SizedBox(width: 8),
-                                Text('• ${dateFmt.format(d.createdAt)}',
-                                    style: const TextStyle(
-                                        color: AppColors.whiteTertiary,
-                                        fontSize: 11)),
-                                if (d.isOverdue) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 5, vertical: 1),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.error.withValues(alpha: 0.15),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text('${d.daysOld}d overdue',
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: d.isPaid
+                                      ? AppColors.success
+                                      : d.isOverdue
+                                          ? AppColors.error
+                                          : AppColors.warning,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(d.customerName,
                                         style: const TextStyle(
-                                            color: AppColors.error,
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.w600)),
+                                            color: AppColors.white,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500)),
+                                    Row(children: [
+                                      Text(d.orderId,
+                                          style: const TextStyle(
+                                              color: AppColors.gold, fontSize: 11)),
+                                      const SizedBox(width: 8),
+                                      Text('• ${dateFmt.format(d.createdAt)}',
+                                          style: const TextStyle(
+                                              color: AppColors.whiteTertiary,
+                                              fontSize: 11)),
+                                      if (d.isOverdue) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 5, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.error.withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: Text('${d.daysOld}d overdue',
+                                              style: const TextStyle(
+                                                  color: AppColors.error,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w600)),
+                                        ),
+                                      ],
+                                      if (d.isPaid) ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 5, vertical: 1),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.success.withValues(alpha: 0.15),
+                                            borderRadius: BorderRadius.circular(4),
+                                          ),
+                                          child: const Text('PAID',
+                                              style: TextStyle(
+                                                  color: AppColors.success,
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w700)),
+                                        ),
+                                      ],
+                                    ]),
+                                  ],
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    d.isPaid
+                                        ? currency.format(d.totalAmount)
+                                        : currency.format(d.remainingBalance),
+                                    style: TextStyle(
+                                        color: d.isPaid ? AppColors.success : AppColors.error,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14),
                                   ),
+                                  Text('of ${currency.format(d.totalAmount)}',
+                                      style: const TextStyle(
+                                          color: AppColors.whiteTertiary,
+                                          fontSize: 10)),
                                 ],
-                              ]),
+                              ),
                             ],
                           ),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(currency.format(d.remainingBalance),
-                                style: const TextStyle(
-                                    color: AppColors.error,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14)),
-                            Text('of ${currency.format(d.totalAmount)}',
-                                style: const TextStyle(
-                                    color: AppColors.whiteTertiary,
-                                    fontSize: 10)),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(4),
-                      child: LinearProgressIndicator(
-                        value: pct,
-                        backgroundColor: AppColors.cardBorder,
-                        valueColor: AlwaysStoppedAnimation(
-                          pct >= 1.0 ? AppColors.success : AppColors.gold,
-                        ),
-                        minHeight: 5,
+                          const SizedBox(height: 6),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: pct,
+                              backgroundColor: AppColors.cardBorder,
+                              valueColor: AlwaysStoppedAnimation(
+                                pct >= 1.0 ? AppColors.success : AppColors.gold,
+                              ),
+                              minHeight: 5,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
+                    );
+                  }).toList(),
                 ),
-              );
-            }),
-          if (debts.length > 5)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                '+${debts.length - 5} more unpaid utang',
-                style: const TextStyle(
-                    color: AppColors.whiteTertiary, fontSize: 12),
               ),
             ),
         ],
       ),
     );
   }
-
   Widget _buildOrdersByStatus(
       Map<OrderStatus, int> statusMap, int totalOrders, List<PieChartSectionData> pieData) {
     return Container(
@@ -519,7 +617,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               ),
             )
           else
-            ...topProducts.asMap().entries.map((entry) {
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 400),
+              child: SingleChildScrollView(
+                child: Column(
+                  children: topProducts.asMap().entries.map((entry) {
               final i = entry.key;
               final data = entry.value;
               final pct = data.total / maxSales;
@@ -623,42 +725,49 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         secondChild: Column(
                           children: [
                             const Divider(color: AppColors.divider, height: 1),
-                            ...data.byDay.map((day) => Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 8),
-                                  child: Row(
-                                    children: [
-                                      const Icon(Icons.calendar_today_outlined,
-                                          size: 12,
-                                          color: AppColors.whiteTertiary),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        day.key,
-                                        style: const TextStyle(
-                                            color: AppColors.whiteSecondary,
-                                            fontSize: 12),
-                                      ),
-                                      const Spacer(),
-                                      Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 8, vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: AppColors.gold.withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(8),
-                                          border: Border.all(
-                                              color: AppColors.gold.withValues(alpha: 0.3)),
-                                        ),
-                                        child: Text(
-                                          '${day.value} sold',
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 200),
+                              child: SingleChildScrollView(
+                                child: Column(
+                                  children: data.byDay.map((day) => Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 14, vertical: 8),
+                                    child: Row(
+                                      children: [
+                                        const Icon(Icons.calendar_today_outlined,
+                                            size: 12,
+                                            color: AppColors.whiteTertiary),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          day.key,
                                           style: const TextStyle(
-                                              color: AppColors.gold,
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600),
+                                              color: AppColors.whiteSecondary,
+                                              fontSize: 12),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                )),
+                                        const Spacer(),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 8, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            color: AppColors.gold.withValues(alpha: 0.1),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(
+                                                color: AppColors.gold.withValues(alpha: 0.3)),
+                                          ),
+                                          child: Text(
+                                            '${day.value} sold',
+                                            style: const TextStyle(
+                                                color: AppColors.gold,
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w600),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )).toList(),
+                                ),
+                              ),
+                            ),
                             const SizedBox(height: 4),
                           ],
                         ),
@@ -671,7 +780,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                 ),
               );
-            }),
+            }).toList(),
+                ),
+              ),
+            ),
         ],
       ),
     );

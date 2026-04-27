@@ -131,6 +131,98 @@ class ExportService {
         '${AppStrings.appName} — Utang Export');
   }
 
+  // Exports a full analytics summary to CSV — all key metrics in one file
+  // Sections: Summary KPIs, Orders by Status, Utang Records, Top Products
+  static Future<void> exportAnalyticsCsv({
+    required List<Order> orders,
+    required List<CustomerDebt> debts,
+  }) async {
+    final rows = <List<dynamic>>[];
+    final now  = _dateFormat.format(DateTime.now());
+
+    // ── Section 1: Summary KPIs ───────────────────────────────────────────────
+    rows.add(['=== ANALYTICS SUMMARY ===', 'Generated: $now']);
+    rows.add(['Metric', 'Value']);
+
+    // Mirror app_state.dart: totalRevenue = delivered orders + utang payments collected
+    final deliveredRevenue = orders
+        .where((o) => o.status == OrderStatus.delivered)
+        .fold(0.0, (s, o) => s + o.totalAmount);
+    final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
+    final totalRevenue   = deliveredRevenue + utangCollected;
+    final totalOrders    = orders.length;
+    final deliveredCount = orders.where((o) => o.status == OrderStatus.delivered).length;
+    final itemsSold      = orders
+        .where((o) => o.status != OrderStatus.cancelled)
+        .fold(0, (s, o) => s + o.quantity);
+    final totalDebt   = debts.fold(0.0, (s, d) => s + d.remainingBalance);
+    final unpaidCount = debts.where((d) => !d.isPaid).length;
+    final paidCount   = debts.where((d) => d.isPaid).length;
+    final overdueCount = debts.where((d) => d.isOverdue).length;
+
+    rows.add(['Total Revenue (PHP)', totalRevenue.toStringAsFixed(2)]);
+    rows.add(['Total Orders',        totalOrders]);
+    rows.add(['Delivered',           deliveredCount]);
+    rows.add(['Items Sold',          itemsSold]);
+    rows.add(['Total Utang (PHP)',   totalDebt.toStringAsFixed(2)]);
+    rows.add(['Unpaid Count',        unpaidCount]);
+    rows.add(['Paid Count',          paidCount]);
+    rows.add(['Overdue Count',       overdueCount]);
+    rows.add([]); // blank separator
+
+    // ── Section 2: Orders by Status ───────────────────────────────────────────
+    rows.add(['=== ORDERS BY STATUS ===']);
+    rows.add(['Status', 'Count', '% of Total']);
+    for (final s in OrderStatus.values) {
+      final count = orders.where((o) => o.status == s).length;
+      final pct   = totalOrders > 0
+          ? (count / totalOrders * 100).toStringAsFixed(1)
+          : '0.0';
+      rows.add([s.displayName, count, '$pct%']);
+    }
+    rows.add([]);
+
+    // ── Section 3: Utang / Debt Records ───────────────────────────────────────
+    rows.add(['=== UTANG RECORDS ===']);
+    rows.add(['Customer', 'Order ID', 'Total (PHP)', 'Paid (PHP)',
+              'Balance (PHP)', 'Status', 'Days Old', 'Created At']);
+    for (final d in debts) {
+      final statusLabel = d.isPaid ? 'Paid' : (d.isOverdue ? 'Overdue' : 'Unpaid');
+      rows.add([
+        d.customerName,
+        d.orderId,
+        d.totalAmount.toStringAsFixed(2),
+        d.amountPaid.toStringAsFixed(2),
+        d.remainingBalance.toStringAsFixed(2),
+        statusLabel,
+        d.daysOld,
+        _dateFormat.format(d.createdAt),
+      ]);
+    }
+    rows.add([]);
+
+    // ── Section 4: Top Products by Sales ─────────────────────────────────────
+    rows.add(['=== TOP PRODUCTS BY SALES ===']);
+    rows.add(['Rank', 'Product Name', 'Total Units Sold']);
+    final salesMap = <String, int>{};
+    for (final o in orders) {
+      if (o.status == OrderStatus.cancelled) continue;
+      for (final item in o.items) {
+        salesMap[item.productName] =
+            (salesMap[item.productName] ?? 0) + item.quantity;
+      }
+    }
+    final sorted = salesMap.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    for (var i = 0; i < sorted.length; i++) {
+      rows.add([i + 1, sorted[i].key, sorted[i].value]);
+    }
+
+    await _csvShare(rows,
+        'knz_analytics_${_dateFormat.format(DateTime.now())}.csv',
+        '${AppStrings.appName} — Analytics Report');
+  }
+
   // ════════════════════════════════════════════════════════════════════════════
   // PDF EXPORTS — formatted reports for sharing as files
   // ════════════════════════════════════════════════════════════════════════════
@@ -264,6 +356,23 @@ class ExportService {
                 ],
               );
             }),
+            // ── TOTAL footer row ──────────────────────────────────────────────
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              children: [
+                _cell('TOTAL', bold: true),
+                _cell(''),
+                _cell(''),
+                _cell(''),
+                _cell(''),
+                _cell(
+                  _pdfCurrency.format(
+                      orders.fold(0.0, (s, o) => s + o.totalAmount)),
+                  bold: true,
+                  color: PdfColors.grey800,
+                ),
+              ],
+            ),
           ],
         ),
       ],
@@ -327,6 +436,21 @@ class ExportService {
                 ],
               );
             }),
+            // ── TOTAL footer row ──────────────────────────────────────────────
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              children: [
+                _cell('TOTAL', bold: true),
+                _cell(''),
+                _cell(''),
+                _cell(
+                  '${products.fold(0, (s, p) => s + p.stockQty)}',
+                  bold: true,
+                ),
+                _cell(''),
+                _cell(''),
+              ],
+            ),
           ],
         ),
       ],
@@ -397,6 +521,292 @@ class ExportService {
                 ],
               );
             }),
+            // ── TOTAL footer row ──────────────────────────────────────────────
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              children: [
+                _cell('TOTAL', bold: true),
+                _cell(''),
+                _cell(
+                  _pdfCurrency.format(
+                      debts.fold(0.0, (s, d) => s + d.totalAmount)),
+                  bold: true,
+                ),
+                _cell(
+                  _pdfCurrency.format(
+                      debts.fold(0.0, (s, d) => s + d.amountPaid)),
+                  bold: true,
+                  color: PdfColors.green700,
+                ),
+                _cell(
+                  _pdfCurrency.format(
+                      debts.fold(0.0, (s, d) => s + d.remainingBalance)),
+                  bold: true,
+                  color: PdfColors.red700,
+                ),
+                _cell(''),
+              ],
+            ),
+          ],
+        ),
+      ],
+    ));
+    return pdf;
+  }
+
+  // Builds an analytics PDF and opens the system share sheet
+  static Future<void> exportAnalyticsPdf({
+    required List<Order> orders,
+    required List<CustomerDebt> debts,
+    required String businessName,
+  }) async {
+    await _ensureFonts();
+    final bytes = await _buildAnalyticsPdf(
+            orders: orders, debts: debts, businessName: businessName)
+        .save();
+    await _pdfShare(bytes,
+        'knz_analytics_${_dateFormat.format(DateTime.now())}.pdf',
+        '${AppStrings.appName} — Analytics Report');
+  }
+
+  // Prints the analytics report via the system print dialog
+  static Future<void> printAnalyticsPdf({
+    required List<Order> orders,
+    required List<CustomerDebt> debts,
+    required String businessName,
+  }) async {
+    await _ensureFonts();
+    final pdf = _buildAnalyticsPdf(
+        orders: orders, debts: debts, businessName: businessName);
+    await Printing.layoutPdf(
+        onLayout: (_) async => pdf.save(),
+        name: '${AppStrings.appName} Analytics Report');
+  }
+
+  // Builds the multi-page analytics PDF document:
+  //   Page 1 — Summary KPIs + Orders by Status
+  //   Page 2 — Utang / Debt Records
+  //   Page 3 — Top Products by Sales
+  static pw.Document _buildAnalyticsPdf({
+    required List<Order> orders,
+    required List<CustomerDebt> debts,
+    required String businessName,
+  }) {
+    final pdf = pw.Document();
+    final now = _dateTimeFmt.format(DateTime.now());
+
+    // ── Derived values — mirrors app_state.dart exactly ──────────────────────
+    final deliveredRevenue = orders
+        .where((o) => o.status == OrderStatus.delivered)
+        .fold(0.0, (s, o) => s + o.totalAmount);
+    final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
+    final totalRevenue   = deliveredRevenue + utangCollected;
+    final totalOrders    = orders.length;
+    final deliveredCount = orders.where((o) => o.status == OrderStatus.delivered).length;
+    final itemsSold      = orders
+        .where((o) => o.status != OrderStatus.cancelled)
+        .fold(0, (s, o) => s + o.quantity);
+    final totalDebt    = debts.fold(0.0, (s, d) => s + d.remainingBalance);
+    final unpaidCount  = debts.where((d) => !d.isPaid).length;
+    final paidCount    = debts.where((d) => d.isPaid).length;
+    final overdueCount = debts.where((d) => d.isOverdue).length;
+
+    // ── Top products ──────────────────────────────────────────────────────────
+    final salesMap = <String, int>{};
+    for (final o in orders) {
+      if (o.status == OrderStatus.cancelled) continue;
+      for (final item in o.items) {
+        salesMap[item.productName] =
+            (salesMap[item.productName] ?? 0) + item.quantity;
+      }
+    }
+    final topProducts = salesMap.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    pdf.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(32),
+      theme: _theme(),
+      header: (ctx) => _header(businessName, 'Analytics Report',
+          'Generated: $now', ctx.pageNumber, ctx.pagesCount),
+      footer: (ctx) => _footer(businessName),
+      build: (ctx) => [
+        // ── Section 1: Summary KPIs ─────────────────────────────────────────
+        pw.Text('Summary',
+            style: pw.TextStyle(
+                fontSize: 13,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.grey800)),
+        pw.SizedBox(height: 10),
+        pw.Row(children: [
+          _box('Total Revenue', _pdfCurrency.format(totalRevenue)),
+          pw.SizedBox(width: 10),
+          _box('Total Orders', '$totalOrders'),
+          pw.SizedBox(width: 10),
+          _box('Delivered', '$deliveredCount'),
+          pw.SizedBox(width: 10),
+          _box('Items Sold', '$itemsSold'),
+        ]),
+        pw.SizedBox(height: 10),
+        pw.Row(children: [
+          _box('Total Utang', _pdfCurrency.format(totalDebt)),
+          pw.SizedBox(width: 10),
+          _box('Unpaid', '$unpaidCount'),
+          pw.SizedBox(width: 10),
+          _box('Paid', '$paidCount'),
+          pw.SizedBox(width: 10),
+          _box('Overdue', '$overdueCount'),
+        ]),
+        pw.SizedBox(height: 20),
+
+        // ── Section 2: Orders by Status ─────────────────────────────────────
+        pw.Text('Orders by Status',
+            style: pw.TextStyle(
+                fontSize: 13,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.grey800)),
+        pw.SizedBox(height: 10),
+        pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+          columnWidths: {
+            0: const pw.FlexColumnWidth(3),
+            1: const pw.FixedColumnWidth(70),
+            2: const pw.FixedColumnWidth(80),
+          },
+          children: [
+            _headerRow(['Status', 'Count', '% of Total']),
+            ...OrderStatus.values.asMap().entries.map((e) {
+              final s     = e.value;
+              final count = orders.where((o) => o.status == s).length;
+              final pct   = totalOrders > 0
+                  ? '${(count / totalOrders * 100).toStringAsFixed(1)}%'
+                  : '0.0%';
+              return pw.TableRow(
+                decoration: pw.BoxDecoration(
+                    color: e.key % 2 == 0 ? PdfColors.grey50 : PdfColors.white),
+                children: [
+                  _cell(s.displayName),
+                  _cell('$count', bold: true),
+                  _cell(pct),
+                ],
+              );
+            }),
+          ],
+        ),
+        pw.SizedBox(height: 20),
+
+        // ── Section 3: Utang Records ─────────────────────────────────────────
+        pw.Text('Utang / Debt Records',
+            style: pw.TextStyle(
+                fontSize: 13,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.grey800)),
+        pw.SizedBox(height: 10),
+        pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+          columnWidths: {
+            0: const pw.FlexColumnWidth(2),
+            1: const pw.FixedColumnWidth(70),
+            2: const pw.FixedColumnWidth(72),
+            3: const pw.FixedColumnWidth(72),
+            4: const pw.FixedColumnWidth(72),
+            5: const pw.FixedColumnWidth(55),
+          },
+          children: [
+            _headerRow(['Customer', 'Order ID', 'Total (PHP)',
+                        'Paid (PHP)', 'Balance (PHP)', 'Status']),
+            ...debts.asMap().entries.map((e) {
+              final d    = e.value;
+              final even = e.key % 2 == 0;
+              final statusLabel = d.isPaid ? 'Paid' : d.isOverdue ? 'Overdue' : 'Unpaid';
+              final statusColor = d.isPaid
+                  ? PdfColors.green700
+                  : d.isOverdue ? PdfColors.red700 : PdfColors.orange700;
+              return pw.TableRow(
+                decoration: pw.BoxDecoration(
+                    color: even ? PdfColors.grey50 : PdfColors.white),
+                children: [
+                  _cell(d.customerName, bold: true),
+                  _cell(d.orderId),
+                  _cell(_pdfCurrency.format(d.totalAmount)),
+                  _cell(_pdfCurrency.format(d.amountPaid)),
+                  _cell(_pdfCurrency.format(d.remainingBalance),
+                      bold: true,
+                      color: d.isPaid ? PdfColors.green700 : PdfColors.red700),
+                  _cell(statusLabel, color: statusColor),
+                ],
+              );
+            }),
+            // ── TOTAL footer row ──────────────────────────────────────────────
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              children: [
+                _cell('TOTAL', bold: true),
+                _cell(''),
+                _cell(
+                  _pdfCurrency.format(
+                      debts.fold(0.0, (s, d) => s + d.totalAmount)),
+                  bold: true,
+                ),
+                _cell(
+                  _pdfCurrency.format(
+                      debts.fold(0.0, (s, d) => s + d.amountPaid)),
+                  bold: true,
+                  color: PdfColors.green700,
+                ),
+                _cell(
+                  _pdfCurrency.format(
+                      debts.fold(0.0, (s, d) => s + d.remainingBalance)),
+                  bold: true,
+                  color: PdfColors.red700,
+                ),
+                _cell(''),
+              ],
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 20),
+
+        // ── Section 4: Top Products ──────────────────────────────────────────
+        pw.Text('Top Products by Sales',
+            style: pw.TextStyle(
+                fontSize: 13,
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.grey800)),
+        pw.SizedBox(height: 10),
+        pw.Table(
+          border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+          columnWidths: {
+            0: const pw.FixedColumnWidth(35),
+            1: const pw.FlexColumnWidth(),
+            2: const pw.FixedColumnWidth(100),
+          },
+          children: [
+            _headerRow(['Rank', 'Product Name', 'Total Units Sold']),
+            ...topProducts.asMap().entries.map((e) {
+              final even = e.key % 2 == 0;
+              return pw.TableRow(
+                decoration: pw.BoxDecoration(
+                    color: even ? PdfColors.grey50 : PdfColors.white),
+                children: [
+                  _cell('${e.key + 1}', bold: true),
+                  _cell(e.value.key),
+                  _cell('${e.value.value}', bold: true),
+                ],
+              );
+            }),
+            // ── TOTAL footer row ──────────────────────────────────────────────
+            pw.TableRow(
+              decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+              children: [
+                _cell(''),
+                _cell('TOTAL', bold: true),
+                _cell(
+                  '${topProducts.fold(0, (s, e) => s + e.value)}',
+                  bold: true,
+                ),
+              ],
+            ),
           ],
         ),
       ],

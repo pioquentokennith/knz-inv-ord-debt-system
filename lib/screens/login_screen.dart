@@ -140,6 +140,18 @@ class _LoginScreenState extends State<LoginScreen>
             const Text(AppStrings.appName, style: AppTextStyles.brandName),
             const SizedBox(height: 4),
             const Text(AppStrings.appSubtitle, style: AppTextStyles.brandSubtitle),
+            const SizedBox(height: 20),
+            // UNLEASH • CONFIDENCE • ELEVATE tagline
+            const Text(
+              'UNLEASH  •  CONFIDENCE  •  ELEVATE',
+              style: TextStyle(
+                color: AppColors.gold,
+                fontSize: 11,
+                letterSpacing: 2.0,
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 32),
             Container(
               padding:
@@ -165,7 +177,8 @@ class _LoginScreenState extends State<LoginScreen>
 
   Widget _buildBrandPanelMobile() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 20),
       decoration: const BoxDecoration(
         gradient: AppColors.sidebarGradient,
         borderRadius: BorderRadius.only(
@@ -175,18 +188,31 @@ class _LoginScreenState extends State<LoginScreen>
       ),
       child: Column(
         children: [
-          _buildPulsingLogo(size: 80),
-          const SizedBox(height: 16),
+          // KNZ actual logo image with pulsing rings
+          _buildPulsingLogo(size: 120),
+          const SizedBox(height: 20),
           Text(AppStrings.appName,
               style: AppTextStyles.brandName.copyWith(fontSize: 26)),
           const SizedBox(height: 4),
           const Text(AppStrings.appSubtitle, style: AppTextStyles.brandSubtitle),
+          const SizedBox(height: 14),
+          // UNLEASH • CONFIDENCE • ELEVATE tagline
+          const Text(
+            'UNLEASH  •  CONFIDENCE  •  ELEVATE',
+            style: TextStyle(
+              color: AppColors.gold,
+              fontSize: 11,
+              letterSpacing: 2.0,
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: TextAlign.center,
+          ),
         ],
       ),
     );
   }
 
-  // Builds three concentric animated rings around the app logo icon.
+  // Builds three concentric animated rings around the KNZ logo image.
   // Opacity pulses with the _pulse animation for a breathing effect.
   Widget _buildPulsingLogo({double size = 110}) {
     return AnimatedBuilder(
@@ -197,19 +223,23 @@ class _LoginScreenState extends State<LoginScreen>
           children: [
             _ring(size * 1.4, AppColors.gold.withValues(alpha: 0.05 * _pulse.value)),
             _ring(size * 1.15, AppColors.gold.withValues(alpha: 0.1 * _pulse.value)),
-            _ring(size, AppColors.gold.withValues(alpha: 0.15)),
+            _ring(size, AppColors.gold.withValues(alpha: 0.15 * _pulse.value)),
+            // KNZ logo image inside the rings
             Container(
-              width: size * 0.55,
-              height: size * 0.55,
+              width: size * 0.82,
+              height: size * 0.82,
               decoration: BoxDecoration(
-                color: AppColors.gold.withValues(alpha: 0.1),
                 shape: BoxShape.circle,
-                border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+                border: Border.all(
+                  color: AppColors.gold.withValues(alpha: 0.6),
+                  width: 1.5,
+                ),
               ),
-              child: Icon(
-                Icons.water_drop_outlined,
-                color: AppColors.gold,
-                size: size * 0.3,
+              child: ClipOval(
+                child: Image.asset(
+                  'assets/icon/app_icon_fitted.png',
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
           ],
