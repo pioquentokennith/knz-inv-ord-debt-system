@@ -32,9 +32,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   final Set<String> _expandedProducts = {};
   String _utangTab = 'Unpaid'; // 'Unpaid' or 'Paid'
 
+  // ── PRIORITY 1: Cache _topProductsAllTime result ─────────────────────────
+  // Cached result is invalidated when the orders list identity changes.
+  // Avoids recomputing the full aggregation on every AppState rebuild.
+  List<Order>? _cachedOrdersRef;            // last seen orders list reference
+  List<_ProductSalesData>? _cachedTopProducts; // computed result
+
   // Aggregates all non-cancelled order items into a map of product name → (date → qty sold).
-  // Returns the top 5 products sorted by total units sold, each with a per-day breakdown.
+  // Returns products sorted by total units sold, each with a per-day breakdown.
+  // Result is memoised: recomputed only when the orders list reference changes.
   List<_ProductSalesData> _topProductsAllTime() {
+    final currentOrders = AppState().orders;
+    // Return cached result if orders haven't changed since last computation
+    if (_cachedOrdersRef == currentOrders && _cachedTopProducts != null) {
+      return _cachedTopProducts!;
+    }
     final map = <String, Map<String, int>>{};
     for (final order in AppState().orders) {
       if (order.status == OrderStatus.cancelled) continue;
@@ -56,7 +68,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       return _ProductSalesData(name: e.key, total: total, byDay: days);
     }).toList()
       ..sort((a, b) => b.total.compareTo(a.total));
-    return result; // show all products, scrollable
+    // Store result in cache along with the orders reference used to compute it
+    _cachedOrdersRef    = currentOrders;
+    _cachedTopProducts  = result;
+    return result;
   }
 
   // Returns the chart/badge color for a given order status for the pie chart sections

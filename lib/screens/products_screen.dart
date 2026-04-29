@@ -237,6 +237,8 @@ class _ProductCardState extends State<_ProductCard>
                             File(p.imagePath!),
                             fit: BoxFit.cover,
                             width: double.infinity,
+                            cacheWidth: 400,   // PRIORITY 2: card is wider, so use 400
+                            cacheHeight: 400,
                             errorBuilder: (_, __, ___) => const Center(
                               child: Icon(Icons.water_drop_outlined,
                                   color: AppColors.gold, size: 32),

@@ -240,6 +240,9 @@ class _StatChip extends StatelessWidget {
   final Color color;
   final IconData icon;
 
+  // PRIORITY 4: const constructor ensures Flutter skips rebuild when parent setState fires
+  // and the chip's values haven't changed. All private widget classes in this file follow
+  // this pattern: _ProgressBar, _PaymentHistory, _EmptyState, _SearchAndFilter.
   const _StatChip({
     required this.label,
     required this.value,

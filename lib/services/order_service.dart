@@ -13,8 +13,9 @@ import '../repositories/product_repository.dart';
 /// Abstract contract for order business logic (Abstraction).
 /// AppState depends on this interface so tests can inject a stub.
 abstract class IOrderService {
-  // Returns all active orders for the given user, newest first
-  Future<List<Order>> getAll(String userId);
+  // Returns all active orders for the given user, newest first.
+  // PRIORITY 3: Pass fromDate/toDate to filter by order_date range (optional).
+  Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate});
 
   // Generates the next sequential human-readable order ID (e.g. "KNZ-042")
   Future<String>      generateOrderId(String userId);
@@ -41,9 +42,10 @@ class OrderService implements IOrderService {
 
   OrderService(this._orderRepo, this._productRepo);
 
-  // Delegates directly to repo — no business logic needed for a simple fetch
+  // Delegates directly to repo — date params forwarded for optional range filtering
   @override
-  Future<List<Order>> getAll(String userId) => _orderRepo.getAll(userId);
+  Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate}) =>
+      _orderRepo.getAll(userId, fromDate: fromDate, toDate: toDate);
 
   // Reads the next sequential number from the DB and formats it as "KNZ-XXX"
   @override

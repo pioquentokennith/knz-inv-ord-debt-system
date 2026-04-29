@@ -7,7 +7,12 @@ class StubOrderRepository implements OrderRepository {
   final Map<String, Order> deleted = {};
   int counter = 0;
 
-  @override Future<List<Order>> getAll(String userId) async => store.values.toList();
+  @override Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate}) async {
+    var result = store.values.toList();
+    if (fromDate != null) result = result.where((o) => !o.orderDate.isBefore(fromDate)).toList();
+    if (toDate   != null) result = result.where((o) => !o.orderDate.isAfter(toDate)).toList();
+    return result;
+  }
   @override Future<void> add(Order order, String userId) async { counter++; store[order.id] = order; }
   @override Future<void> updateStatus(String orderId, OrderStatus status) async {
     final o = store[orderId];

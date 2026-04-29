@@ -56,7 +56,8 @@ class StubOrderService implements IOrderService {
   final StubProductRepository productRepo;
   StubOrderService(this.orderRepo, this.productRepo);
 
-  @override Future<List<Order>> getAll(String userId) => orderRepo.getAll(userId);
+  @override Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate}) =>
+      orderRepo.getAll(userId, fromDate: fromDate, toDate: toDate);
   @override Future<String> generateOrderId(String userId) async {
     final num = await orderRepo.getNextOrderNumber(userId);
     return 'KNZ-${num.toString().padLeft(3, '0')}';

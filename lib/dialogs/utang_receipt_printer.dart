@@ -36,101 +36,101 @@ class UtangReceiptPrinter {
   static final _shortDt = DateFormat('MM/dd/yy');
 
   /// Builds the ESC/POS byte sequence for [debt].
-  /// Layout mirrors the order receipt exactly for consistency:
-  ///   header → dashed divider → info block → dashed divider →
-  ///   amount rows → === divider → big BALANCE DUE →
-  ///   payment history (if any) → footer with dashed borders
+  ///
+  /// Design principles applied:
+  ///   • No double-width/double-height on labels — only on the BALANCE value.
+  ///   • Bold used sparingly: store name, customer name, section labels only.
+  ///   • Consistent label prefix width (5 chars) so colons align vertically.
+  ///   • Empty line before major dividers for visual breathing room.
+  ///   • Payment history rows: date left, amount right — same 5/7 split.
   static Future<List<int>> buildBytes(CustomerDebt debt) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     List<int> b   = [];
 
-    
-
     // ── Header ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
-    b += gen.text('KNZ SCENT',
+    // Store name: bold, normal size — readable without being blocky
+    b += gen.text('KNZ  SCENT',
         styles: const PosStyles(
-            align: PosAlign.center, bold: true,
-            height: PosTextSize.size2, width: PosTextSize.size2));
-    b += gen.text('Luxury Fragrance House',
-        styles: const PosStyles(align: PosAlign.center,
-            ));
-    b += gen.feed(1);
-    b += gen.text('UTANG STATEMENT',
-        styles: const PosStyles(align: PosAlign.center, bold: true));
+            align: PosAlign.center,
+            bold: true));
+    b += gen.text('Luxury  Fragrance  House',
+        styles: const PosStyles(align: PosAlign.center));
+    b += gen.emptyLines(1);
+    b += gen.text('- UTANG STATEMENT -',
+        styles: const PosStyles(align: PosAlign.center));
     b += gen.hr(ch: '-');
 
     // ── Customer info ────────────────────────────────────────────────────────
-    b += gen.text('Customer : ${debt.customerName}',
+    // Bold on customer name only — most important info stands out
+    b += gen.text('NAME : ${debt.customerName}',
         styles: const PosStyles(bold: true));
-    b += gen.text('Order ID : ${debt.orderId}',
-        styles: const PosStyles());
-    b += gen.text('Date     : ${_dateFmt.format(debt.createdAt)}',
-        styles: const PosStyles());
+    b += gen.text('ID   : ${debt.orderId}');
+    b += gen.text('DATE : ${_dateFmt.format(debt.createdAt)}');
     b += gen.hr(ch: '-');
 
     // ── Amounts ──────────────────────────────────────────────────────────────
+    // Normal weight on both columns — thin strokes print crisper on thermal
     b += gen.row([
       PosColumn(text: 'Order Total', width: 5,
           styles: const PosStyles()),
       PosColumn(text: _cur.format(debt.totalAmount), width: 7,
-          styles: const PosStyles(bold: true, align: PosAlign.right,
-              )),
+          styles: const PosStyles(align: PosAlign.right)),
     ]);
     b += gen.row([
       PosColumn(text: 'Total Paid', width: 5,
           styles: const PosStyles()),
       PosColumn(text: _cur.format(debt.amountPaid), width: 7,
-          styles: const PosStyles(bold: true, align: PosAlign.right,
-              )),
+          styles: const PosStyles(align: PosAlign.right)),
     ]);
 
     // ── Balance ───────────────────────────────────────────────────────────────
+    b += gen.emptyLines(1);
     b += gen.hr(ch: '=');
-    final balanceLabel = debt.isPaid ? 'FULLY PAID' : 'BALANCE DUE';
+    final balanceLabel = debt.isPaid ? 'PAID' : 'BALANCE';
+    // Label: normal size so it doesn't compete with the amount
     b += gen.row([
-      PosColumn(text: '$balanceLabel:',
+      PosColumn(text: balanceLabel,
           width: 5,
-          styles: const PosStyles(bold: true,
-              height: PosTextSize.size2, width: PosTextSize.size2)),
+          styles: const PosStyles()),
+      // Amount: double-size on value only — the critical number
       PosColumn(text: _cur.format(debt.remainingBalance),
           width: 7,
-          styles: const PosStyles(bold: true, align: PosAlign.right,
-              height: PosTextSize.size2, width: PosTextSize.size2)),
+          styles: const PosStyles(
+              bold: true,
+              align: PosAlign.right,
+              height: PosTextSize.size2,
+              width: PosTextSize.size2)),
     ]);
+    b += gen.hr(ch: '=');
 
     // ── Payment History (optional) ────────────────────────────────────────────
     if (debt.payments.isNotEmpty) {
-      b += gen.feed(1);
+      b += gen.emptyLines(1);
       b += gen.hr(ch: '-');
-      b += gen.text('Payment History:',
-          styles: const PosStyles(bold: true));
+      b += gen.text('PAYMENT HISTORY');
       b += gen.hr(ch: '-');
       for (final p in debt.payments) {
         b += gen.row([
           PosColumn(text: _shortDt.format(p.paidAt), width: 5,
               styles: const PosStyles()),
           PosColumn(text: _cur.format(p.amount), width: 7,
-              styles: const PosStyles(bold: true, align: PosAlign.right,
-                  )),
+              styles: const PosStyles(align: PosAlign.right)),
         ]);
         if (p.note != null && p.note!.isNotEmpty) {
-          b += gen.text('  ${p.note!}',
-              styles: const PosStyles());
+          b += gen.text('  ${p.note!}');
         }
       }
     }
 
     // ── Footer ───────────────────────────────────────────────────────────────
-    b += gen.feed(1);
+    b += gen.emptyLines(1);
     b += gen.hr(ch: '-');
     b += gen.text('Pakibayad po ang inyong balanse.',
-        styles: const PosStyles(align: PosAlign.center,
-            ));
-    b += gen.text('Salamat! - ${AppStrings.appName}',
-        styles: const PosStyles(align: PosAlign.center,
-            ));
+        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text('Salamat!  -  ${AppStrings.appName}',
+        styles: const PosStyles(align: PosAlign.center));
     b += gen.hr(ch: '-');
     b += gen.emptyLines(3);
     b += gen.cut();

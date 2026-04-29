@@ -36,50 +36,56 @@ class OrderReceiptPrinter {
   static final _dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
 
   // Builds the full ESC/POS byte sequence for a 58mm thermal printer.
-  // Layout mirrors the utang receipt for consistency:
-  //   header → dashed divider → info block → dashed divider →
-  //   items with row-aligned amounts → === divider → big TOTAL →
-  //   footer with dashed borders
+  //
+  // Design principles applied:
+  //   • No double-width/double-height on labels — only on the TOTAL value
+  //     so the most important number is large without making labels muddy.
+  //   • Bold used sparingly: header name, item names, section labels only.
+  //     Price/amount columns are normal weight for crisp thin strokes.
+  //   • Consistent column widths across every row section (8/4 split).
+  //   • Empty line before every major divider for visual breathing room.
+  //   • Aligned label colons with fixed-width prefixes for easy scanning.
   static Future<List<int>> buildBytes(Order order) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     List<int> b   = [];
 
-    
-
     // ── Header ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
-    b += gen.text('KNZ SCENT',
+    // Store name: bold, normal size — readable without being blocky
+    b += gen.text('KNZ  SCENT',
         styles: const PosStyles(
-            align: PosAlign.center, bold: true,
-            height: PosTextSize.size2, width: PosTextSize.size2));
-    b += gen.text('Luxury Fragrance House',
+            align: PosAlign.center,
+            bold: true));
+    b += gen.text('Luxury  Fragrance  House',
         styles: const PosStyles(align: PosAlign.center));
-    b += gen.feed(1);
-    b += gen.text('ORDER RECEIPT',
-        styles: const PosStyles(align: PosAlign.center, bold: true));
+    b += gen.emptyLines(1);
+    b += gen.text('- ORDER RECEIPT -',
+        styles: const PosStyles(align: PosAlign.center));
     b += gen.hr(ch: '-');
 
     // ── Order info ───────────────────────────────────────────────────────────
-    b += gen.text('Order ID : ${order.orderId}',
-        styles: const PosStyles(bold: true));
-    b += gen.text('Customer : ${order.customerName}');
-    b += gen.text('Date     : ${_dateFmt.format(order.orderDate)}');
-    b += gen.text('Status   : ${order.status.displayName.toUpperCase()}',
-        styles: const PosStyles(bold: true));
+    b += gen.text('ID   : ${order.orderId}');
+    b += gen.text('NAME : ${order.customerName}');
+    b += gen.text('DATE : ${_dateFmt.format(order.orderDate)}');
+    b += gen.text('STAT : ${order.status.displayName.toUpperCase()}');
     b += gen.hr(ch: '-');
 
-    // ── Items ────────────────────────────────────────────────────────────────
+    // ── Items header ─────────────────────────────────────────────────────────
     b += gen.row([
-      PosColumn(text: 'Item', width: 8,
-          styles: const PosStyles(bold: true)),
-      PosColumn(text: 'Amount', width: 4,
-          styles: const PosStyles(bold: true, align: PosAlign.right)),
+      PosColumn(text: 'ITEM', width: 8,
+          styles: const PosStyles()),
+      PosColumn(text: 'AMOUNT', width: 4,
+          styles: const PosStyles(align: PosAlign.right)),
     ]);
     b += gen.hr(ch: '-');
+
+    // ── Item rows ────────────────────────────────────────────────────────────
     for (final item in order.items) {
+      // Product name on its own line — bold for scanability
       b += gen.text(item.productName,
           styles: const PosStyles(bold: true));
+      // Qty × unit price on left, subtotal on right — normal weight for clarity
       b += gen.row([
         PosColumn(
             text: '  ${item.quantity} x ${_cur.format(item.unitPrice)}',
@@ -88,22 +94,20 @@ class OrderReceiptPrinter {
         PosColumn(
             text: _cur.format(item.subtotal),
             width: 5,
-            styles: const PosStyles(
-                bold: true,
-                align: PosAlign.right)),
+            styles: const PosStyles(align: PosAlign.right)),
       ]);
     }
 
     // ── Total ────────────────────────────────────────────────────────────────
+    b += gen.emptyLines(1);
     b += gen.hr(ch: '=');
+    // Label: normal size, normal weight — stands out from items but not blocky
     b += gen.row([
       PosColumn(
-          text: 'TOTAL:',
+          text: 'TOTAL',
           width: 5,
-          styles: const PosStyles(
-              bold: true,
-              height: PosTextSize.size2,
-              width: PosTextSize.size2)),
+          styles: const PosStyles()),
+      // Amount: double-size only on the value — the one number that matters
       PosColumn(
           text: _cur.format(order.totalAmount),
           width: 7,
@@ -113,19 +117,20 @@ class OrderReceiptPrinter {
               height: PosTextSize.size2,
               width: PosTextSize.size2)),
     ]);
+    b += gen.hr(ch: '=');
 
     // ── Notes (optional) ─────────────────────────────────────────────────────
     if (order.notes != null && order.notes!.isNotEmpty) {
-      b += gen.hr(ch: '-');
-      b += gen.text('Note:', styles: const PosStyles(bold: true));
+      b += gen.emptyLines(1);
+      b += gen.text('NOTE :');
       b += gen.text(order.notes!);
     }
 
     // ── Footer ───────────────────────────────────────────────────────────────
-    b += gen.feed(1);
+    b += gen.emptyLines(1);
     b += gen.hr(ch: '-');
     b += gen.text('Thank you for your purchase!',
-        styles: const PosStyles(align: PosAlign.center, bold: true));
+        styles: const PosStyles(align: PosAlign.center));
     b += gen.text(AppStrings.appName,
         styles: const PosStyles(align: PosAlign.center));
     b += gen.hr(ch: '-');

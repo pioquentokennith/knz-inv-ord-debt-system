@@ -9,7 +9,9 @@ import '../models/order_model.dart';
 
 abstract class OrderRepository {
   // Returns all active (non-deleted) orders for a given user, newest first
-  Future<List<Order>> getAll(String userId);
+  // PRIORITY 3: Optional date-range filter — pass fromDate/toDate to narrow results.
+  // Useful for analytics or export when data grows large.
+  Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate});
 
   // Persists a new order and its line items to storage
   Future<void> add(Order order, String userId);

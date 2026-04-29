@@ -26,13 +26,27 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   final _queue = SyncQueue.instance;
 
   // Returns all active orders for a user using a JOIN query (N+1 fix)
+  // PRIORITY 3: Optional fromDate/toDate adds a WHERE order_date BETWEEN clause.
   @override
-  Future<List<Order>> getAll(String userId) => safeCall(() async {
+  Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate}) => safeCall(() async {
     final database = await db.database;
+
+    // Build WHERE clause — always filter by user + not-deleted; optionally by date range
+    String where = 'user_id = ? AND is_deleted = 0';
+    final List<dynamic> whereArgs = [userId];
+    if (fromDate != null) {
+      where += ' AND order_date >= ?';
+      whereArgs.add(fromDate.millisecondsSinceEpoch);
+    }
+    if (toDate != null) {
+      where += ' AND order_date <= ?';
+      whereArgs.add(toDate.millisecondsSinceEpoch);
+    }
+
     // Fetch only non-deleted orders first (basic query for cloud fallback check)
     final orderMaps = await database.query('orders',
-        where: 'user_id = ? AND is_deleted = 0',
-        whereArgs: [userId],
+        where: where,
+        whereArgs: whereArgs,
         orderBy: 'order_date DESC');
 
     // Local is empty and online — restore orders from Firestore
@@ -76,6 +90,18 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
 
     // FIX N+1: Single JOIN query instead of one query per order for items
+    // PRIORITY 3: Build date-range clause for JOIN query if params provided
+    String joinWhere = 'o.user_id = ? AND o.is_deleted = 0';
+    final List<dynamic> joinArgs = [userId];
+    if (fromDate != null) {
+      joinWhere += ' AND o.order_date >= ?';
+      joinArgs.add(fromDate.millisecondsSinceEpoch);
+    }
+    if (toDate != null) {
+      joinWhere += ' AND o.order_date <= ?';
+      joinArgs.add(toDate.millisecondsSinceEpoch);
+    }
+
     // This replaces the old pattern of looping and querying order_items per order
     final joinRows = await database.rawQuery('''
       SELECT
@@ -93,9 +119,9 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         oi.quantity     AS oi_quantity
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
-      WHERE o.user_id = ? AND o.is_deleted = 0
+      WHERE $joinWhere
       ORDER BY o.order_date DESC
-    ''', [userId]);
+    ''', joinArgs);
 
     // Group flat JOIN rows back into Order objects with their OrderItem lists
     final ordersMap = <String, Map<String, dynamic>>{};

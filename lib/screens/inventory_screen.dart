@@ -366,6 +366,8 @@ class _ProductCard extends StatelessWidget {
                         child: Image.file(
                           File(product.imagePath!),
                           fit: BoxFit.cover,
+                          cacheWidth: 200,   // PRIORITY 2: limit decoded texture size
+                          cacheHeight: 200,
                           errorBuilder: (_, __, ___) => const Icon(
                             Icons.water_drop_outlined,
                             color: AppColors.gold, size: 22),
@@ -528,6 +530,8 @@ class _ProductRowWide extends StatelessWidget {
                     child: Image.file(
                       File(product.imagePath!),
                       fit: BoxFit.cover,
+                      cacheWidth: 200,   // PRIORITY 2: limit decoded texture size
+                      cacheHeight: 200,
                       errorBuilder: (_, __, ___) => const Icon(
                         Icons.water_drop_outlined,
                         color: AppColors.gold, size: 18),
