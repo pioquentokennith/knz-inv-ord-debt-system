@@ -262,17 +262,20 @@ class AppState extends ChangeNotifier {
   // Fetches all four data types in parallel for faster startup
   Future<void> _loadAllData() async {
     try {
-      final results = await Future.wait([
+      // Run all four fetches in parallel for faster startup.
+      // Using named typed variables avoids the unsafe (results[N] as List<X>) cast
+      // that Future.wait produces — a wrong index or unexpected return type would
+      // throw a TypeError at runtime instead of a compile-time error.
+      final (products, orders, debts, logs) = await (
         _ps.getAll(_activeUser),
         _os.getAll(_activeUser),
         _ds.getAll(_activeUser),
         _logRepo.getAll(_activeUser),
-      ]);
-      // Cast each result to its typed list and store in state
-      _products     = results[0] as List<Product>;
-      _orders       = results[1] as List<Order>;
-      _debts        = results[2] as List<CustomerDebt>;
-      _activityLogs = results[3] as List<ActivityLog>;
+      ).wait;
+      _products     = products;
+      _orders       = orders;
+      _debts        = debts;
+      _activityLogs = logs;
     } catch (_) {
       // On any failure, fall back to empty lists rather than crashing
       _products = []; _orders = []; _debts = []; _activityLogs = [];

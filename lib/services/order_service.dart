@@ -58,6 +58,27 @@ class OrderService implements IOrderService {
   /// Stock deduction is a critical business rule — it belongs here, not in the screen.
   @override
   Future<void> createOrder(Order order, String userId, List<Product> products) async {
+    // Pre-validate stock for every item BEFORE saving anything.
+    // This prevents overselling and partial saves where some items succeed but others fail.
+    for (final item in order.items) {
+      try {
+        final product = products.firstWhere(
+          (p) => p.id == item.productId ||
+                 p.name.toLowerCase() == item.productName.toLowerCase(),
+        );
+        if (item.quantity > product.stockQty) {
+          throw Exception(
+            'Not enough stock for "${product.name}". '
+            'Available: ${product.stockQty}, requested: ${item.quantity}.',
+          );
+        }
+      } on Exception {
+        rethrow; // Propagate stock validation errors to the caller (screen shows error)
+      } catch (_) {
+        // Product not found in list — skip pre-check; handled at deduction step below
+      }
+    }
+
     // Save the order first; items are saved atomically within the repository
     await _orderRepo.add(order, userId);
 
@@ -69,7 +90,7 @@ class OrderService implements IOrderService {
           (p) => p.id == item.productId ||
                  p.name.toLowerCase() == item.productName.toLowerCase(),
         );
-        // clamp(0, 999999) prevents negative stock if the order exceeds available qty
+        // Pre-validation guarantees qty >= 0; clamp is a last-resort safety net
         final newQty = (product.stockQty - item.quantity).clamp(0, 999999);
         await _productRepo.updateStock(product.id, newQty);
       } catch (_) {

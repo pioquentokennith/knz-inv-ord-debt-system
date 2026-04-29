@@ -36,11 +36,11 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     final List<dynamic> whereArgs = [userId];
     if (fromDate != null) {
       where += ' AND order_date >= ?';
-      whereArgs.add(fromDate.millisecondsSinceEpoch);
+      whereArgs.add(fromDate.toIso8601String());
     }
     if (toDate != null) {
       where += ' AND order_date <= ?';
-      whereArgs.add(toDate.millisecondsSinceEpoch);
+      whereArgs.add(toDate.toIso8601String());
     }
 
     // Fetch only non-deleted orders first (basic query for cloud fallback check)
@@ -95,11 +95,11 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     final List<dynamic> joinArgs = [userId];
     if (fromDate != null) {
       joinWhere += ' AND o.order_date >= ?';
-      joinArgs.add(fromDate.millisecondsSinceEpoch);
+      joinArgs.add(fromDate.toIso8601String());
     }
     if (toDate != null) {
       joinWhere += ' AND o.order_date <= ?';
-      joinArgs.add(toDate.millisecondsSinceEpoch);
+      joinArgs.add(toDate.toIso8601String());
     }
 
     // This replaces the old pattern of looping and querying order_items per order

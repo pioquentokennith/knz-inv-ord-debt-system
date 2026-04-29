@@ -20,9 +20,10 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   @override
   Future<List<CustomerDebt>> getAll(String userId) => safeCall(() async {
     final database = await db.database;
-    // Basic query used only for cloud fallback check
+    // Basic query used only for cloud fallback check — must exclude soft-deleted rows
+    // so that deleted-only local data doesn't suppress the cloud restore path
     final debtMaps = await database.query('debts',
-        where: 'user_id = ?', whereArgs: [userId], orderBy: 'created_at DESC');
+        where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId], orderBy: 'created_at DESC');
 
     // Local is empty and online — restore debts from Firestore
     if (debtMaps.isEmpty && _queue.isOnline) {
