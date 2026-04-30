@@ -134,7 +134,7 @@ class OrderReceiptPrinter {
     b += gen.text(AppStrings.appName,
         styles: const PosStyles(align: PosAlign.center));
     b += gen.hr(ch: '-');
-    b += gen.emptyLines(3);
+    b += gen.emptyLines(1);
     b += gen.cut();
     return b;
   }

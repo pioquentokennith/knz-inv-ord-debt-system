@@ -552,7 +552,9 @@ class _ProductRowWide extends StatelessWidget {
                         fontSize: 13)),
                 Text(product.description,
                     style: const TextStyle(
-                        color: AppColors.whiteTertiary, fontSize: 11)),
+                        color: AppColors.whiteTertiary, fontSize: 11),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis),
               ],
             ),
           ),

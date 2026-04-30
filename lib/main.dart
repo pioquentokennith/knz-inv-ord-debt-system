@@ -17,11 +17,15 @@ import 'core/app_state.dart';
 import 'firebase_options.dart';
 import 'repositories/sync_queue.dart';
 import 'screens/login_screen.dart';
+import 'services/notification_service.dart'; // ← Low-stock push notifications
 
 // Entry point — async so we can await initialization steps before runApp()
 void main() async {
   // Required before any async work in main()
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ── Notifications: init before AppState so the channel exists early ───
+  await NotificationService.instance.init();
 
   // ── FIX 1: Load .env BEFORE Firebase or AppState ──────────────────────
   // This makes BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME

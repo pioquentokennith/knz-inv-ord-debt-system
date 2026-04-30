@@ -1,12 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// products_screen.dart
-// Purpose : Product catalogue grid showing all products as visual cards.
-// Function: Uses AppStateBuilder (FIX 6) to scope rebuilds to the grid only.
-//           Renders a 2-column grid (or 1 column if screen width < 400px) of
-//           _ProductCard widgets. Each card shows the product image, name, category,
-//           price, stock badge, stock progress bar, and action buttons (Edit Stock,
-//           Edit, Delete). Cards have a hover elevation animation via MouseRegion
-//           for desktop users.
+// products_screen.dart  (UPDATED)
+// Changes:
+//   • Search bar     — real-time filter by product name or category
+//   • Filter chips   — quick category filter (All + each ProductCategory)
+//   • Clickable image → full-screen InteractiveViewer overlay (pinch-to-zoom)
+//   • BoxFit.contain  — image no longer cropped inside the card
 // ─────────────────────────────────────────────────────────────────────────────
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -14,7 +12,7 @@ import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
-import '../core/app_state_builder.dart'; // ← FIX 6
+import '../core/app_state_builder.dart';
 import '../models/product_model.dart';
 import '../widgets/shared_widgets.dart';
 import '../dialogs/product_dialog.dart';
@@ -28,7 +26,29 @@ class ProductsScreen extends StatefulWidget {
 }
 
 class _ProductsScreenState extends State<ProductsScreen> {
-  // FIX 6: No _state, no addListener, no _onStateChange — removed entirely.
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  // null = All categories
+  ProductCategory? _selectedCategory;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────────────
+  List<Product> _applyFilters(List<Product> products) {
+    return products.where((p) {
+      final q = _searchQuery.toLowerCase();
+      final matchSearch = q.isEmpty ||
+          p.name.toLowerCase().contains(q) ||
+          p.category.displayName.toLowerCase().contains(q);
+      final matchCategory =
+          _selectedCategory == null || p.category == _selectedCategory;
+      return matchSearch && matchCategory;
+    }).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +58,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Header row ─────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Row(
@@ -68,15 +90,113 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 16),
 
-            // ── FIX 6: Only the grid rebuilds on AppState changes ──────
+            const SizedBox(height: 12),
+
+            // ── Search bar ─────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextField(
+                controller: _searchCtrl,
+                onChanged: (v) => setState(() => _searchQuery = v),
+                style: const TextStyle(color: AppColors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  hintText: 'Search products…',
+                  hintStyle: const TextStyle(
+                      color: AppColors.whiteTertiary, fontSize: 13),
+                  prefixIcon: const Icon(Icons.search,
+                      color: AppColors.gold, size: 20),
+                  suffixIcon: _searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear,
+                              color: AppColors.whiteTertiary, size: 18),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() => _searchQuery = '');
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: AppColors.inputFill,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                        color: AppColors.gold, width: 1),
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 10),
+
+            // ── Filter chips ───────────────────────────────────────────
+            SizedBox(
+              height: 36,
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                scrollDirection: Axis.horizontal,
+                children: [
+                  // "All" chip
+                  _FilterChip(
+                    label: 'All',
+                    selected: _selectedCategory == null,
+                    onTap: () => setState(() => _selectedCategory = null),
+                  ),
+                  const SizedBox(width: 8),
+                  // One chip per category
+                  ...ProductCategory.values.map((cat) {
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: _FilterChip(
+                        label: cat.displayName,
+                        selected: _selectedCategory == cat,
+                        onTap: () =>
+                            setState(() => _selectedCategory = cat),
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 8),
+
+            // ── Grid (scoped rebuild) ──────────────────────────────────
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: AppStateBuilder(
                   builder: (context, state) {
-                    final products = state.products;
+                    final filtered = _applyFilters(state.products);
+
+                    if (filtered.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.search_off,
+                                color: AppColors.whiteTertiary, size: 48),
+                            const SizedBox(height: 12),
+                            Text(
+                              _searchQuery.isNotEmpty ||
+                                      _selectedCategory != null
+                                  ? 'No products match your filter.'
+                                  : 'No products yet.\nTap "+ Add" to get started.',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  color: AppColors.whiteTertiary,
+                                  fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
                     return AnimationLimiter(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
@@ -91,16 +211,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
                               mainAxisSpacing: 12,
                               mainAxisExtent: 380,
                             ),
-                            itemCount: products.length,
+                            itemCount: filtered.length,
                             itemBuilder: (ctx, i) {
-                              final p = products[i];
+                              final p = filtered[i];
                               final stockPct = p.minStockLevel > 0
-                                  ? (p.stockQty / (p.minStockLevel * 3))
+                                  ? (p.stockQty /
+                                          (p.minStockLevel * 3))
                                       .clamp(0.0, 1.0)
                                   : 1.0;
                               return AnimationConfiguration.staggeredGrid(
                                 position: i,
-                                duration: const Duration(milliseconds: 400),
+                                duration:
+                                    const Duration(milliseconds: 400),
                                 columnCount: crossAxisCount,
                                 child: ScaleAnimation(
                                   child: FadeInAnimation(
@@ -119,7 +241,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                             EditStockDialog(product: p),
                                       ),
                                       onDelete: () async {
-                                        await AppState().deleteProduct(p.id);
+                                        await AppState()
+                                            .deleteProduct(p.id);
                                       },
                                     ),
                                   ),
@@ -140,9 +263,52 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 }
-// Product catalogue card with a hover elevation effect for desktop users.
-// Displays the product image, name, category, price, stock badge, progress bar,
-// and action buttons (Edit Stock, Edit, Delete).
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _FilterChip — styled category filter button
+// ─────────────────────────────────────────────────────────────────────────────
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.gold : AppColors.inputFill,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: selected ? AppColors.gold : AppColors.cardBorder,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.black : AppColors.white,
+            fontSize: 11,
+            fontWeight:
+                selected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// _ProductCard — card with clickable image (full-screen overlay on tap)
+// ─────────────────────────────────────────────────────────────────────────────
 class _ProductCard extends StatefulWidget {
   final Product product;
   final double stockPct;
@@ -187,6 +353,83 @@ class _ProductCardState extends State<_ProductCard>
     super.dispose();
   }
 
+  // ── Full-screen image overlay ─────────────────────────────────────────
+  void _openFullScreen(BuildContext context, String imagePath) {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Close',
+      barrierColor: Colors.black87,
+      transitionDuration: const Duration(milliseconds: 220),
+      transitionBuilder: (_, anim, __, child) => FadeTransition(
+        opacity: anim,
+        child: ScaleTransition(scale: Tween(begin: 0.92, end: 1.0).animate(anim), child: child),
+      ),
+      pageBuilder: (ctx, _, __) => GestureDetector(
+        onTap: () => Navigator.of(ctx).pop(),
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Stack(
+            children: [
+              // Pinch-to-zoom image
+              Center(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 5.0,
+                  child: Image.file(
+                    File(imagePath),
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+              // Close button top-right
+              Positioned(
+                top: MediaQuery.of(ctx).padding.top + 8,
+                right: 12,
+                child: GestureDetector(
+                  onTap: () => Navigator.of(ctx).pop(),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: AppColors.gold, width: 1),
+                    ),
+                    child: const Icon(Icons.close,
+                        color: AppColors.white, size: 20),
+                  ),
+                ),
+              ),
+              // Product name at bottom
+              Positioned(
+                bottom: MediaQuery.of(ctx).padding.bottom + 16,
+                left: 16,
+                right: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    widget.product.name,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppColors.gold,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.product;
@@ -214,8 +457,6 @@ class _ProductCardState extends State<_ProductCard>
               ),
             ],
           ),
-          // FIX 5: ClipRRect — pigilan ang image/content na lumabas sa border radius
-          // Ito ang nagiging dahilan ng black+yellow stripe
           child: ClipRRect(
             borderRadius: BorderRadius.circular(15),
             child: child,
@@ -224,46 +465,71 @@ class _ProductCardState extends State<_ProductCard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ── Image — responsive height based on screen width ──────
+            // ── Image — tappable, BoxFit.contain (no crop) ──────────
             LayoutBuilder(
               builder: (context, constraints) {
                 final imgHeight = constraints.maxWidth * 0.55;
-                return SizedBox(
-                  height: imgHeight,
-                  child: ColoredBox(
-                    color: AppColors.inputFill,
-                    child: p.imagePath != null
-                        ? Image.file(
-                            File(p.imagePath!),
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            cacheWidth: 400,   // PRIORITY 2: card is wider, so use 400
-                            cacheHeight: 400,
-                            errorBuilder: (_, __, ___) => const Center(
-                              child: Icon(Icons.water_drop_outlined,
-                                  color: AppColors.gold, size: 32),
+                return GestureDetector(
+                  // Only open full screen when there IS an image
+                  onTap: p.imagePath != null
+                      ? () => _openFullScreen(context, p.imagePath!)
+                      : null,
+                  child: SizedBox(
+                    height: imgHeight,
+                    child: ColoredBox(
+                      color: AppColors.inputFill,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          p.imagePath != null
+                              ? Image.file(
+                                  File(p.imagePath!),
+                                  fit: BoxFit.contain, // ← no more crop
+                                  width: double.infinity,
+                                  cacheWidth: 400,
+                                  cacheHeight: 400,
+                                  errorBuilder: (_, __, ___) => const Center(
+                                    child: Icon(Icons.water_drop_outlined,
+                                        color: AppColors.gold, size: 32),
+                                  ),
+                                )
+                              : const Center(
+                                  child: Icon(Icons.water_drop_outlined,
+                                      color: AppColors.gold, size: 32),
+                                ),
+                          // Zoom hint badge (only when image exists)
+                          if (p.imagePath != null)
+                            Positioned(
+                              top: 6,
+                              right: 6,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(6),
+                                ),
+                                child: const Icon(Icons.zoom_in,
+                                    color: AppColors.white, size: 14),
+                              ),
                             ),
-                          )
-                        : const Center(
-                            child: Icon(Icons.water_drop_outlined,
-                                color: AppColors.gold, size: 32),
-                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 );
               },
             ),
 
-            // Separator — 1px lang, hindi "stripe"
+            // Separator
             Container(height: 1, color: AppColors.cardBorder),
 
-            // ── Content (Expanded — punan ang natirang espasyo) ────────
+            // ── Content ────────────────────────────────────────────────
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Product name
                     Text(
                       p.name,
                       maxLines: 1,
@@ -283,7 +549,6 @@ class _ProductCardState extends State<_ProductCard>
 
                     const SizedBox(height: 8),
 
-                    // Price + Badge
                     Row(
                       children: [
                         Expanded(
@@ -301,10 +566,8 @@ class _ProductCardState extends State<_ProductCard>
                       ],
                     ),
 
-                    // Spacer — itutulak ang stock + buttons sa baba
                     const Spacer(),
 
-                    // Stock count
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -326,7 +589,6 @@ class _ProductCardState extends State<_ProductCard>
                     ),
                     const SizedBox(height: 4),
 
-                    // Progress bar
                     ClipRRect(
                       borderRadius: BorderRadius.circular(4),
                       child: LinearProgressIndicator(
@@ -341,7 +603,6 @@ class _ProductCardState extends State<_ProductCard>
 
                     const SizedBox(height: 10),
 
-                    // Action buttons
                     Row(
                       children: [
                         Expanded(
@@ -353,8 +614,8 @@ class _ProductCardState extends State<_ProductCard>
                               decoration: BoxDecoration(
                                 color: AppColors.surfaceElevated,
                                 borderRadius: BorderRadius.circular(6),
-                                border:
-                                    Border.all(color: AppColors.cardBorder),
+                                border: Border.all(
+                                    color: AppColors.cardBorder),
                               ),
                               alignment: Alignment.center,
                               child: const Text(

@@ -177,6 +177,9 @@ class _OverviewScreenState extends State<OverviewScreen> {
                           ],
                         ),
                       ),
+                      const SizedBox(height: 12),
+                      // 5th card (Total Revenue) shown full-width on mobile
+                      cards[4],
                     ],
                   );
                 }),

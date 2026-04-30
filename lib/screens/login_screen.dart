@@ -10,8 +10,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
+import 'dart:async';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../services/login_rate_limiter.dart';
 import '../widgets/shared_widgets.dart';
 import 'main_shell.dart';
 import 'register_screen.dart';
@@ -30,6 +32,13 @@ class _LoginScreenState extends State<LoginScreen>
   final _passCtrl = TextEditingController();
   bool _isLoading = false;
   String? _error;
+
+  // ── Rate-limit countdown ───────────────────────────────────────────────────
+  // When the user is locked out, _lockoutSeconds counts down to 0 and
+  // the login button is disabled with a live "Try again in Xs" label.
+  int _lockoutSeconds = 0;
+  Timer? _lockoutTimer;
+
   late AnimationController _pulseCtrl;
   late Animation<double> _pulse;
 
@@ -50,19 +59,47 @@ class _LoginScreenState extends State<LoginScreen>
     _pulseCtrl.dispose();
     _userCtrl.dispose();
     _passCtrl.dispose();
+    _lockoutTimer?.cancel();
     super.dispose();
+  }
+
+  // Starts a 1-second tick that updates the lockout countdown label.
+  void _startLockoutCountdown(int seconds) {
+    _lockoutTimer?.cancel();
+    setState(() => _lockoutSeconds = seconds);
+    _lockoutTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) { t.cancel(); return; }
+      final remaining = LoginRateLimiter.instance
+          .secondsRemaining(_userCtrl.text.trim());
+      setState(() => _lockoutSeconds = remaining);
+      if (remaining <= 0) {
+        t.cancel();
+        setState(() => _error = null); // Clear the lockout message
+      }
+    });
   }
 
   // Calls AppState.login() with the entered credentials.
   // On success, navigates to MainShell with a fade transition.
-  // On failure, shows an 'Invalid username or password' error.
+  // On failure, records the attempt and shows error or lockout message.
   void _login() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+    final username = _userCtrl.text.trim();
+    final limiter  = LoginRateLimiter.instance;
+
+    // ── Check lockout before even calling AppState ─────────────────────────
+    if (limiter.isLockedOut(username)) {
+      final secs = limiter.secondsRemaining(username);
+      _startLockoutCountdown(secs);
+      setState(() => _error =
+          'Too many failed attempts. Try again in ${secs}s.');
+      return;
+    }
+
+    setState(() { _isLoading = true; _error = null; });
+
     final success =
-        await AppState().login(_userCtrl.text.trim(), _passCtrl.text.trim());
+        await AppState().login(username, _passCtrl.text.trim());
+
     if (success && mounted) {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
@@ -74,10 +111,23 @@ class _LoginScreenState extends State<LoginScreen>
         ),
       );
     } else if (mounted) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Invalid username or password';
-      });
+      // Check again — the failure may have just triggered a lockout
+      if (limiter.isLockedOut(username)) {
+        final secs = limiter.secondsRemaining(username);
+        _startLockoutCountdown(secs);
+        setState(() {
+          _isLoading = false;
+          _error = 'Too many failed attempts. Try again in ${secs}s.';
+        });
+      } else {
+        final remaining = LoginRateLimiter.maxAttempts - limiter.failureCount(username);
+        setState(() {
+          _isLoading = false;
+          _error = remaining > 0
+              ? 'Invalid username or password ($remaining attempt${remaining == 1 ? '' : 's'} left)'
+              : 'Invalid username or password';
+        });
+      }
     }
   }
 
@@ -308,8 +358,10 @@ class _LoginScreenState extends State<LoginScreen>
             ],
             const SizedBox(height: 24),
             GoldButton(
-              label: _isLoading ? '...' : AppStrings.enterPortal,
-              onPressed: _isLoading ? () {} : _login,
+              label: _lockoutSeconds > 0
+                  ? 'Try again in ${_lockoutSeconds}s'
+                  : _isLoading ? '...' : AppStrings.enterPortal,
+              onPressed: (_isLoading || _lockoutSeconds > 0) ? () {} : _login,
             ),
             const SizedBox(height: 12),
             Container(

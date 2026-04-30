@@ -24,6 +24,8 @@ import '../services/product_service.dart';
 import '../services/order_service.dart';
 import '../services/debt_service.dart';
 import '../services/auth_service.dart';
+import '../services/login_rate_limiter.dart'; // ← Brute-force login protection
+import '../services/notification_service.dart'; // ← Low-stock push notifications
 
 // Singleton ChangeNotifier — widgets listen to this for reactive UI updates
 class AppState extends ChangeNotifier {
@@ -196,9 +198,22 @@ class AppState extends ChangeNotifier {
   Future<bool> login(String username, String password) async {
     _setLoading(true);
     try {
+      // ── Rate limiting: reject immediately if locked out ─────────────────
+      final limiter = LoginRateLimiter.instance;
+      if (limiter.isLockedOut(username)) {
+        _setLoading(false);
+        return false; // UI reads secondsRemaining() for the countdown message
+      }
+
       final user = await _as.login(username, password);
-      if (user == null) { _setLoading(false); return false; }
-      _activeUser  = username.toLowerCase(); // Partition key for all DB queries
+      if (user == null) {
+        limiter.recordFailure(username); // Increment failure counter
+        _setLoading(false);
+        return false;
+      }
+
+      limiter.recordSuccess(username);  // Clear counter on success
+      _activeUser  = username.toLowerCase();
       _currentUser = user;
       _isLoggedIn  = true;
       await _loadAllData(); // Fetch products, orders, debts, logs from SQLite
@@ -276,6 +291,23 @@ class AppState extends ChangeNotifier {
       _orders       = orders;
       _debts        = debts;
       _activityLogs = logs;
+
+      // ── Low-stock push notification ────────────────────────────────────
+      // Fires every login and every refresh — store owner sees it immediately
+      final lowItems = _products.where((p) => p.isLowStock).toList();
+      NotificationService.instance.showLowStockAlert(lowItems, _activeUser);
+
+      // ── Overdue debt push notification ─────────────────────────────────
+      // Fires on login when there are unpaid debts older than 7 days.
+      // Passes _activeUser so the notification title shows which account
+      // triggered the alert — e.g. "[Knzadmin] 🔴 5 Overdue Utang!"
+      final overdueItems = _debts.where((d) => d.isOverdue).toList();
+      if (overdueItems.isNotEmpty) {
+        NotificationService.instance.showOverdueDebtAlert(
+          overdueItems,
+          _activeUser,
+        );
+      }
     } catch (_) {
       // On any failure, fall back to empty lists rather than crashing
       _products = []; _orders = []; _debts = []; _activityLogs = [];
