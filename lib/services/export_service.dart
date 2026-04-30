@@ -160,14 +160,16 @@ class ExportService {
     final paidCount   = debts.where((d) => d.isPaid).length;
     final overdueCount = debts.where((d) => d.isOverdue).length;
 
-    rows.add(['Total Revenue (PHP)', totalRevenue.toStringAsFixed(2)]);
-    rows.add(['Total Orders',        totalOrders]);
-    rows.add(['Delivered',           deliveredCount]);
-    rows.add(['Items Sold',          itemsSold]);
-    rows.add(['Total Utang (PHP)',   totalDebt.toStringAsFixed(2)]);
-    rows.add(['Unpaid Count',        unpaidCount]);
-    rows.add(['Paid Count',          paidCount]);
-    rows.add(['Overdue Count',       overdueCount]);
+    rows.add(['Total Revenue (PHP)',     totalRevenue.toStringAsFixed(2)]);
+    rows.add(['Delivered Revenue (PHP)', deliveredRevenue.toStringAsFixed(2)]);
+    rows.add(['Total Orders',            totalOrders]);
+    rows.add(['Delivered',               deliveredCount]);
+    rows.add(['Items Sold',              itemsSold]);
+    rows.add(['Total Paid (PHP)',        utangCollected.toStringAsFixed(2)]);
+    rows.add(['Total Utang (PHP)',       totalDebt.toStringAsFixed(2)]);
+    rows.add(['Unpaid Count',            unpaidCount]);
+    rows.add(['Paid Count',              paidCount]);
+    rows.add(['Overdue Count',           overdueCount]);
     rows.add([]); // blank separator
 
     // ── Section 2: Orders by Status ───────────────────────────────────────────
@@ -639,23 +641,33 @@ class ExportService {
                 color: PdfColors.grey800)),
         pw.SizedBox(height: 10),
         pw.Row(children: [
-          _box('Total Revenue', _pdfCurrency.format(totalRevenue)),
+          _box('Total Revenue',     _pdfCurrency.format(totalRevenue)),
           pw.SizedBox(width: 10),
-          _box('Total Orders', '$totalOrders'),
+          _box('Delivered Revenue', _pdfCurrency.format(deliveredRevenue)),
           pw.SizedBox(width: 10),
-          _box('Delivered', '$deliveredCount'),
+          _box('Total Orders',      '$totalOrders'),
           pw.SizedBox(width: 10),
-          _box('Items Sold', '$itemsSold'),
+          _box('Delivered',         '$deliveredCount'),
         ]),
         pw.SizedBox(height: 10),
         pw.Row(children: [
-          _box('Total Utang', _pdfCurrency.format(totalDebt)),
+          _box('Items Sold',        '$itemsSold'),
           pw.SizedBox(width: 10),
-          _box('Unpaid', '$unpaidCount'),
+          _box('Total Paid',        _pdfCurrency.format(utangCollected)),
           pw.SizedBox(width: 10),
-          _box('Paid', '$paidCount'),
+          _box('Total Utang',       _pdfCurrency.format(totalDebt)),
           pw.SizedBox(width: 10),
-          _box('Overdue', '$overdueCount'),
+          _box('Unpaid',            '$unpaidCount'),
+        ]),
+        pw.SizedBox(height: 10),
+        pw.Row(children: [
+          _box('Paid',              '$paidCount'),
+          pw.SizedBox(width: 10),
+          _box('Overdue',           '$overdueCount'),
+          pw.SizedBox(width: 10),
+          pw.Expanded(child: pw.SizedBox()),
+          pw.SizedBox(width: 10),
+          pw.Expanded(child: pw.SizedBox()),
         ]),
         pw.SizedBox(height: 20),
 

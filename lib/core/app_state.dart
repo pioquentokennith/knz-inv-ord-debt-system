@@ -148,11 +148,27 @@ class AppState extends ChangeNotifier {
   // Total outstanding debt across all customers
   double get totalDebtAmount => _debts.fold(0.0, (s, d) => s + d.remainingBalance);
 
-  // Average order value based only on delivered (paid) orders
+  // ── BUG 1 FIX ─────────────────────────────────────────────────────────────
+  // OPTION B: Average order value — kasama delivered + utang orders
+  // Consistent sa totalRevenue na kasama rin ang utang payments.
   double get avgOrderValue {
-    final delivered = _orders.where((o) => o.status == OrderStatus.delivered).toList();
-    return delivered.isEmpty ? 0 : totalRevenue / delivered.length;
+    final revenueOrders = _orders
+        .where((o) =>
+            o.status == OrderStatus.delivered ||
+            o.status == OrderStatus.utang)
+        .toList();
+    return revenueOrders.isEmpty ? 0 : totalRevenue / revenueOrders.length;
   }
+
+  // BAGONG GETTER: Sum ng lahat ng delivered orders lang.
+  // Hindi kasama ang utang payments — pure delivered status orders only.
+  // Ipakita sa sariling card sa tabi ng Total Revenue sa dashboard.
+  double get deliveredRevenue {
+    return _orders
+        .where((o) => o.status == OrderStatus.delivered)
+        .fold(0.0, (s, o) => s + o.totalAmount);
+  }
+  // ── END BUG 1 FIX ─────────────────────────────────────────────────────────
 
   // Returns a count for each OrderStatus enum value — used by analytics pie chart
   Map<OrderStatus, int> get ordersByStatus => {
@@ -207,16 +223,17 @@ class AppState extends ChangeNotifier {
 
       final user = await _as.login(username, password);
       if (user == null) {
-        limiter.recordFailure(username); // Increment failure counter
+        await limiter.recordFailure(username); // Increment failure counter
         _setLoading(false);
         return false;
       }
 
-      limiter.recordSuccess(username);  // Clear counter on success
+      await limiter.recordSuccess(username);  // Clear counter on success
       _activeUser  = username.toLowerCase();
       _currentUser = user;
       _isLoggedIn  = true;
-      await _loadAllData(); // Fetch products, orders, debts, logs from SQLite
+      // BUG 2 FIX: isLogin: true → notifications fire ONLY here (on login)
+      await _loadAllData(isLogin: true);
       _addLogSilent('${user.username} signed in', 'auth');
       return true;
     } catch (_) {
@@ -274,8 +291,10 @@ class AppState extends ChangeNotifier {
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
-  // Fetches all four data types in parallel for faster startup
-  Future<void> _loadAllData() async {
+  // BUG 2 FIX: Added {bool isLogin = false} flag.
+  // Notifications now fire ONLY when isLogin: true (i.e. sa login() call lang).
+  // refreshData() at lahat ng restore ops ay hindi na mag-f-fire ng notifications.
+  Future<void> _loadAllData({bool isLogin = false}) async {
     try {
       // Run all four fetches in parallel for faster startup.
       // Using named typed variables avoids the unsafe (results[N] as List<X>) cast
@@ -292,21 +311,22 @@ class AppState extends ChangeNotifier {
       _debts        = debts;
       _activityLogs = logs;
 
-      // ── Low-stock push notification ────────────────────────────────────
-      // Fires every login and every refresh — store owner sees it immediately
-      final lowItems = _products.where((p) => p.isLowStock).toList();
-      NotificationService.instance.showLowStockAlert(lowItems, _activeUser);
+      // BUG 2 FIX: Notifications fire on login only — not on every refresh/restore
+      if (isLogin) {
+        // ── Low-stock push notification ──────────────────────────────────
+        final lowItems = _products.where((p) => p.isLowStock).toList();
+        NotificationService.instance.showLowStockAlert(lowItems, _activeUser);
 
-      // ── Overdue debt push notification ─────────────────────────────────
-      // Fires on login when there are unpaid debts older than 7 days.
-      // Passes _activeUser so the notification title shows which account
-      // triggered the alert — e.g. "[Knzadmin] 🔴 5 Overdue Utang!"
-      final overdueItems = _debts.where((d) => d.isOverdue).toList();
-      if (overdueItems.isNotEmpty) {
-        NotificationService.instance.showOverdueDebtAlert(
-          overdueItems,
-          _activeUser,
-        );
+        // ── Overdue debt push notification ────────────────────────────────
+        // Passes _activeUser so the notification title shows which account
+        // triggered the alert — e.g. "[Knzadmin] 🔴 5 Overdue Utang!"
+        final overdueItems = _debts.where((d) => d.isOverdue).toList();
+        if (overdueItems.isNotEmpty) {
+          NotificationService.instance.showOverdueDebtAlert(
+            overdueItems,
+            _activeUser,
+          );
+        }
       }
     } catch (_) {
       // On any failure, fall back to empty lists rather than crashing
@@ -317,6 +337,7 @@ class AppState extends ChangeNotifier {
   }
 
   // Public shortcut to re-fetch all data (e.g. after sync or pull-to-refresh)
+  // isLogin defaults to false — no notifications on refresh or restore ops
   Future<void> refreshData() => _loadAllData();
 
   // ── Products ──────────────────────────────────────────────────────────────
@@ -496,7 +517,7 @@ class AppState extends ChangeNotifier {
   Future<void> restoreOrder(String orderId) async {
     try {
       await _os.restoreOrder(orderId);
-      await refreshData(); // Full reload ensures restored item appears in list
+      await refreshData(); // Full reload — isLogin defaults to false, no notifs
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
     }
@@ -506,7 +527,7 @@ class AppState extends ChangeNotifier {
   Future<void> restoreProduct(String productId) async {
     try {
       await _ps.restoreProduct(productId);
-      await refreshData();
+      await refreshData(); // Full reload — isLogin defaults to false, no notifs
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
     }
@@ -544,7 +565,7 @@ class AppState extends ChangeNotifier {
   Future<void> restoreDebt(String debtId) async {
     try {
       await _ds.restoreDebt(debtId);
-      await refreshData();
+      await refreshData(); // Full reload — isLogin defaults to false, no notifs
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] restoreDebt: $e\n$st');
     }

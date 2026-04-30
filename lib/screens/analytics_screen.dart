@@ -75,20 +75,27 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   // Returns the chart/badge color for a given order status for the pie chart sections
+  // COLOR GUIDE:
+  //   Pending    = amber/yellow  — "naghihintay pa"
+  //   Processing = blue          — "in progress"
+  //   Shipped    = purple        — "nasa daan na"
+  //   Delivered  = green         — "natapos na"
+  //   Cancelled  = red           — "hindi natuloy"
+  //   Utang      = deep orange   — "may utang pa" (distinct from Pending amber)
   Color _statusColor(OrderStatus status) {
     switch (status) {
       case OrderStatus.pending:
-        return AppColors.warning;
+        return const Color(0xFFFFCA28);   // Amber/yellow — "naghihintay"
       case OrderStatus.processing:
-        return AppColors.info;
+        return AppColors.info;             // Blue — "in progress"
       case OrderStatus.shipped:
-        return Colors.purple;
+        return Colors.purple;              // Purple — "nasa daan na"
       case OrderStatus.delivered:
-        return AppColors.success;
+        return AppColors.success;          // Green — "delivered na"
       case OrderStatus.cancelled:
-        return AppColors.error;
+        return AppColors.error;            // Red — "cancelled"
       case OrderStatus.utang:
-        return AppColors.warning;
+        return const Color(0xFFFF6D00);   // Deep orange — "may utang pa"
     }
   }
 
@@ -164,24 +171,33 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         ),
                       ),
                     ]),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-                    // Stat cards
+                    // ── All Stat Cards — single unified grid ──
                     LayoutBuilder(builder: (ctx, constraints) {
                       final cols = constraints.maxWidth > 600 ? 4 : 2;
                       return GridView.count(
                         crossAxisCount: cols,
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
                         childAspectRatio: 1.05,
                         children: [
+                          // Row 1: Revenue cards
                           StatCard(
                             emoji: '💰',
                             value: currency.format(state.totalRevenue),
                             label: 'TOTAL REVENUE',
                           ),
+                          StatCard(
+                            emoji: '💵',
+                            value: currency.format(state.deliveredRevenue),
+                            label: 'DELIVERED REVENUE',
+                            subtitle: 'Delivered only',
+                            subtitleColor: AppColors.success,
+                          ),
+                          // Row 2: Order cards
                           StatCard(
                             emoji: '📦',
                             value: state.totalOrders.toString(),
@@ -193,6 +209,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                             label: 'DELIVERED',
                             subtitleColor: AppColors.success,
                           ),
+                          // Row 3: Items + Paid
                           StatCard(
                             emoji: '🛍️',
                             value: state.orders
@@ -201,23 +218,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                                     .toString(),
                             label: 'ITEMS SOLD',
                           ),
-                        ],
-                      );
-                    }),
-                    const SizedBox(height: 20),
-                    const SizedBox(height: 4),
-
-                    // Utang stat cards — same 2-column grid as the top cards
-                    LayoutBuilder(builder: (ctx, constraints) {
-                      final cols = constraints.maxWidth > 600 ? 4 : 2;
-                      return GridView.count(
-                        crossAxisCount: cols,
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 12,
-                        childAspectRatio: 1.05,
-                        children: [
+                          StatCard(
+                            emoji: '💸',
+                            value: currency.format(state.totalUtangCollected),
+                            label: 'TOTAL PAID',
+                            subtitle: 'Utang collected',
+                            subtitleColor: AppColors.success,
+                          ),
+                          // Row 4: Utang cards
                           StatCard(
                             emoji: '💳',
                             value: currency.format(totalDebt),
@@ -245,7 +253,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         ],
                       );
                     }),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
                     // Utang breakdown section
                     _buildUtangBreakdown(unpaidDebts, paidDebts, currency),
@@ -500,6 +508,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       ),
     );
   }
+
   Widget _buildOrdersByStatus(
       Map<OrderStatus, int> statusMap, int totalOrders, List<PieChartSectionData> pieData) {
     return Container(

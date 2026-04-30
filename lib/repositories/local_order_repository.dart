@@ -271,10 +271,34 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
-  // Updates the status column of a single order and syncs the change to Firestore
+  // Updates the status column of a single order and syncs the change to Firestore.
+  //
+  // MINOR 2 FIX: Blocks utang → delivered to prevent double-counting in analytics.
+  // totalRevenue = deliveredRevenue + totalUtangCollected. Kung payagan ang
+  // utang → delivered, ang order ay mabilang sa deliveredRevenue AT ang debt
+  // payments sa totalUtangCollected — double-count.
+  // Kung gusto ng user na i-close ang utang order, bayaran muna ang buong
+  // utang sa Utang screen bago baguhin ang status.
   @override
   Future<void> updateStatus(String orderId, OrderStatus status) => safeVoidCall(() async {
     final database = await db.database;
+
+    // MINOR 2 FIX: Guard — block utang → delivered
+    if (status == OrderStatus.delivered) {
+      final currentRow = await database.query('orders',
+          columns: ['status'], where: 'id = ?', whereArgs: [orderId]);
+      if (currentRow.isNotEmpty) {
+        final currentStatus = OrderStatusExtension.fromString(
+            currentRow.first['status'] as String);
+        if (currentStatus == OrderStatus.utang) {
+          throw Exception(
+            'Hindi maaaring baguhin ang utang order patungong Delivered.\n'
+            'Bayaran muna ang buong utang sa Utang screen.',
+          );
+        }
+      }
+    }
+
     await database.update('orders', {'status': status.displayName},
         where: 'id = ?', whereArgs: [orderId]);
 

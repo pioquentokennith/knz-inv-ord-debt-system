@@ -6,10 +6,17 @@
 //           work to ExportService methods. Shows a loading spinner while busy
 //           and an error message if the export fails. The showExportDialog()
 //           convenience function can be called from any screen.
+//
+// MINOR 3 FIX: Added date range picker for orders, debts, and analytics exports.
+//   • Inventory export hindi nangangailangan ng date filter (snapshot ng stock).
+//   • Orders at debts ay na-fi-filter by orderDate / createdAt.
+//   • "All time" ang default — existing behavior ay hindi nabago.
 // ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../models/order_model.dart';
+import '../models/debt_model.dart';
 import '../services/export_service.dart';
 
 enum ExportType { orders, inventory, debts, analytics }
@@ -27,6 +34,9 @@ class _ExportDialogState extends State<ExportDialog> {
   bool _isLoading = false;
   String? _error;
 
+  // MINOR 3 FIX: Date range state — null = all time (default)
+  DateTimeRange? _dateRange;
+
   String get _typeLabel {
     switch (widget.type) {
       case ExportType.orders:    return 'Orders';
@@ -36,6 +46,73 @@ class _ExportDialogState extends State<ExportDialog> {
     }
   }
 
+  // MINOR 3 FIX: Whether this export type supports date filtering
+  bool get _supportsDateFilter => widget.type != ExportType.inventory;
+
+  // MINOR 3 FIX: Human-readable label for the selected range
+  String get _dateRangeLabel {
+    if (_dateRange == null) return 'All time';
+    final start = _dateRange!.start;
+    final end   = _dateRange!.end;
+    String fmt(DateTime d) => '${d.month}/${d.day}/${d.year}';
+    return '${fmt(start)} – ${fmt(end)}';
+  }
+
+  // MINOR 3 FIX: Open date range picker
+  Future<void> _pickDateRange() async {
+    final now = DateTime.now();
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: now,
+      initialDateRange: _dateRange ??
+          DateTimeRange(
+            start: DateTime(now.year, now.month, 1),
+            end: now,
+          ),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppColors.gold,
+              onPrimary: AppColors.background,
+              surface: AppColors.surface,
+              onSurface: AppColors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() => _dateRange = picked);
+    }
+  }
+
+  // MINOR 3 FIX: Filter helpers
+  List<Order> _filteredOrders(List<Order> orders) {
+    if (_dateRange == null) return orders;
+    final start = _dateRange!.start;
+    // Include the full end day (up to 23:59:59)
+    final end = _dateRange!.end.add(const Duration(days: 1));
+    return orders
+        .where((o) =>
+            o.orderDate.isAfter(start.subtract(const Duration(seconds: 1))) &&
+            o.orderDate.isBefore(end))
+        .toList();
+  }
+
+  List<CustomerDebt> _filteredDebts(List<CustomerDebt> debts) {
+    if (_dateRange == null) return debts;
+    final start = _dateRange!.start;
+    final end   = _dateRange!.end.add(const Duration(days: 1));
+    return debts
+        .where((d) =>
+            d.createdAt.isAfter(start.subtract(const Duration(seconds: 1))) &&
+            d.createdAt.isBefore(end))
+        .toList();
+  }
+
   Future<void> _export(String format) async {
     setState(() { _isLoading = true; _error = null; });
     final state = AppState();
@@ -43,14 +120,15 @@ class _ExportDialogState extends State<ExportDialog> {
     try {
       switch (widget.type) {
         case ExportType.orders:
+          final orders = _filteredOrders(state.orders);
           if (format == 'csv') {
-            await ExportService.exportOrdersCsv(state.orders);
+            await ExportService.exportOrdersCsv(orders);
           } else if (format == 'pdf') {
             await ExportService.exportOrdersPdf(
-              state.orders, businessName: AppStrings.appName);
+              orders, businessName: AppStrings.appName);
           } else {
             await ExportService.printOrdersPdf(
-              state.orders, businessName: AppStrings.appName);
+              orders, businessName: AppStrings.appName);
           }
           break;
 
@@ -67,33 +145,36 @@ class _ExportDialogState extends State<ExportDialog> {
           break;
 
         case ExportType.debts:
+          final debts = _filteredDebts(state.debts);
           if (format == 'csv') {
-            await ExportService.exportDebtsCsv(state.debts);
+            await ExportService.exportDebtsCsv(debts);
           } else if (format == 'pdf') {
             await ExportService.exportDebtsPdf(
-              state.debts, businessName: AppStrings.appName);
+              debts, businessName: AppStrings.appName);
           } else {
             await ExportService.printDebtsPdf(
-              state.debts, businessName: AppStrings.appName);
+              debts, businessName: AppStrings.appName);
           }
           break;
 
         case ExportType.analytics:
+          final orders = _filteredOrders(state.orders);
+          final debts  = _filteredDebts(state.debts);
           if (format == 'csv') {
             await ExportService.exportAnalyticsCsv(
-              orders: state.orders,
-              debts: state.debts,
+              orders: orders,
+              debts: debts,
             );
           } else if (format == 'pdf') {
             await ExportService.exportAnalyticsPdf(
-              orders: state.orders,
-              debts: state.debts,
+              orders: orders,
+              debts: debts,
               businessName: AppStrings.appName,
             );
           } else {
             await ExportService.printAnalyticsPdf(
-              orders: state.orders,
-              debts: state.debts,
+              orders: orders,
+              debts: debts,
               businessName: AppStrings.appName,
             );
           }
@@ -146,7 +227,58 @@ class _ExportDialogState extends State<ExportDialog> {
               ]),
             ]),
 
-            const SizedBox(height: 24),
+            // MINOR 3 FIX: Date range picker row (hidden for inventory)
+            if (_supportsDateFilter) ...[
+              const SizedBox(height: 16),
+              InkWell(
+                onTap: _pickDateRange,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceElevated,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _dateRange != null
+                          ? AppColors.gold.withValues(alpha: 0.6)
+                          : AppColors.cardBorder,
+                    ),
+                  ),
+                  child: Row(children: [
+                    Icon(
+                      Icons.date_range_outlined,
+                      color: _dateRange != null
+                          ? AppColors.gold
+                          : AppColors.whiteTertiary,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _dateRangeLabel,
+                        style: TextStyle(
+                          color: _dateRange != null
+                              ? AppColors.white
+                              : AppColors.whiteTertiary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    if (_dateRange != null)
+                      GestureDetector(
+                        onTap: () => setState(() => _dateRange = null),
+                        child: const Icon(Icons.close,
+                            color: AppColors.whiteTertiary, size: 16),
+                      )
+                    else
+                      const Icon(Icons.chevron_right,
+                          color: AppColors.whiteTertiary, size: 16),
+                  ]),
+                ),
+              ),
+            ],
+
+            const SizedBox(height: 20),
 
             if (_isLoading)
               const Center(

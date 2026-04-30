@@ -18,6 +18,7 @@ import 'firebase_options.dart';
 import 'repositories/sync_queue.dart';
 import 'screens/login_screen.dart';
 import 'services/notification_service.dart'; // ← Low-stock push notifications
+import 'services/login_rate_limiter.dart';   // ← MINOR 1: persistent lockout
 
 // Entry point — async so we can await initialization steps before runApp()
 void main() async {
@@ -26,6 +27,10 @@ void main() async {
 
   // ── Notifications: init before AppState so the channel exists early ───
   await NotificationService.instance.init();
+
+  // ── MINOR 1 FIX: Init rate limiter so SharedPreferences is ready ──────
+  // Must run before LoginScreen is mounted so isLockedOut() works on first paint.
+  await LoginRateLimiter.init();
 
   // ── FIX 1: Load .env BEFORE Firebase or AppState ──────────────────────
   // This makes BREVO_API_KEY, BREVO_SENDER_EMAIL, BREVO_SENDER_NAME

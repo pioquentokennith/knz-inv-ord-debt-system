@@ -134,13 +134,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
                       subtitle: 'Needs restocking',
                       subtitleColor: AppColors.error,
                     ),
-                    StatCard(
-                      emoji: '💰',
-                      value: currency.format(state.totalRevenue),
-                      label: AppStrings.totalRevenue,
-                      subtitle: '${state.deliveredCount} delivered',
-                      subtitleColor: AppColors.success,
-                    ),
                   ];
                   if (isWide) {
                     return Row(
@@ -178,8 +171,35 @@ class _OverviewScreenState extends State<OverviewScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      // 5th card (Total Revenue) shown full-width on mobile
-                      cards[4],
+                      // Total Revenue + AVG DELIVERED side by side (mobile)
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: StatCard(
+                                emoji: '💰',
+                                value: currency.format(state.totalRevenue),
+                                label: AppStrings.totalRevenue,
+                                subtitle: '${state.deliveredCount} delivered',
+                                subtitleColor: AppColors.success,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            // BUG 1 FIX: Bagong DELIVERED REVENUE card
+                            // Sum ng lahat ng delivered orders — hindi kasama ang utang payments.
+                            Expanded(
+                              child: StatCard(
+                                emoji: '💵',
+                                value: currency.format(state.deliveredRevenue),
+                                label: 'DELIVERED REVENUE',
+                                subtitle: 'Delivered orders only',
+                                subtitleColor: AppColors.success,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   );
                 }),
@@ -480,7 +500,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
         return AppColors.whiteTertiary;
     }
   }
-
 
   // Returns the dot color for each activity log entry based on its type
   Color _logColor(String type) {
