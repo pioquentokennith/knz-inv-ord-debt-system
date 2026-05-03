@@ -116,6 +116,7 @@ class _ExportDialogState extends State<ExportDialog> {
   Future<void> _export(String format) async {
     setState(() { _isLoading = true; _error = null; });
     final state = AppState();
+    final userName = state.currentUser?.displayName;
 
     try {
       switch (widget.type) {
@@ -125,10 +126,10 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportOrdersCsv(orders);
           } else if (format == 'pdf') {
             await ExportService.exportOrdersPdf(
-              orders, businessName: AppStrings.appName);
+              orders, businessName: AppStrings.appName, userName: userName);
           } else {
             await ExportService.printOrdersPdf(
-              orders, businessName: AppStrings.appName);
+              orders, businessName: AppStrings.appName, userName: userName);
           }
           break;
 
@@ -137,10 +138,10 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportInventoryCsv(state.products);
           } else if (format == 'pdf') {
             await ExportService.exportInventoryPdf(
-              state.products, businessName: AppStrings.appName);
+              state.products, businessName: AppStrings.appName, userName: userName);
           } else {
             await ExportService.printInventoryPdf(
-              state.products, businessName: AppStrings.appName);
+              state.products, businessName: AppStrings.appName, userName: userName);
           }
           break;
 
@@ -150,10 +151,10 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportDebtsCsv(debts);
           } else if (format == 'pdf') {
             await ExportService.exportDebtsPdf(
-              debts, businessName: AppStrings.appName);
+              debts, businessName: AppStrings.appName, userName: userName);
           } else {
             await ExportService.printDebtsPdf(
-              debts, businessName: AppStrings.appName);
+              debts, businessName: AppStrings.appName, userName: userName);
           }
           break;
 
@@ -170,12 +171,14 @@ class _ExportDialogState extends State<ExportDialog> {
               orders: orders,
               debts: debts,
               businessName: AppStrings.appName,
+              userName: userName,
             );
           } else {
             await ExportService.printAnalyticsPdf(
               orders: orders,
               debts: debts,
               businessName: AppStrings.appName,
+              userName: userName,
             );
           }
           break;
@@ -196,6 +199,7 @@ class _ExportDialogState extends State<ExportDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       backgroundColor: AppColors.surface,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(24),

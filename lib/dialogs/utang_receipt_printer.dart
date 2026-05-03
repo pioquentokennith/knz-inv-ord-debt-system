@@ -8,7 +8,7 @@
 //           and embeds a Bluetooth print panel (_UtangPrintPanel) that manages the
 //           full BT scan → connect → print → disconnect lifecycle using the sealed
 //           BtPrintState hierarchy defined in receipt_shared_widgets.dart.
-// Usage   : UtangReceiptScreen.show(context, debt);
+// Usage   : UtangReceiptScreen.show(context, debt, userName: AppState().currentUser?.displayName ?? '');
 // ─────────────────────────────────────────────────────────────────────────────
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -43,7 +43,7 @@ class UtangReceiptPrinter {
   ///   • Consistent label prefix width (5 chars) so colons align vertically.
   ///   • Empty line before major dividers for visual breathing room.
   ///   • Payment history rows: date left, amount right — same 5/7 split.
-  static Future<List<int>> buildBytes(CustomerDebt debt) async {
+  static Future<List<int>> buildBytes(CustomerDebt debt, {String userName = ''}) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     List<int> b   = [];
@@ -68,6 +68,10 @@ class UtangReceiptPrinter {
         styles: const PosStyles(bold: true));
     b += gen.text('ID   : ${debt.orderId}');
     b += gen.text('DATE : ${_dateFmt.format(debt.createdAt)}');
+    // ── Account (who recorded this utang) ────────────────────────────────────
+    if (userName.isNotEmpty) {
+      b += gen.text('ACCT : $userName');
+    }
     b += gen.hr(ch: '-');
 
     // ── Amounts ──────────────────────────────────────────────────────────────
@@ -143,12 +147,13 @@ class UtangReceiptPrinter {
 // ─────────────────────────────────────────────────────────────────────────────
 class UtangReceiptScreen extends StatelessWidget {
   final CustomerDebt debt;
+  final String       userName;
 
-  const UtangReceiptScreen({super.key, required this.debt});
+  const UtangReceiptScreen({super.key, required this.debt, this.userName = ''});
 
-  static void show(BuildContext context, CustomerDebt debt) {
+  static void show(BuildContext context, CustomerDebt debt, {String userName = ''}) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => UtangReceiptScreen(debt: debt)),
+      MaterialPageRoute(builder: (_) => UtangReceiptScreen(debt: debt, userName: userName)),
     );
   }
 
@@ -174,8 +179,8 @@ class UtangReceiptScreen extends StatelessWidget {
         ),
       ),
       body: Column(children: [
-        Expanded(child: _UtangReceiptPreview(debt: debt)),
-        _UtangPrintPanel(debt: debt),
+        Expanded(child: _UtangReceiptPreview(debt: debt, userName: userName)),
+        _UtangPrintPanel(debt: debt, userName: userName),
       ]),
     );
   }
@@ -186,8 +191,9 @@ class UtangReceiptScreen extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 class _UtangReceiptPreview extends StatelessWidget {
   final CustomerDebt debt;
+  final String       userName;
 
-  const _UtangReceiptPreview({required this.debt});
+  const _UtangReceiptPreview({required this.debt, this.userName = ''});
 
   @override
   Widget build(BuildContext context) {
@@ -219,6 +225,18 @@ class _UtangReceiptPreview extends StatelessWidget {
           const SizedBox(height: 8),
           ReceiptInfoRow(
               label: 'Date', value: dateFmt.format(debt.createdAt)),
+          // ── Account row (only shown when userName is provided) ─────
+          if (userName.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ReceiptInfoRow(
+              label: 'Account',
+              value: userName,
+              valueStyle: const TextStyle(
+                  color: AppColors.whiteTertiary,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 13),
+            ),
+          ],
         ]),
       ),
       const ReceiptDivider(),
@@ -340,8 +358,9 @@ class _UtangReceiptPreview extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 class _UtangPrintPanel extends StatefulWidget {
   final CustomerDebt debt;
+  final String       userName;
 
-  const _UtangPrintPanel({required this.debt});
+  const _UtangPrintPanel({required this.debt, this.userName = ''});
 
   @override
   State<_UtangPrintPanel> createState() => _UtangPrintPanelState();
@@ -427,7 +446,7 @@ class _UtangPrintPanelState extends State<_UtangPrintPanel> {
 
     _set(const BtPrinting());
     try {
-      final bytes    = await UtangReceiptPrinter.buildBytes(widget.debt);
+      final bytes    = await UtangReceiptPrinter.buildBytes(widget.debt, userName: widget.userName);
       final services = await current.device.discoverServices();
 
       BluetoothCharacteristic? ch;

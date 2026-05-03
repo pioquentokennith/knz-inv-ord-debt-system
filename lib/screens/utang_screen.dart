@@ -22,11 +22,6 @@ import '../dialogs/export_dialog.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UtangScreen — FIX 5 + FIX 6 applied
-// FIX 5: Extracted _PaymentDialog, _MethodBtn, MarkAsUtangDialog,
-//        _UtangPrintScreen, _UtangReceiptPreview, _UtangInfoRow,
-//        _UtangBtPrintPanel, _BtState to separate files in lib/dialogs/
-// FIX 6: Replaced addListener + setState with AppStateBuilder so only
-//        the debt list subtree rebuilds on AppState changes.
 // ─────────────────────────────────────────────────────────────────────────────
 class UtangScreen extends StatefulWidget {
   const UtangScreen({super.key});
@@ -39,7 +34,6 @@ class _UtangScreenState extends State<UtangScreen> {
   final _searchCtrl = TextEditingController();
   String _search = '';
   bool _showPaidOnly = false;
-  // FIX 6: No _state, no addListener, no _onStateChange — removed entirely.
 
   @override
   void dispose() {
@@ -47,8 +41,6 @@ class _UtangScreenState extends State<UtangScreen> {
     super.dispose();
   }
 
-  // Filters debts by search query (customer name or order ID) and paid/unpaid toggle.
-  // Sorts overdue debts to the top, then by most recently created.
   List<CustomerDebt> _filtered(List<CustomerDebt> debts) {
     return debts.where((d) {
       final matchSearch =
@@ -71,7 +63,6 @@ class _UtangScreenState extends State<UtangScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── FIX 6: Only the header + list rebuilds when AppState changes ──
         AppStateBuilder(
           builder: (context, state) {
             return Column(
@@ -88,7 +79,6 @@ class _UtangScreenState extends State<UtangScreen> {
           },
         ),
 
-        // Search bar — local UI state, never needs AppState rebuild
         _SearchAndFilter(
           controller: _searchCtrl,
           showPaid: _showPaidOnly,
@@ -96,11 +86,12 @@ class _UtangScreenState extends State<UtangScreen> {
           onTogglePaid: () => setState(() => _showPaidOnly = !_showPaidOnly),
         ),
 
-        // ── FIX 6: Debt list — only this subtree rebuilds on AppState change
         Expanded(
           child: AppStateBuilder(
             builder: (context, state) {
               final filtered = _filtered(state.debts);
+              // Get the logged-in user's display name once per build
+              final userName = AppState().currentUser?.displayName ?? '';
               return filtered.isEmpty
                   ? _EmptyState(showPaid: _showPaidOnly)
                   : ListView.builder(
@@ -111,7 +102,7 @@ class _UtangScreenState extends State<UtangScreen> {
                         currency: currency,
                         onPay: () => _showPaymentDialog(filtered[i]),
                         onDelete: () => _confirmDelete(filtered[i]),
-                        onReceipt: () => _showUtangReceipt(filtered[i]),
+                        onReceipt: () => _showUtangReceipt(filtered[i], userName),
                       ),
                     );
             },
@@ -121,12 +112,10 @@ class _UtangScreenState extends State<UtangScreen> {
     );
   }
 
-  // Navigates to the full-screen utang receipt viewer and BT printer
-  void _showUtangReceipt(CustomerDebt debt) {
-    UtangReceiptScreen.show(context, debt);
+  void _showUtangReceipt(CustomerDebt debt, String userName) {
+    UtangReceiptScreen.show(context, debt, userName: userName);
   }
 
-  // Opens the payment recording dialog for the given debt record
   void _showPaymentDialog(CustomerDebt debt) {
     showDialog(
       context: context,
@@ -134,8 +123,6 @@ class _UtangScreenState extends State<UtangScreen> {
     );
   }
 
-  // Shows a confirmation dialog then soft-deletes the debt via AppState.
-  // Soft-delete moves the record to the Recycle Bin rather than permanently removing it.
   void _confirmDelete(CustomerDebt debt) {
     showDialog(
       context: context,
@@ -240,9 +227,6 @@ class _StatChip extends StatelessWidget {
   final Color color;
   final IconData icon;
 
-  // PRIORITY 4: const constructor ensures Flutter skips rebuild when parent setState fires
-  // and the chip's values haven't changed. All private widget classes in this file follow
-  // this pattern: _ProgressBar, _PaymentHistory, _EmptyState, _SearchAndFilter.
   const _StatChip({
     required this.label,
     required this.value,
@@ -377,7 +361,7 @@ class _SearchAndFilter extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _DebtCard — FIX 6: replaced addListener with AppStateBuilder
+// _DebtCard
 // ─────────────────────────────────────────────────────────────────────────────
 class _DebtCard extends StatefulWidget {
   final CustomerDebt debt;
@@ -400,13 +384,11 @@ class _DebtCard extends StatefulWidget {
 
 class _DebtCardState extends State<_DebtCard> {
   bool _expanded = false;
-  // FIX 6: No _state / addListener / removeListener / _onStateChange here.
 
   @override
   Widget build(BuildContext context) {
     return AppStateBuilder(
       builder: (context, state) {
-        // Always get fresh debt from AppState
         final debt = state.debts.firstWhere(
           (d) => d.id == widget.debt.id,
           orElse: () => widget.debt,
@@ -458,19 +440,20 @@ class _DebtCardState extends State<_DebtCard> {
                                       fontWeight: FontWeight.w700,
                                       fontSize: 14)),
                               const SizedBox(height: 2),
-                              Row(
+                              Wrap(
+                                spacing: 6,
+                                runSpacing: 2,
+                                crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
                                   Text(debt.orderId,
                                       style: const TextStyle(
                                           color: AppColors.gold,
                                           fontSize: 11)),
-                                  const SizedBox(width: 8),
                                   Text('• ${dateFmt.format(debt.createdAt)}',
                                       style: const TextStyle(
                                           color: AppColors.whiteTertiary,
                                           fontSize: 11)),
-                                  if (debt.isOverdue) ...[
-                                    const SizedBox(width: 8),
+                                  if (debt.isOverdue)
                                     Container(
                                       padding: const EdgeInsets.symmetric(
                                           horizontal: 6, vertical: 2),
@@ -487,31 +470,36 @@ class _DebtCardState extends State<_DebtCard> {
                                             fontWeight: FontWeight.w600),
                                       ),
                                     ),
-                                  ],
                                 ],
                               ),
                             ],
                           ),
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              cur.format(debt.remainingBalance),
-                              style: TextStyle(
-                                  color: debt.isPaid
-                                      ? AppColors.success
-                                      : AppColors.error,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 16),
-                            ),
-                            Text(
-                              'of ${cur.format(debt.totalAmount)}',
-                              style: const TextStyle(
-                                  color: AppColors.whiteTertiary,
-                                  fontSize: 11),
-                            ),
-                          ],
+                        Flexible(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  cur.format(debt.remainingBalance),
+                                  style: TextStyle(
+                                      color: debt.isPaid
+                                          ? AppColors.success
+                                          : AppColors.error,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 16),
+                                ),
+                              ),
+                              Text(
+                                'of ${cur.format(debt.totalAmount)}',
+                                style: const TextStyle(
+                                    color: AppColors.whiteTertiary,
+                                    fontSize: 11),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),

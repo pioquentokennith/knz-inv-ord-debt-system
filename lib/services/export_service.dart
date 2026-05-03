@@ -231,10 +231,10 @@ class ExportService {
 
   // Builds an orders PDF and opens the system share sheet
   static Future<void> exportOrdersPdf(List<Order> orders,
-      {required String businessName, String? subtitle}) async {
+      {required String businessName, String? subtitle, String? userName}) async {
     await _ensureFonts();
     final bytes = await _buildOrdersPdf(orders,
-            businessName: businessName, subtitle: subtitle)
+            businessName: businessName, subtitle: subtitle, userName: userName)
         .save();
     await _pdfShare(bytes,
         'knz_orders_${_dateFormat.format(DateTime.now())}.pdf',
@@ -243,10 +243,10 @@ class ExportService {
 
   // Builds an inventory PDF and opens the system share sheet
   static Future<void> exportInventoryPdf(List<Product> products,
-      {required String businessName}) async {
+      {required String businessName, String? userName}) async {
     await _ensureFonts();
     final bytes =
-        await _buildInventoryPdf(products, businessName: businessName).save();
+        await _buildInventoryPdf(products, businessName: businessName, userName: userName).save();
     await _pdfShare(bytes,
         'knz_inventory_${_dateFormat.format(DateTime.now())}.pdf',
         '${AppStrings.appName} — Inventory Report');
@@ -254,10 +254,10 @@ class ExportService {
 
   // Builds a debts PDF and opens the system share sheet
   static Future<void> exportDebtsPdf(List<CustomerDebt> debts,
-      {required String businessName}) async {
+      {required String businessName, String? userName}) async {
     await _ensureFonts();
     final bytes =
-        await _buildDebtsPdf(debts, businessName: businessName).save();
+        await _buildDebtsPdf(debts, businessName: businessName, userName: userName).save();
     await _pdfShare(bytes,
         'knz_utang_${_dateFormat.format(DateTime.now())}.pdf',
         '${AppStrings.appName} — Utang Report');
@@ -269,9 +269,9 @@ class ExportService {
 
   // FIX: Removed unused [context] parameter — Printing.layoutPdf doesn't need it.
   static Future<void> printOrdersPdf(List<Order> orders,
-      {required String businessName}) async {
+      {required String businessName, String? userName}) async {
     await _ensureFonts();
-    final pdf = _buildOrdersPdf(orders, businessName: businessName);
+    final pdf = _buildOrdersPdf(orders, businessName: businessName, userName: userName);
     // layoutPdf triggers the system print dialog
     await Printing.layoutPdf(
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Orders Report');
@@ -279,18 +279,18 @@ class ExportService {
 
   // Prints the inventory report via the system print dialog
   static Future<void> printInventoryPdf(List<Product> products,
-      {required String businessName}) async {
+      {required String businessName, String? userName}) async {
     await _ensureFonts();
-    final pdf = _buildInventoryPdf(products, businessName: businessName);
+    final pdf = _buildInventoryPdf(products, businessName: businessName, userName: userName);
     await Printing.layoutPdf(
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Inventory Report');
   }
 
   // Prints the debts report via the system print dialog
   static Future<void> printDebtsPdf(List<CustomerDebt> debts,
-      {required String businessName}) async {
+      {required String businessName, String? userName}) async {
     await _ensureFonts();
-    final pdf = _buildDebtsPdf(debts, businessName: businessName);
+    final pdf = _buildDebtsPdf(debts, businessName: businessName, userName: userName);
     await Printing.layoutPdf(
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Utang Report');
   }
@@ -301,7 +301,7 @@ class ExportService {
 
   // Builds the multi-page orders PDF document with summary boxes and a data table
   static pw.Document _buildOrdersPdf(List<Order> orders,
-      {required String businessName, String? subtitle}) {
+      {required String businessName, String? subtitle, String? userName}) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
     // Only delivered orders count as collected revenue
@@ -314,7 +314,7 @@ class ExportService {
       margin: const pw.EdgeInsets.all(32),
       theme: _theme(),
       header: (ctx) => _header(businessName, 'Orders Report',
-          subtitle ?? 'Generated: $now', ctx.pageNumber, ctx.pagesCount),
+          subtitle ?? 'Generated: $now', ctx.pageNumber, ctx.pagesCount, userName: userName),
       footer: (ctx) => _footer(businessName),
       build: (ctx) => [
         // Summary metric boxes at the top of the report
@@ -384,7 +384,7 @@ class ExportService {
 
   // Builds the multi-page inventory PDF document
   static pw.Document _buildInventoryPdf(List<Product> products,
-      {required String businessName}) {
+      {required String businessName, String? userName}) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
     final lowStock  = products.where((p) => p.isLowStock).length;
@@ -396,7 +396,7 @@ class ExportService {
       margin: const pw.EdgeInsets.all(32),
       theme: _theme(),
       header: (ctx) => _header(businessName, 'Inventory Report',
-          'Generated: $now', ctx.pageNumber, ctx.pagesCount),
+          'Generated: $now', ctx.pageNumber, ctx.pagesCount, userName: userName),
       footer: (ctx) => _footer(businessName),
       build: (ctx) => [
         pw.Row(children: [
@@ -462,7 +462,7 @@ class ExportService {
 
   // Builds the multi-page debts/utang PDF document
   static pw.Document _buildDebtsPdf(List<CustomerDebt> debts,
-      {required String businessName}) {
+      {required String businessName, String? userName}) {
     final pdf = pw.Document();
     final now        = _dateTimeFmt.format(DateTime.now());
     final totalUnpaid = debts
@@ -476,7 +476,7 @@ class ExportService {
       margin: const pw.EdgeInsets.all(32),
       theme: _theme(),
       header: (ctx) => _header(businessName, 'Utang / Debt Report',
-          'Generated: $now', ctx.pageNumber, ctx.pagesCount),
+          'Generated: $now', ctx.pageNumber, ctx.pagesCount, userName: userName),
       footer: (ctx) => _footer(businessName),
       build: (ctx) => [
         pw.Row(children: [
@@ -561,10 +561,11 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     required String businessName,
+    String? userName,
   }) async {
     await _ensureFonts();
     final bytes = await _buildAnalyticsPdf(
-            orders: orders, debts: debts, businessName: businessName)
+            orders: orders, debts: debts, businessName: businessName, userName: userName)
         .save();
     await _pdfShare(bytes,
         'knz_analytics_${_dateFormat.format(DateTime.now())}.pdf',
@@ -576,10 +577,11 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     required String businessName,
+    String? userName,
   }) async {
     await _ensureFonts();
     final pdf = _buildAnalyticsPdf(
-        orders: orders, debts: debts, businessName: businessName);
+        orders: orders, debts: debts, businessName: businessName, userName: userName);
     await Printing.layoutPdf(
         onLayout: (_) async => pdf.save(),
         name: '${AppStrings.appName} Analytics Report');
@@ -593,6 +595,7 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     required String businessName,
+    String? userName,
   }) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
@@ -630,7 +633,7 @@ class ExportService {
       margin: const pw.EdgeInsets.all(32),
       theme: _theme(),
       header: (ctx) => _header(businessName, 'Analytics Report',
-          'Generated: $now', ctx.pageNumber, ctx.pagesCount),
+          'Generated: $now', ctx.pageNumber, ctx.pagesCount, userName: userName),
       footer: (ctx) => _footer(businessName),
       build: (ctx) => [
         // ── Section 1: Summary KPIs ─────────────────────────────────────────
@@ -832,7 +835,7 @@ class ExportService {
 
   // Page header: business name, report title, subtitle, and page number
   static pw.Widget _header(String biz, String title, String sub,
-          int pageNum, int pageCount) =>
+          int pageNum, int pageCount, {String? userName}) =>
       pw.Column(children: [
         pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
           pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
@@ -845,6 +848,9 @@ class ExportService {
                 style: const pw.TextStyle(fontSize: 13, color: PdfColors.grey600)),
             pw.Text(sub,
                 style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
+            if (userName != null && userName.isNotEmpty)
+              pw.Text('Generated by: $userName',
+                  style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
           ]),
           // Page number shown in the top-right corner
           pw.Text('Page $pageNum / $pageCount',

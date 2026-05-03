@@ -107,7 +107,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     // All 'state.xxx' calls are now INSIDE the builder where 'state' is defined.
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: AppStateBuilder(
+      body: SafeArea(
+        child: AppStateBuilder(
         builder: (context, state) {
           final statusMap = state.ordersByStatus;
           final totalOrders = state.totalOrders;
@@ -130,7 +131,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
           return AnimationLimiter(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: AnimationConfiguration.toStaggeredList(
@@ -141,14 +142,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                   children: [
                     Row(children: [
-                      const Icon(Icons.trending_up, color: AppColors.gold, size: 28),
-                      const SizedBox(width: 12),
+                      const Icon(Icons.trending_up, color: AppColors.gold, size: 24),
+                      const SizedBox(width: 10),
                       const Expanded(
                         child: Text('Analytics & Reports',
                             style: TextStyle(
                                 color: AppColors.white,
-                                fontSize: 24,
-                                fontWeight: FontWeight.w700)),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700),
+                            overflow: TextOverflow.ellipsis),
                       ),
                       GestureDetector(
                         onTap: () => showExportDialog(context, ExportType.analytics),
@@ -182,7 +184,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         physics: const NeverScrollableScrollPhysics(),
                         crossAxisSpacing: 10,
                         mainAxisSpacing: 10,
-                        childAspectRatio: 1.05,
+                        childAspectRatio: cols == 4 ? 1.3 : 1.05,
                         children: [
                           // Row 1: Revenue cards
                           StatCard(
@@ -288,6 +290,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ),
           );
         },
+        ),
       ),
     );
   }

@@ -138,46 +138,51 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
           // ── Header + New Order button — NEVER rebuilds from AppState ──
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Row(
               children: [
                 const Icon(Icons.local_shipping_outlined,
-                    color: AppColors.gold, size: 28),
-                const SizedBox(width: 12),
+                    color: AppColors.gold, size: 24),
+                const SizedBox(width: 10),
                 const Expanded(
                   child: Text('Order Tracker',
                       style: TextStyle(
                           color: AppColors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700)),
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis),
                 ),
                 GoldButton(
-                  label: '+ New Order',
-                  width: 130,
-                  height: 44,
+                  label: '+ New',
+                  width: 80,
+                  height: 40,
+                  fontSize: 13,
                   onPressed: () => showDialog(
                     context: context,
                     builder: (_) => const OrderDialog(),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 IconButton(
-                  icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary),
+                  icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary, size: 22),
                   tooltip: 'Export Orders',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   onPressed: () => showExportDialog(context, ExportType.orders),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
 
           // ── Search + Filter — local setState only ─────────────────────
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(
@@ -269,10 +274,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
           // completely unaffected by AppState changes.
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: AppStateBuilder(                      // ← FIX 6
                 builder: (context, state) {
                   final filtered = _filtered(state.orders);
+                  // Get the logged-in user's display name once per build
+                  final userName = AppState().currentUser?.displayName ?? '';
                   return Container(
                     decoration: BoxDecoration(
                       color: AppColors.surface,
@@ -355,7 +362,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                                         _deleteOrder(o),
                                                     onReceipt: () =>
                                                         ReceiptScreen.show(
-                                                            context, o),
+                                                            context, o,
+                                                            userName: userName),
                                                     onUtang: () =>
                                                         MarkAsUtangDialog
                                                             .show(
@@ -372,7 +380,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                                         _deleteOrder(o),
                                                     onReceipt: () =>
                                                         ReceiptScreen.show(
-                                                            context, o),
+                                                            context, o,
+                                                            userName: userName),
                                                     onUtang: () =>
                                                         MarkAsUtangDialog
                                                             .show(
@@ -393,8 +402,9 @@ class _OrdersScreenState extends State<OrdersScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
         ],
+        ),
       ),
     );
   }

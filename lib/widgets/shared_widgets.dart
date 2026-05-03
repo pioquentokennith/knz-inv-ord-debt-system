@@ -261,7 +261,7 @@ class StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(10),
       decoration: const BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.all(Radius.circular(12)),
@@ -273,7 +273,7 @@ class StatCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(emoji, style: const TextStyle(fontSize: 22)),
+          Text(emoji, style: const TextStyle(fontSize: 18)),
           const SizedBox(height: 6),
           // FittedBox scales down the value text if it overflows the card width
           FittedBox(

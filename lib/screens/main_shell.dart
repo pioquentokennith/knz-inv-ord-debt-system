@@ -174,11 +174,25 @@ class MainShellState extends State<MainShell>
                 _drawerCtrl.forward();
               },
             ),
-            const SizedBox(width: 8),
-            Text(AppStrings.appName, style: AppTextStyles.brandName.copyWith(fontSize: 22)),
-            const SizedBox(width: 6),
-            Text(AppStrings.appSubtitle,
-                style: AppTextStyles.brandSubtitle.copyWith(fontSize: 9)),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(AppStrings.appName,
+                        style: AppTextStyles.brandName.copyWith(fontSize: 20),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(AppStrings.appSubtitle,
+                        style: AppTextStyles.brandSubtitle.copyWith(fontSize: 8),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

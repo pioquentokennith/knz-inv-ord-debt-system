@@ -91,44 +91,49 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Column(
+      body: SafeArea(
+        child: Column(
         children: [
           // ── Header and search bar — local UI, no AppState needed ──────
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
             child: Row(
               children: [
                 const Icon(Icons.inventory_2_outlined,
-                    color: AppColors.gold, size: 28),
-                const SizedBox(width: 12),
+                    color: AppColors.gold, size: 24),
+                const SizedBox(width: 10),
                 const Expanded(
                   child: Text('Inventory',
                       style: TextStyle(
                           color: AppColors.white,
-                          fontSize: 24,
-                          fontWeight: FontWeight.w700)),
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis),
                 ),
                 GoldButton(
-                  label: '+ Add Product',
-                  width: 140,
-                  height: 44,
+                  label: '+ Add',
+                  width: 90,
+                  height: 40,
+                  fontSize: 13,
                   onPressed: () => showDialog(
                     context: context,
                     builder: (_) => const ProductDialog(),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
                 IconButton(
-                  icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary),
+                  icon: const Icon(Icons.download_outlined, color: AppColors.whiteTertiary, size: 22),
                   tooltip: 'Export Inventory',
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                   onPressed: () => showExportDialog(context, ExportType.inventory),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(
@@ -209,7 +214,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
           // ── FIX 6: Only the product list rebuilds on AppState changes ─
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: AppStateBuilder(
                 builder: (context, state) {
                   final filtered = _filtered(state.products);
@@ -319,8 +324,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
         ],
+      ),
       ),
     );
   }

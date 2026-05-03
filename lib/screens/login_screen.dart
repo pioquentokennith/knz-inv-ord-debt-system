@@ -138,32 +138,34 @@ class _LoginScreenState extends State<LoginScreen>
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: FadeInUp(
-            duration: const Duration(milliseconds: 600),
-            child: Container(
-              width: isWide ? 750 : double.infinity,
-              constraints: const BoxConstraints(maxWidth: 750),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.cardBorder),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.gold.withValues(alpha: 0.05),
-                    blurRadius: 40,
-                    spreadRadius: 5,
-                  ),
-                ],
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: FadeInUp(
+              duration: const Duration(milliseconds: 600),
+              child: Container(
+                width: isWide ? 750 : double.infinity,
+                constraints: const BoxConstraints(maxWidth: 750),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.cardBorder),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.gold.withValues(alpha: 0.05),
+                      blurRadius: 40,
+                      spreadRadius: 5,
+                    ),
+                  ],
+                ),
+                child: isWide
+                    ? Row(children: [_buildBrandPanel(), _buildFormPanel()])
+                    : Column(children: [
+                        _buildBrandPanelMobile(),
+                        _buildFormPanel()
+                      ]),
               ),
-              child: isWide
-                  ? Row(children: [_buildBrandPanel(), _buildFormPanel()])
-                  : Column(children: [
-                      _buildBrandPanelMobile(),
-                      _buildFormPanel()
-                    ]),
             ),
           ),
         ),

@@ -7,7 +7,7 @@
 //           widget hierarchy (ReceiptCard, ReceiptHeader, ReceiptInfoRow, etc.)
 //           and embeds _OrderPrintPanel which manages the full Bluetooth lifecycle
 //           (scan → connect → print → disconnect) using the sealed BtPrintState.
-// Usage   : ReceiptScreen.show(context, order);
+// Usage   : ReceiptScreen.show(context, order, userName: AppState().currentUser?.displayName ?? '');
 // ─────────────────────────────────────────────────────────────────────────────
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -45,7 +45,7 @@ class OrderReceiptPrinter {
   //   • Consistent column widths across every row section (8/4 split).
   //   • Empty line before every major divider for visual breathing room.
   //   • Aligned label colons with fixed-width prefixes for easy scanning.
-  static Future<List<int>> buildBytes(Order order) async {
+  static Future<List<int>> buildBytes(Order order, {String userName = ''}) async {
     final profile = await CapabilityProfile.load();
     final gen     = Generator(PaperSize.mm58, profile);
     List<int> b   = [];
@@ -69,6 +69,10 @@ class OrderReceiptPrinter {
     b += gen.text('NAME : ${order.customerName}');
     b += gen.text('DATE : ${_dateFmt.format(order.orderDate)}');
     b += gen.text('STAT : ${order.status.displayName.toUpperCase()}');
+    // ── Account (who processed this order) ───────────────────────────────────
+    if (userName.isNotEmpty) {
+      b += gen.text('ACCT : $userName');
+    }
     b += gen.hr(ch: '-');
 
     // ── Items header ─────────────────────────────────────────────────────────
@@ -149,15 +153,16 @@ class OrderReceiptPrinter {
 //   • Abstraction   — static show() hides navigation mechanics from callers.
 // ─────────────────────────────────────────────────────────────────────────────
 class ReceiptScreen extends StatelessWidget {
-  final Order order;
+  final Order  order;
+  final String userName;
 
-  const ReceiptScreen({super.key, required this.order});
+  const ReceiptScreen({super.key, required this.order, this.userName = ''});
 
   // Static factory navigation method — callers never construct ReceiptScreen directly.
   // Pushes a MaterialPageRoute so the back button always returns to the calling screen.
-  static void show(BuildContext context, Order order) {
+  static void show(BuildContext context, Order order, {String userName = ''}) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ReceiptScreen(order: order)),
+      MaterialPageRoute(builder: (_) => ReceiptScreen(order: order, userName: userName)),
     );
   }
 
@@ -183,10 +188,12 @@ class ReceiptScreen extends StatelessWidget {
           child: Container(height: 1, color: AppColors.cardBorder),
         ),
       ),
-      body: Column(children: [
-        Expanded(child: _OrderReceiptPreview(order: order)),
-        _OrderPrintPanel(order: order),
-      ]),
+      body: SafeArea(
+        child: Column(children: [
+          Expanded(child: _OrderReceiptPreview(order: order, userName: userName)),
+          _OrderPrintPanel(order: order, userName: userName),
+        ]),
+      ),
     );
   }
 }
@@ -196,9 +203,10 @@ class ReceiptScreen extends StatelessWidget {
 // Private — only ReceiptScreen can create this.
 // ─────────────────────────────────────────────────────────────────────────────
 class _OrderReceiptPreview extends StatelessWidget {
-  final Order order;
+  final Order  order;
+  final String userName;
 
-  const _OrderReceiptPreview({required this.order});
+  const _OrderReceiptPreview({required this.order, this.userName = ''});
 
   @override
   Widget build(BuildContext context) {
@@ -235,6 +243,18 @@ class _OrderReceiptPreview extends StatelessWidget {
           ReceiptInfoRow(label: 'Customer', value: order.customerName),
           const SizedBox(height: 8),
           ReceiptInfoRow(label: 'Date', value: dateFmt.format(order.orderDate)),
+          // ── Account row (only shown when userName is provided) ─────
+          if (userName.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            ReceiptInfoRow(
+              label: 'Account',
+              value: userName,
+              valueStyle: const TextStyle(
+                  color: AppColors.whiteTertiary,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 13),
+            ),
+          ],
         ]),
       ),
       const ReceiptDivider(),
@@ -399,9 +419,10 @@ class _OrderReceiptPreview extends StatelessWidget {
 //                     no raw Strings or parallel booleans needed.
 // ─────────────────────────────────────────────────────────────────────────────
 class _OrderPrintPanel extends StatefulWidget {
-  final Order order;
+  final Order  order;
+  final String userName;
 
-  const _OrderPrintPanel({required this.order});
+  const _OrderPrintPanel({required this.order, this.userName = ''});
 
   @override
   State<_OrderPrintPanel> createState() => _OrderPrintPanelState();
@@ -496,7 +517,7 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
     _set(const BtPrinting());
     try {
       // Delegated to OrderReceiptPrinter — no formatting logic here.
-      final bytes    = await OrderReceiptPrinter.buildBytes(widget.order);
+      final bytes    = await OrderReceiptPrinter.buildBytes(widget.order, userName: widget.userName);
       final services = await current.device.discoverServices();
 
       BluetoothCharacteristic? ch;
