@@ -465,6 +465,7 @@ class AppState extends ChangeNotifier {
       _addLogSilent('Order status updated → ${status.displayName}', 'order');
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
+      rethrow; // ← propagate to caller so UI can show the error
     } finally {
       _batchNotify();
     }

@@ -96,10 +96,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
     if (!confirmed || !mounted) return;
     // ── END Confirmation ──────────────────────────────────────────────────
 
-    await AppState().updateOrderStatus(order.id, result);
-
-    if (result == OrderStatus.utang && mounted) {
-      MarkAsUtangDialog.show(context, order);
+    try {
+      await AppState().updateOrderStatus(order.id, result);
+      if (result == OrderStatus.utang && mounted) {
+        MarkAsUtangDialog.show(context, order);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+        ),
+      );
     }
   }
 
