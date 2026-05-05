@@ -5,9 +5,8 @@
 //           Cash and GCash payment methods; GCash requires a reference number,
 //           phone number, and account name. Validates the payment amount (cannot
 //           exceed the remaining balance). On confirm, creates a PaymentRecord and
-//           calls AppState.addPayment(). If the payment fully clears the balance,
-//           auto-updates the linked order's status to "delivered" and shows a
-//           success snackbar.
+//           calls AppState.addPayment(). Shows a gold snackbar on partial payment
+//           (with remaining balance) and a green snackbar on full payment.
 // Usage   : UtangPaymentDialog.show(context, debt);
 // ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
@@ -16,7 +15,6 @@ import 'package:uuid/uuid.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../models/debt_model.dart';
-import '../models/order_model.dart';
 import '../widgets/shared_widgets.dart';
 
 class UtangPaymentDialog extends StatefulWidget {
@@ -109,43 +107,48 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
       ),
     );
 
-    // ── AUTO-DELIVER CHECK ────────────────────────────────────────────────
-    // When the remaining balance drops to zero (debt fully paid),
-    // automatically update the linked order status to 'delivered'.
-    // This keeps order status in sync with debt payment status.
-    // awtomatikong i-update ang order status sa "delivered".
-    // Hindi na "utang" ang status — bayad na kasi lahat.
+    if (!mounted) return;
+    Navigator.pop(context);
+
     final newRemaining = widget.debt.remainingBalance - amount;
     if (newRemaining <= 0) {
-      // Hanapin ang order na may parehong orderId
-      final matchingOrder = AppState().orders.where(
-        (o) => o.orderId == widget.debt.orderId,
-      ).firstOrNull;
-
-      if (matchingOrder != null) {
-        await AppState().updateOrderStatus(
-          matchingOrder.id,
-          OrderStatus.delivered, // ← auto-delivered pag fully paid
-        );
-      }
-
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.success,
-            content: Text(
-              '${widget.debt.customerName} fully paid! Order marked as Delivered. ✅',
-              style: const TextStyle(color: AppColors.white),
+      // Fully paid — special congratulatory message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.success,
+          duration: const Duration(seconds: 3),
+          content: Row(children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '🎉 Fully Paid! Tapos na ang utang ni ${widget.debt.customerName}.',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
             ),
-          ),
-        );
-      }
-      return;
+          ]),
+        ),
+      );
+    } else {
+      // Partial payment — show how much is still remaining
+      final currency2 = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: AppColors.gold,
+          duration: const Duration(seconds: 3),
+          content: Row(children: [
+            const Icon(Icons.payments_outlined, color: Colors.black, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Payment successful! Remaining balance: ${currency2.format(newRemaining)}',
+                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ]),
+        ),
+      );
     }
-    // ── END AUTO-DELIVER CHECK ────────────────────────────────────────────
-
-    if (mounted) Navigator.pop(context);
   }
 
   @override

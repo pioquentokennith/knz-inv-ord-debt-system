@@ -294,7 +294,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   Future<void> updateStatus(String orderId, OrderStatus status) => safeVoidCall(() async {
     final database = await db.database;
 
-    // MINOR 2 FIX: Guard — block utang → delivered
+    // Guard — block utang → delivered in all cases
     if (status == OrderStatus.delivered) {
       final currentRow = await database.query('orders',
           columns: ['status'], where: 'id = ?', whereArgs: [orderId]);

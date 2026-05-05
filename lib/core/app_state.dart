@@ -406,13 +406,32 @@ class AppState extends ChangeNotifier {
   ///   );
   /// });
   /// ```
-  // Creates a new order, deducts stock via OrderService, and refreshes both lists
+  // Creates a new order, deducts stock via OrderService, and refreshes both lists.
+  // AUTO-UTANG: If the order status is utang, automatically creates a matching
+  // CustomerDebt record so the order appears in the Utang Tracker immediately.
   Future<bool> addOrder(Order order, {void Function(String)? onError}) async {
     try {
       await _os.createOrder(order, _activeUser, _products);
+
+      // AUTO-UTANG: create the debt record right after the order is saved
+      // so the user does not need to go to the Utang screen and record it manually.
+      if (order.status == OrderStatus.utang) {
+        final debt = CustomerDebt(
+          id:           const Uuid().v4(),
+          customerName: order.customerName,
+          orderId:      order.orderId,
+          totalAmount:  order.totalAmount,
+          amountPaid:   0,
+          createdAt:    DateTime.now(),
+          payments:     [],
+        );
+        await _ds.addDebt(debt, _activeUser);
+      }
+
       // Refresh both products (stock changed) and orders (new entry)
       _products = await _ps.getAll(_activeUser);
       _orders   = await _os.getAll(_activeUser);
+      _debts    = await _ds.getAll(_activeUser);
       _addLogSilent(
           'New order ${order.orderId} created for ${order.customerName}',
           'order');
@@ -432,13 +451,12 @@ class AppState extends ChangeNotifier {
       await _os.updateStatus(orderId, status);
       final idx = _orders.indexWhere((o) => o.id == orderId);
       if (idx != -1) {
-        // Local update avoids a full DB reload for a single field change
         _orders = List.of(_orders)..[idx] = _orders[idx].copyWith(status: status);
       }
       _addLogSilent('Order status updated → ${status.displayName}', 'order');
     } catch (e, st) {
       if (kDebugMode) debugPrint('[AppState] $e\n$st');
-      rethrow; // ← propagate to caller so UI can show the error
+      rethrow;
     } finally {
       _batchNotify();
     }
