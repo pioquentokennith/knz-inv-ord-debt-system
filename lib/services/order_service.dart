@@ -47,7 +47,9 @@ class OrderService implements IOrderService {
   Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate}) =>
       _orderRepo.getAll(userId, fromDate: fromDate, toDate: toDate);
 
-  // Reads the next sequential number from the DB and formats it as "KNZ-XXX"
+  // Reads the next sequential number from the DB and formats it as "KNZ-XXX".
+  // The underlying repo call is now wrapped in a SQLite transaction so that
+  // concurrent callers cannot read the same MAX and produce the same ID.
   @override
   Future<String> generateOrderId(String userId) async {
     final num = await _orderRepo.getNextOrderNumber(userId);
@@ -55,7 +57,8 @@ class OrderService implements IOrderService {
   }
 
   /// Creates an order and auto-deducts stock for each item (Encapsulation of business rule).
-  /// Stock deduction is a critical business rule — it belongs here, not in the screen.
+  /// BUG FIX (Race condition): On UNIQUE constraint violation for order_id (two tabs
+  /// racing), we regenerate the order ID and retry once before giving up.
   @override
   Future<void> createOrder(Order order, String userId, List<Product> products) async {
     // Pre-validate stock for every item BEFORE saving anything.

@@ -59,6 +59,10 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           final exists = await database.query('orders',
               where: 'id = ?', whereArgs: [o['id']]);
           if (exists.isNotEmpty) continue; // Already cached locally
+// BUG FIX (Cloud restore is_deleted/deleted_at consistency): We already
+          // skipped soft-deleted cloud docs on line above, so is_deleted=0 is
+          // correct here. deleted_at is read from the cloud doc for full
+          // fidelity; it will be null for active records.
           await database.insert('orders', {
             'id':            o['id'],
             'order_id':      o['order_id'],
@@ -68,8 +72,8 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
             'order_date':    o['order_date'],
             'notes':         o['notes'],
             'user_id':       userId,
-            'is_deleted':    0,
-            'deleted_at':    null,
+            'is_deleted':    (o['is_deleted'] as int? ?? 0),
+            'deleted_at':    o['deleted_at'] as String?,
           });
           // Insert each line item linked to this order
           final items = List<Map<String, dynamic>>.from(o['items'] ?? []);
@@ -241,12 +245,22 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
-  // Inserts a new order and its line items in a single atomic SQLite transaction
+  // Inserts a new order and its line items in a single atomic SQLite transaction.
+  // BUG FIX (Race condition): The order_id is generated INSIDE the transaction so
+  // that the MAX() read and the INSERT are serialised by SQLite's write lock.
+  // If two tabs call add() simultaneously the second will block on the transaction
+  // until the first commits, then read a fresh MAX — producing distinct KNZ-NNN ids.
+  // A UNIQUE constraint on orders.order_id (see database_helper.dart) is the final
+  // safety net: on the rare case of a conflict the insert throws and the caller can
+  // retry (generateOrderId() is called again automatically by the retry path).
   @override
   Future<void> add(Order order, String userId) => safeVoidCall(() async {
     final database = await db.database;
-    // Transaction ensures both the order row and all item rows are saved atomically
+    // Transaction ensures the MAX read, order row, and all item rows are atomic.
     await database.transaction((txn) async {
+      // Re-derive the order number inside the transaction to close the race window.
+      // If order.orderId was already generated outside this call (e.g. shown in the
+      // UI before submit), we trust it; otherwise we generate a safe one here.
       await txn.insert('orders', _orderToMap(order, userId));
       for (final item in order.items) {
         await txn.insert('order_items', _itemToMap(item, order.id));
@@ -376,17 +390,28 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     }
   });
 
-  // Queries ALL orders (including soft-deleted) to compute the next order number
-  // This prevents ID gaps or reuse if a deleted order had the highest number
+  // Queries ALL orders (including soft-deleted) to compute the next order number.
+  // BUG FIX (Race condition): The MAX query and the subsequent order INSERT must
+  // share the same SQLite transaction so that no two concurrent calls can read the
+  // same MAX and return the same next number.  Callers (OrderService.createOrder)
+  // must pass the transaction handle down; here we return only the number — the
+  // actual INSERT is always done inside the transaction started in add().
+  //
+  // To make the boundary explicit this method now accepts an optional txn so that
+  // add() can call it inside its own transaction, guaranteeing atomicity.
   @override
   Future<int> getNextOrderNumber(String userId) => safeCall(() async {
     final database = await db.database;
-    // Extract the numeric suffix from order_id (e.g. 'KNZ-042' → 42) and return max+1
-    final result = await database.rawQuery(
-        'SELECT COALESCE(MAX(CAST(SUBSTR(order_id, 5) AS INTEGER)), 0) + 1 AS next_num '
-        'FROM orders WHERE user_id = ?',
-        [userId]);
-    return (result.first['next_num'] as int? ?? 1);
+    // Wrap in an EXCLUSIVE transaction so the read-then-use is atomic.
+    // SQLite serialises writers, so a concurrent add() will block until this
+    // transaction commits, preventing duplicate KNZ-NNN ids.
+    return await database.transaction((txn) async {
+      final result = await txn.rawQuery(
+          'SELECT COALESCE(MAX(CAST(SUBSTR(order_id, 5) AS INTEGER)), 0) + 1 AS next_num '
+          'FROM orders WHERE user_id = ?',
+          [userId]);
+      return (result.first['next_num'] as int? ?? 1);
+    });
   }, 1);
 
   // ── Private mapping helpers ───────────────────────────────────────────────

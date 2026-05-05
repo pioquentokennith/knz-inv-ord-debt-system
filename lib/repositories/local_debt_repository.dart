@@ -35,6 +35,10 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
               where: 'id = ?', whereArgs: [d['id']]);
           if (existing.isNotEmpty) continue;
 
+          // BUG FIX (Cloud restore skips is_deleted/deleted_at): always insert both
+          // columns explicitly so the row is consistent with locally-created rows.
+          // Firestore docs from soft-deleted records carry is_deleted=1 and a
+          // deleted_at timestamp; active records have is_deleted=0/null.
           await database.insert('debts', {
             'id':            d['id'],
             'customer_name': d['customer_name'],
@@ -43,6 +47,8 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
             'amount_paid':   d['amount_paid'],
             'created_at':    d['created_at'],
             'user_id':       userId,
+            'is_deleted':    (d['is_deleted'] as int? ?? 0),
+            'deleted_at':    d['deleted_at'] as String?,
           });
           // Insert each payment record linked to this debt
           final payments = List<Map<String, dynamic>>.from(d['payments'] ?? []);

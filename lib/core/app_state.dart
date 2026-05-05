@@ -444,13 +444,34 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Soft-deletes an order and removes it from the in-memory list
+  // Soft-deletes an order and removes it from the in-memory list.
+  // BUG FIX (Stock restore on delete): When an order is soft-deleted we add the
+  // ordered quantities back to their products so stock stays accurate.
   Future<void> deleteOrder(String orderId) async {
     try {
+      // Find the order in memory before removing it so we can restore stock.
+      final order = _orders.cast<Order?>().firstWhere(
+            (o) => o?.id == orderId,
+            orElse: () => null,
+          );
+
       await _os.deleteOrder(orderId);
       _orders = _orders.where((o) => o.id != orderId).toList();
+
+      // Restore stock for each item in the deleted order.
+      if (order != null) {
+        for (final item in order.items) {
+          final idx = _products.indexWhere((p) => p.id == item.productId);
+          if (idx != -1) {
+            final newQty = _products[idx].stockQty + item.quantity;
+            await _ps.updateStock(item.productId, newQty);
+            _products = List.of(_products)
+              ..[idx] = _products[idx].copyWith(stockQty: newQty);
+          }
+        }
+      }
     } catch (e, st) {
-      if (kDebugMode) debugPrint('[AppState] $e\n$st');
+      if (kDebugMode) debugPrint('[AppState] deleteOrder: $e\n$st');
     } finally {
       _batchNotify();
     }
@@ -487,13 +508,33 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  // Un-deletes an order and refreshes the active orders list
+  // Un-deletes an order and refreshes the active orders list.
+  // BUG FIX (Stock re-deduction on restore): When an order is restored we
+  // re-deduct its quantities from stock so the delete+restore cycle stays neutral.
   Future<void> restoreOrder(String orderId) async {
     try {
       await _os.restoreOrder(orderId);
-      await refreshData(); // Full reload — isLogin defaults to false, no notifs
+      await refreshData(); // Full reload — pulls the restored order into _orders
+
+      // Re-deduct stock for each item in the restored order.
+      final order = _orders.cast<Order?>().firstWhere(
+            (o) => o?.id == orderId,
+            orElse: () => null,
+          );
+      if (order != null) {
+        for (final item in order.items) {
+          final idx = _products.indexWhere((p) => p.id == item.productId);
+          if (idx != -1) {
+            final newQty = (_products[idx].stockQty - item.quantity).clamp(0, 999999);
+            await _ps.updateStock(item.productId, newQty);
+            _products = List.of(_products)
+              ..[idx] = _products[idx].copyWith(stockQty: newQty);
+          }
+        }
+        _batchNotify();
+      }
     } catch (e, st) {
-      if (kDebugMode) debugPrint('[AppState] $e\n$st');
+      if (kDebugMode) debugPrint('[AppState] restoreOrder: $e\n$st');
     }
   }
 
