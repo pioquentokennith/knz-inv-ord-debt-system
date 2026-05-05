@@ -161,31 +161,12 @@ class _OverviewScreenState extends State<OverviewScreen> {
                             ),
                           ),
                           const SizedBox(height: 10),
-                          IntrinsicHeight(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(
-                                  child: StatCard(
-                                    emoji: '💰',
-                                    value: currency.format(state.totalRevenue),
-                                    label: AppStrings.totalRevenue,
-                                    subtitle: '${state.deliveredCount} delivered and utang',
-                                    subtitleColor: AppColors.success,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: StatCard(
-                                    emoji: '💵',
-                                    value: currency.format(state.deliveredRevenue),
-                                    label: 'DELIVERED REVENUE',
-                                    subtitle: 'Delivered orders only',
-                                    subtitleColor: AppColors.success,
-                                  ),
-                                ),
-                              ],
-                            ),
+                          StatCard(
+                            emoji: '💵',
+                            value: currency.format(state.deliveredRevenue),
+                            label: 'DELIVERED REVENUE',
+                            subtitle: 'Delivered orders only',
+                            subtitleColor: AppColors.success,
                           ),
                         ],
                       );

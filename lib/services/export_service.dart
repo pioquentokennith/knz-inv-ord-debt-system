@@ -144,12 +144,11 @@ class ExportService {
     rows.add(['=== ANALYTICS SUMMARY ===', 'Generated: $now']);
     rows.add(['Metric', 'Value']);
 
-    // Mirror app_state.dart: totalRevenue = delivered orders + utang payments collected
+    // Mirror app_state.dart: deliveredRevenue = delivered orders only
     final deliveredRevenue = orders
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
     final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
-    final totalRevenue   = deliveredRevenue + utangCollected;
     final totalOrders    = orders.length;
     final deliveredCount = orders.where((o) => o.status == OrderStatus.delivered).length;
     final itemsSold      = orders
@@ -160,7 +159,6 @@ class ExportService {
     final paidCount   = debts.where((d) => d.isPaid).length;
     final overdueCount = debts.where((d) => d.isOverdue).length;
 
-    rows.add(['Total Revenue (PHP)',     totalRevenue.toStringAsFixed(2)]);
     rows.add(['Delivered Revenue (PHP)', deliveredRevenue.toStringAsFixed(2)]);
     rows.add(['Total Orders',            totalOrders]);
     rows.add(['Delivered',               deliveredCount]);
@@ -340,7 +338,20 @@ class ExportService {
           },
           children: [
             _headerRow(['Order ID', 'Customer', 'Date', 'Status', 'Items', 'Total']),
-            ...orders.asMap().entries.map((e) {
+            // Sort by status priority: Delivered → Utang → Cancelled → Pending → Shipped → Processing
+            ...(List<Order>.from(orders)..sort((a, b) {
+              const priority = {
+                OrderStatus.delivered:  0,
+                OrderStatus.utang:      1,
+                OrderStatus.cancelled:  2,
+                OrderStatus.pending:    3,
+                OrderStatus.shipped:    4,
+                OrderStatus.processing: 5,
+              };
+              final pa = priority[a.status] ?? 6;
+              final pb = priority[b.status] ?? 6;
+              return pa.compareTo(pb);
+            })).asMap().entries.map((e) {
               final o = e.value;
               final even = e.key % 2 == 0; // Zebra striping for readability
               return pw.TableRow(
@@ -600,12 +611,11 @@ class ExportService {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
 
-    // ── Derived values — mirrors app_state.dart exactly ──────────────────────
+    // ── Derived values — deliveredRevenue only ────────────────────────────────
     final deliveredRevenue = orders
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
     final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
-    final totalRevenue   = deliveredRevenue + utangCollected;
     final totalOrders    = orders.length;
     final deliveredCount = orders.where((o) => o.status == OrderStatus.delivered).length;
     final itemsSold      = orders
@@ -644,18 +654,16 @@ class ExportService {
                 color: PdfColors.grey800)),
         pw.SizedBox(height: 10),
         pw.Row(children: [
-          _box('Total Revenue',     _pdfCurrency.format(totalRevenue)),
-          pw.SizedBox(width: 10),
           _box('Delivered Revenue', _pdfCurrency.format(deliveredRevenue)),
           pw.SizedBox(width: 10),
           _box('Total Orders',      '$totalOrders'),
           pw.SizedBox(width: 10),
           _box('Delivered',         '$deliveredCount'),
+          pw.SizedBox(width: 10),
+          _box('Items Sold',        '$itemsSold'),
         ]),
         pw.SizedBox(height: 10),
         pw.Row(children: [
-          _box('Items Sold',        '$itemsSold'),
-          pw.SizedBox(width: 10),
           _box('Total Paid',        _pdfCurrency.format(utangCollected)),
           pw.SizedBox(width: 10),
           _box('Total Utang',       _pdfCurrency.format(totalDebt)),

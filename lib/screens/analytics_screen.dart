@@ -186,12 +186,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         mainAxisSpacing: 10,
                         childAspectRatio: cols == 4 ? 1.3 : 1.05,
                         children: [
-                          // Row 1: Revenue cards
-                          StatCard(
-                            emoji: '💰',
-                            value: currency.format(state.totalRevenue),
-                            label: 'TOTAL REVENUE',
-                          ),
+                          // Row 1: Revenue + Orders
                           StatCard(
                             emoji: '💵',
                             value: currency.format(state.deliveredRevenue),

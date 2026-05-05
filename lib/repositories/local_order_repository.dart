@@ -273,12 +273,9 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
 
   // Updates the status column of a single order and syncs the change to Firestore.
   //
-  // MINOR 2 FIX: Blocks utang → delivered to prevent double-counting in analytics.
-  // totalRevenue = deliveredRevenue + totalUtangCollected. Kung payagan ang
-  // utang → delivered, ang order ay mabilang sa deliveredRevenue AT ang debt
-  // payments sa totalUtangCollected — double-count.
-  // Kung gusto ng user na i-close ang utang order, bayaran muna ang buong
-  // utang sa Utang screen bago baguhin ang status.
+  // Blocks utang → delivered to prevent double-counting in analytics.
+  // Delivered orders are counted in deliveredRevenue; allowing utang → delivered
+  // would count the same order twice. To close an utang order, fully pay it first.
   @override
   Future<void> updateStatus(String orderId, OrderStatus status) => safeVoidCall(() async {
     final database = await db.database;

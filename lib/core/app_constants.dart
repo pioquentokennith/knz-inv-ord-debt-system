@@ -85,7 +85,6 @@ class AppStrings {
   static const String totalProducts       = 'TOTAL PRODUCTS';    // Metric card header
   static const String totalOrders         = 'TOTAL ORDERS';      // Metric card header
   static const String lowStockItems       = 'LOW STOCK ITEMS';   // Alert card header
-  static const String totalRevenue        = 'TOTAL REVENUE';     // Revenue card header
   static const String lowStockAlerts      = 'Low Stock Alerts';  // Section title
 
   // ── Product dialog labels ─────────────────────────────────────────────────

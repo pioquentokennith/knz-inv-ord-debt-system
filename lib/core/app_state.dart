@@ -128,17 +128,6 @@ class AppState extends ChangeNotifier {
   // Total amount collected from utang payments (initial + additional payments)
   double get totalUtangCollected => _debts.fold(0.0, (s, d) => s + d.amountPaid);
 
-  // FIX 5: Dati kasama ang utang sa revenue — misleading kasi hindi pa nababayaran.
-  // Ngayon: delivered + utang payments = actual collected revenue.
-  // Ang utang ay tracked na separately sa totalDebtAmount getter.
-  // Counts delivered orders + all payments collected from utang orders
-  double get totalRevenue {
-    final deliveredRevenue = _orders
-        .where((o) => o.status == OrderStatus.delivered)
-        .fold(0.0, (s, o) => s + o.totalAmount);
-    return deliveredRevenue + totalUtangCollected;
-  }
-
   // Billed revenue (lahat maliban cancelled) — para sa analytics na gusto ng gross view
   // Gross revenue including pending/processing/utang orders (not yet cancelled)
   double get totalBilledRevenue => _orders
@@ -148,28 +137,12 @@ class AppState extends ChangeNotifier {
   // Total outstanding debt across all customers
   double get totalDebtAmount => _debts.fold(0.0, (s, d) => s + d.remainingBalance);
 
-  // ── BUG 1 FIX ─────────────────────────────────────────────────────────────
-  // OPTION B: Average order value — kasama delivered + utang orders
-  // Consistent sa totalRevenue na kasama rin ang utang payments.
-  double get avgOrderValue {
-    final revenueOrders = _orders
-        .where((o) =>
-            o.status == OrderStatus.delivered ||
-            o.status == OrderStatus.utang)
-        .toList();
-    return revenueOrders.isEmpty ? 0 : totalRevenue / revenueOrders.length;
-  }
-
-  // BAGONG GETTER: Sum ng lahat ng delivered orders lang.
-  // Hindi kasama ang utang payments — pure delivered status orders only.
-  // Ipakita sa sariling card sa tabi ng Total Revenue sa dashboard.
+  // Sum ng lahat ng delivered orders lang.
   double get deliveredRevenue {
     return _orders
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
   }
-  // ── END BUG 1 FIX ─────────────────────────────────────────────────────────
-
   // Returns a count for each OrderStatus enum value — used by analytics pie chart
   Map<OrderStatus, int> get ordersByStatus => {
     for (final s in OrderStatus.values)
