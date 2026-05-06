@@ -143,6 +143,10 @@ class AppState extends ChangeNotifier {
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
   }
+
+  // Total Revenue = Delivered Revenue + Utang Collected (paid utang)
+  double get totalRevenue => deliveredRevenue + totalUtangCollected;
+
   // Returns a count for each OrderStatus enum value — used by analytics pie chart
   Map<OrderStatus, int> get ordersByStatus => {
     for (final s in OrderStatus.values)

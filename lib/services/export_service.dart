@@ -149,6 +149,8 @@ class ExportService {
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
     final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
+    // ── TOTAL REVENUE = Delivered Revenue + Utang Collected ───────────────────
+    final totalRevenue   = deliveredRevenue + utangCollected;
     final totalOrders    = orders.length;
     final deliveredCount = orders.where((o) => o.status == OrderStatus.delivered).length;
     final itemsSold      = orders
@@ -159,11 +161,13 @@ class ExportService {
     final paidCount   = debts.where((d) => d.isPaid).length;
     final overdueCount = debts.where((d) => d.isOverdue).length;
 
-    rows.add(['Delivered Revenue (PHP)', deliveredRevenue.toStringAsFixed(2)]);
+    // Total Revenue row — first and most prominent KPI
+    rows.add(['Total Revenue (PHP)',     totalRevenue.toStringAsFixed(2)]);
+    rows.add(['  └ Delivered Revenue (PHP)', deliveredRevenue.toStringAsFixed(2)]);
+    rows.add(['  └ Utang Collected (PHP)',   utangCollected.toStringAsFixed(2)]);
     rows.add(['Total Orders',            totalOrders]);
     rows.add(['Delivered',               deliveredCount]);
     rows.add(['Items Sold',              itemsSold]);
-    rows.add(['Total Paid (PHP)',        utangCollected.toStringAsFixed(2)]);
     rows.add(['Total Utang (PHP)',       totalDebt.toStringAsFixed(2)]);
     rows.add(['Unpaid Count',            unpaidCount]);
     rows.add(['Paid Count',              paidCount]);
@@ -265,17 +269,14 @@ class ExportService {
   // PDF PRINTING — sends the report directly to a physical printer
   // ════════════════════════════════════════════════════════════════════════════
 
-  // FIX: Removed unused [context] parameter — Printing.layoutPdf doesn't need it.
   static Future<void> printOrdersPdf(List<Order> orders,
       {required String businessName, String? userName}) async {
     await _ensureFonts();
     final pdf = _buildOrdersPdf(orders, businessName: businessName, userName: userName);
-    // layoutPdf triggers the system print dialog
     await Printing.layoutPdf(
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Orders Report');
   }
 
-  // Prints the inventory report via the system print dialog
   static Future<void> printInventoryPdf(List<Product> products,
       {required String businessName, String? userName}) async {
     await _ensureFonts();
@@ -284,7 +285,6 @@ class ExportService {
         onLayout: (_) async => pdf.save(), name: '${AppStrings.appName} Inventory Report');
   }
 
-  // Prints the debts report via the system print dialog
   static Future<void> printDebtsPdf(List<CustomerDebt> debts,
       {required String businessName, String? userName}) async {
     await _ensureFonts();
@@ -297,12 +297,10 @@ class ExportService {
   // PDF DOCUMENT BUILDERS — construct the pw.Document object
   // ════════════════════════════════════════════════════════════════════════════
 
-  // Builds the multi-page orders PDF document with summary boxes and a data table
   static pw.Document _buildOrdersPdf(List<Order> orders,
       {required String businessName, String? subtitle, String? userName}) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
-    // Only delivered orders count as collected revenue
     final revenue = orders
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
@@ -315,7 +313,6 @@ class ExportService {
           subtitle ?? 'Generated: $now', ctx.pageNumber, ctx.pagesCount, userName: userName),
       footer: (ctx) => _footer(businessName),
       build: (ctx) => [
-        // Summary metric boxes at the top of the report
         pw.Row(children: [
           _box('Total Orders', '${orders.length}'),
           pw.SizedBox(width: 12),
@@ -325,7 +322,6 @@ class ExportService {
               '${orders.where((o) => o.status == OrderStatus.pending).length}'),
         ]),
         pw.SizedBox(height: 20),
-        // Data table with alternating row colors for readability
         pw.Table(
           border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           columnWidths: {
@@ -333,12 +329,11 @@ class ExportService {
             1: const pw.FixedColumnWidth(100),
             2: const pw.FixedColumnWidth(75),
             3: const pw.FixedColumnWidth(65),
-            4: const pw.FlexColumnWidth(), // Items column takes remaining space
+            4: const pw.FlexColumnWidth(),
             5: const pw.FixedColumnWidth(80),
           },
           children: [
             _headerRow(['Order ID', 'Customer', 'Date', 'Status', 'Items', 'Total']),
-            // Sort by status priority: Delivered → Utang → Cancelled → Pending → Shipped → Processing
             ...(List<Order>.from(orders)..sort((a, b) {
               const priority = {
                 OrderStatus.delivered:  0,
@@ -353,7 +348,7 @@ class ExportService {
               return pa.compareTo(pb);
             })).asMap().entries.map((e) {
               final o = e.value;
-              final even = e.key % 2 == 0; // Zebra striping for readability
+              final even = e.key % 2 == 0;
               return pw.TableRow(
                 decoration: pw.BoxDecoration(
                     color: even ? PdfColors.grey50 : PdfColors.white),
@@ -369,7 +364,6 @@ class ExportService {
                 ],
               );
             }),
-            // ── TOTAL footer row ──────────────────────────────────────────────
             pw.TableRow(
               decoration: const pw.BoxDecoration(color: PdfColors.grey200),
               children: [
@@ -393,13 +387,11 @@ class ExportService {
     return pdf;
   }
 
-  // Builds the multi-page inventory PDF document
   static pw.Document _buildInventoryPdf(List<Product> products,
       {required String businessName, String? userName}) {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
     final lowStock  = products.where((p) => p.isLowStock).length;
-    // Estimated stock value = sum of (price × qty) for all products
     final totalVal  = products.fold(0.0, (s, p) => s + p.price * p.stockQty);
 
     pdf.addPage(pw.MultiPage(
@@ -421,7 +413,7 @@ class ExportService {
         pw.Table(
           border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
           columnWidths: {
-            0: const pw.FlexColumnWidth(2),   // Name column is widest
+            0: const pw.FlexColumnWidth(2),
             1: const pw.FixedColumnWidth(90),
             2: const pw.FixedColumnWidth(80),
             3: const pw.FixedColumnWidth(55),
@@ -440,7 +432,6 @@ class ExportService {
                   _cell(p.name, bold: true),
                   _cell(p.category.displayName),
                   _cell(_pdfCurrency.format(p.price)),
-                  // Highlight low-stock quantities in red as a visual warning
                   _cell('${p.stockQty}',
                       color: p.isLowStock ? PdfColors.red700 : PdfColors.black),
                   _cell('${p.minStockLevel}'),
@@ -449,7 +440,6 @@ class ExportService {
                 ],
               );
             }),
-            // ── TOTAL footer row ──────────────────────────────────────────────
             pw.TableRow(
               decoration: const pw.BoxDecoration(color: PdfColors.grey200),
               children: [
@@ -471,7 +461,6 @@ class ExportService {
     return pdf;
   }
 
-  // Builds the multi-page debts/utang PDF document
   static pw.Document _buildDebtsPdf(List<CustomerDebt> debts,
       {required String businessName, String? userName}) {
     final pdf = pw.Document();
@@ -526,7 +515,6 @@ class ExportService {
                   _cell(d.orderId),
                   _cell(_pdfCurrency.format(d.totalAmount)),
                   _cell(_pdfCurrency.format(d.amountPaid)),
-                  // Remaining balance: green when paid, red when still owed
                   _cell(_pdfCurrency.format(d.remainingBalance),
                       bold: true,
                       color: d.isPaid ? PdfColors.green700 : PdfColors.red700),
@@ -534,7 +522,6 @@ class ExportService {
                 ],
               );
             }),
-            // ── TOTAL footer row ──────────────────────────────────────────────
             pw.TableRow(
               decoration: const pw.BoxDecoration(color: PdfColors.grey200),
               children: [
@@ -599,7 +586,7 @@ class ExportService {
   }
 
   // Builds the multi-page analytics PDF document:
-  //   Page 1 — Summary KPIs + Orders by Status
+  //   Page 1 — Summary KPIs (with Total Revenue) + Orders by Status
   //   Page 2 — Utang / Debt Records
   //   Page 3 — Top Products by Sales
   static pw.Document _buildAnalyticsPdf({
@@ -611,11 +598,13 @@ class ExportService {
     final pdf = pw.Document();
     final now = _dateTimeFmt.format(DateTime.now());
 
-    // ── Derived values — deliveredRevenue only ────────────────────────────────
+    // ── Derived values ────────────────────────────────────────────────────────
     final deliveredRevenue = orders
         .where((o) => o.status == OrderStatus.delivered)
         .fold(0.0, (s, o) => s + o.totalAmount);
     final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
+    // ── TOTAL REVENUE = Delivered Revenue + Utang Collected ───────────────────
+    final totalRevenue   = deliveredRevenue + utangCollected;
     final totalOrders    = orders.length;
     final deliveredCount = orders.where((o) => o.status == OrderStatus.delivered).length;
     final itemsSold      = orders
@@ -653,30 +642,74 @@ class ExportService {
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColors.grey800)),
         pw.SizedBox(height: 10),
+
+        // ── TOTAL REVENUE highlight box — spans full width ─────────────────
+        pw.Container(
+          width: double.infinity,
+          padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+          decoration: pw.BoxDecoration(
+            color: PdfColors.amber50,
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+            border: pw.Border.all(color: PdfColors.amber700, width: 1.0),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text('TOTAL REVENUE',
+                      style: pw.TextStyle(
+                          fontSize: 9,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.amber800)),
+                  pw.SizedBox(height: 2),
+                  pw.Text('Delivered Revenue + Utang Collected',
+                      style: const pw.TextStyle(
+                          fontSize: 7, color: PdfColors.amber700)),
+                ],
+              ),
+              pw.Text(
+                _pdfCurrency.format(totalRevenue),
+                style: pw.TextStyle(
+                    fontSize: 16,
+                    fontWeight: pw.FontWeight.bold,
+                    color: PdfColors.amber900),
+              ),
+            ],
+          ),
+        ),
+        pw.SizedBox(height: 8),
+
+        // ── Breakdown: Delivered Revenue + Utang Collected side by side ────
         pw.Row(children: [
-          _box('Delivered Revenue', _pdfCurrency.format(deliveredRevenue)),
+          _boxHighlight('Delivered Revenue', _pdfCurrency.format(deliveredRevenue),
+              PdfColors.green50, PdfColors.green700, PdfColors.green800),
           pw.SizedBox(width: 10),
+          _boxHighlight('Utang Collected', _pdfCurrency.format(utangCollected),
+              PdfColors.blue50, PdfColors.blue700, PdfColors.blue800),
+          pw.SizedBox(width: 10),
+          pw.Expanded(child: pw.SizedBox()), // spacer
+        ]),
+        pw.SizedBox(height: 10),
+
+        // ── Other KPI boxes ────────────────────────────────────────────────
+        pw.Row(children: [
           _box('Total Orders',      '$totalOrders'),
           pw.SizedBox(width: 10),
           _box('Delivered',         '$deliveredCount'),
           pw.SizedBox(width: 10),
           _box('Items Sold',        '$itemsSold'),
-        ]),
-        pw.SizedBox(height: 10),
-        pw.Row(children: [
-          _box('Total Paid',        _pdfCurrency.format(utangCollected)),
           pw.SizedBox(width: 10),
           _box('Total Utang',       _pdfCurrency.format(totalDebt)),
-          pw.SizedBox(width: 10),
-          _box('Unpaid',            '$unpaidCount'),
         ]),
         pw.SizedBox(height: 10),
         pw.Row(children: [
+          _box('Unpaid',            '$unpaidCount'),
+          pw.SizedBox(width: 10),
           _box('Paid',              '$paidCount'),
           pw.SizedBox(width: 10),
           _box('Overdue',           '$overdueCount'),
-          pw.SizedBox(width: 10),
-          pw.Expanded(child: pw.SizedBox()),
           pw.SizedBox(width: 10),
           pw.Expanded(child: pw.SizedBox()),
         ]),
@@ -760,7 +793,6 @@ class ExportService {
                 ],
               );
             }),
-            // ── TOTAL footer row ──────────────────────────────────────────────
             pw.TableRow(
               decoration: const pw.BoxDecoration(color: PdfColors.grey200),
               children: [
@@ -818,7 +850,6 @@ class ExportService {
                 ],
               );
             }),
-            // ── TOTAL footer row ──────────────────────────────────────────────
             pw.TableRow(
               decoration: const pw.BoxDecoration(color: PdfColors.grey200),
               children: [
@@ -841,7 +872,6 @@ class ExportService {
   // PDF WIDGET HELPERS — reusable layout components for PDF pages
   // ════════════════════════════════════════════════════════════════════════════
 
-  // Page header: business name, report title, subtitle, and page number
   static pw.Widget _header(String biz, String title, String sub,
           int pageNum, int pageCount, {String? userName}) =>
       pw.Column(children: [
@@ -860,7 +890,6 @@ class ExportService {
               pw.Text('Generated by: $userName',
                   style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
           ]),
-          // Page number shown in the top-right corner
           pw.Text('Page $pageNum / $pageCount',
               style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey500)),
         ]),
@@ -868,7 +897,6 @@ class ExportService {
         pw.SizedBox(height: 8),
       ]);
 
-  // Page footer: confidentiality notice centered at the bottom
   static pw.Widget _footer(String biz) => pw.Column(children: [
         pw.Divider(color: PdfColors.grey300, thickness: 0.5),
         pw.SizedBox(height: 4),
@@ -877,7 +905,7 @@ class ExportService {
             textAlign: pw.TextAlign.center),
       ]);
 
-  // Summary metric box — label on top, bold value below; used in report headers
+  // Standard grey summary box
   static pw.Widget _box(String label, String value) => pw.Expanded(
         child: pw.Container(
           padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -899,7 +927,31 @@ class ExportService {
         ),
       );
 
-  // Dark-background header row for the top of each data table
+  // Colored summary box — used for Delivered Revenue and Utang Collected breakdown
+  static pw.Widget _boxHighlight(
+      String label, String value,
+      PdfColor bg, PdfColor border, PdfColor textColor) =>
+      pw.Expanded(
+        child: pw.Container(
+          padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          decoration: pw.BoxDecoration(
+            color: bg,
+            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
+            border: pw.Border.all(color: border, width: 0.5),
+          ),
+          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+            pw.Text(label,
+                style: pw.TextStyle(fontSize: 8, color: border)),
+            pw.SizedBox(height: 2),
+            pw.Text(value,
+                style: pw.TextStyle(
+                    fontSize: 12,
+                    fontWeight: pw.FontWeight.bold,
+                    color: textColor)),
+          ]),
+        ),
+      );
+
   static pw.TableRow _headerRow(List<String> cols) => pw.TableRow(
         decoration: const pw.BoxDecoration(color: PdfColors.grey800),
         children: cols
@@ -914,7 +966,6 @@ class ExportService {
             .toList(),
       );
 
-  // Single data cell with optional bold and color overrides
   static pw.Widget _cell(String text, {bool bold = false, PdfColor? color}) =>
       pw.Padding(
         padding: const pw.EdgeInsets.symmetric(vertical: 5, horizontal: 6),
@@ -925,7 +976,6 @@ class ExportService {
                 color: color ?? PdfColors.grey800)),
       );
 
-  // Maps an OrderStatus to its corresponding PDF color for the status column
   static PdfColor _statusColor(OrderStatus status) {
     switch (status) {
       case OrderStatus.delivered: return PdfColors.green700;
@@ -940,14 +990,11 @@ class ExportService {
   // FILE I/O HELPERS
   // ════════════════════════════════════════════════════════════════════════════
 
-  /// Writes a CSV file to the temp directory with a UTF-8 BOM so Excel opens
-  /// special characters (₱, accented letters) correctly, then shares it.
   static Future<void> _csvShare(
       List<List<dynamic>> rows, String filename, String subject) async {
     final csv = const ListToCsvConverter().convert(rows);
-    final dir  = await getTemporaryDirectory(); // Platform temp folder
+    final dir  = await getTemporaryDirectory();
     final file = File('${dir.path}/$filename');
-    // BOM (\uFEFF) signals to Excel that this is a UTF-8 file
     await file.writeAsString('\uFEFF$csv', encoding: utf8);
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'text/csv')],
@@ -955,7 +1002,6 @@ class ExportService {
     );
   }
 
-  // Writes PDF bytes to the temp directory then opens the system share sheet
   static Future<void> _pdfShare(
       List<int> bytes, String filename, String subject) async {
     final dir  = await getTemporaryDirectory();

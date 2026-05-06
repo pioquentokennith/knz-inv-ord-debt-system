@@ -186,6 +186,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         mainAxisSpacing: 10,
                         childAspectRatio: cols == 4 ? 1.3 : 1.05,
                         children: [
+                          // Row 0: Total Revenue (Delivered + Utang Collected)
+                          StatCard(
+                            emoji: '💰',
+                            value: currency.format(state.totalRevenue),
+                            label: 'TOTAL REVENUE',
+                            subtitle: 'Delivered + Utang paid',
+                            subtitleColor: AppColors.gold,
+                          ),
                           // Row 1: Revenue + Orders
                           StatCard(
                             emoji: '💵',
