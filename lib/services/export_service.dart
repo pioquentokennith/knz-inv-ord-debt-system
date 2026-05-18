@@ -643,14 +643,14 @@ class ExportService {
                 color: PdfColors.grey800)),
         pw.SizedBox(height: 10),
 
-        // ── TOTAL REVENUE highlight box — spans full width ─────────────────
+        // ── TOTAL REVENUE box — spans full width ──────────────────────────
         pw.Container(
           width: double.infinity,
           padding: const pw.EdgeInsets.symmetric(vertical: 10, horizontal: 14),
           decoration: pw.BoxDecoration(
-            color: PdfColors.amber50,
+            color: PdfColors.grey100,
             borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-            border: pw.Border.all(color: PdfColors.amber700, width: 1.0),
+            border: pw.Border.all(color: PdfColors.grey300, width: 0.5),
           ),
           child: pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -662,11 +662,11 @@ class ExportService {
                       style: pw.TextStyle(
                           fontSize: 9,
                           fontWeight: pw.FontWeight.bold,
-                          color: PdfColors.amber800)),
+                          color: PdfColors.grey600)),
                   pw.SizedBox(height: 2),
                   pw.Text('Delivered Revenue + Utang Collected',
                       style: const pw.TextStyle(
-                          fontSize: 7, color: PdfColors.amber700)),
+                          fontSize: 7, color: PdfColors.grey500)),
                 ],
               ),
               pw.Text(
@@ -674,7 +674,7 @@ class ExportService {
                 style: pw.TextStyle(
                     fontSize: 16,
                     fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.amber900),
+                    color: PdfColors.grey800),
               ),
             ],
           ),
@@ -683,11 +683,9 @@ class ExportService {
 
         // ── Breakdown: Delivered Revenue + Utang Collected side by side ────
         pw.Row(children: [
-          _boxHighlight('Delivered Revenue', _pdfCurrency.format(deliveredRevenue),
-              PdfColors.green50, PdfColors.green700, PdfColors.green800),
+          _box('Delivered Revenue', _pdfCurrency.format(deliveredRevenue)),
           pw.SizedBox(width: 10),
-          _boxHighlight('Utang Collected', _pdfCurrency.format(utangCollected),
-              PdfColors.blue50, PdfColors.blue700, PdfColors.blue800),
+          _box('Utang Collected', _pdfCurrency.format(utangCollected)),
           pw.SizedBox(width: 10),
           pw.Expanded(child: pw.SizedBox()), // spacer
         ]),
@@ -923,31 +921,6 @@ class ExportService {
                     fontSize: 13,
                     fontWeight: pw.FontWeight.bold,
                     color: PdfColors.grey800)),
-          ]),
-        ),
-      );
-
-  // Colored summary box — used for Delivered Revenue and Utang Collected breakdown
-  static pw.Widget _boxHighlight(
-      String label, String value,
-      PdfColor bg, PdfColor border, PdfColor textColor) =>
-      pw.Expanded(
-        child: pw.Container(
-          padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-          decoration: pw.BoxDecoration(
-            color: bg,
-            borderRadius: const pw.BorderRadius.all(pw.Radius.circular(6)),
-            border: pw.Border.all(color: border, width: 0.5),
-          ),
-          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-            pw.Text(label,
-                style: pw.TextStyle(fontSize: 8, color: border)),
-            pw.SizedBox(height: 2),
-            pw.Text(value,
-                style: pw.TextStyle(
-                    fontSize: 12,
-                    fontWeight: pw.FontWeight.bold,
-                    color: textColor)),
           ]),
         ),
       );

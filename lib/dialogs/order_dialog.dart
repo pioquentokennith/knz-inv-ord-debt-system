@@ -38,12 +38,20 @@ class _OrderDialogState extends State<OrderDialog> {
   final _pickedQtyCtrl = TextEditingController(text: '1');
   final _pickedPriceCtrl = TextEditingController();
 
+  // Product search
+  final _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  bool _showSearchResults = false;
+  final _searchFocusNode = FocusNode();
+
   @override
   void dispose() {
     _customerCtrl.dispose();
     _notesCtrl.dispose();
     _pickedQtyCtrl.dispose();
     _pickedPriceCtrl.dispose();
+    _searchCtrl.dispose();
+    _searchFocusNode.dispose();
     super.dispose();
   }
 
@@ -175,7 +183,6 @@ class _OrderDialogState extends State<OrderDialog> {
     final products = AppState().products;
     _pickedProduct ??= products.isNotEmpty ? products.first : null;
     final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-
     return Dialog(
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -218,37 +225,159 @@ class _OrderDialogState extends State<OrderDialog> {
                   const Text('ADD PRODUCT TO ORDER',
                       style: AppTextStyles.labelSmall),
                   const SizedBox(height: 10),
-                  // Product dropdown (no price shown)
-                  Container(
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppColors.cardBorder),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<Product>(
-                        value: _pickedProduct,
-                        isExpanded: true,
-                        dropdownColor: AppColors.surfaceElevated,
-                        style: const TextStyle(
-                            color: AppColors.white, fontSize: 14),
-                        icon: const Icon(Icons.keyboard_arrow_down,
-                            color: AppColors.whiteTertiary),
-                        items: products
-                            .map((p) => DropdownMenuItem(
-                                  value: p,
-                                  child: Text(
-                                    '${p.name} (${p.stockQty} left)',
-                                    overflow: TextOverflow.ellipsis,
+                  // ── Product Search Bar ──────────────────────────────
+                  Builder(builder: (context) {
+                    final allProducts = AppState().products;
+                    final filtered = _searchQuery.isEmpty
+                        ? allProducts
+                        : allProducts
+                            .where((p) => p.name
+                                .toLowerCase()
+                                .contains(_searchQuery.toLowerCase()))
+                            .toList();
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Search text field
+                        TextField(
+                          controller: _searchCtrl,
+                          focusNode: _searchFocusNode,
+                          style: const TextStyle(
+                              color: AppColors.white, fontSize: 14),
+                          onChanged: (v) => setState(() {
+                            _searchQuery = v;
+                            _showSearchResults = v.isNotEmpty || _searchFocusNode.hasFocus;
+                          }),
+                          onTap: () => setState(
+                              () => _showSearchResults = true),
+                          decoration: InputDecoration(
+                            hintText: _pickedProduct != null
+                                ? '${_pickedProduct!.name} (${_pickedProduct!.stockQty} left)'
+                                : 'Search product...',
+                            hintStyle: TextStyle(
+                              color: _pickedProduct != null
+                                  ? AppColors.white
+                                  : AppColors.whiteTertiary,
+                              fontSize: 13,
+                            ),
+                            prefixIcon: const Icon(Icons.search,
+                                color: AppColors.whiteTertiary, size: 18),
+                            suffixIcon: _searchQuery.isNotEmpty
+                                ? GestureDetector(
+                                    onTap: () => setState(() {
+                                      _searchCtrl.clear();
+                                      _searchQuery = '';
+                                      _showSearchResults = false;
+                                      _searchFocusNode.unfocus();
+                                    }),
+                                    child: const Icon(Icons.close,
+                                        color: AppColors.whiteTertiary,
+                                        size: 16),
+                                  )
+                                : null,
+                            filled: true,
+                            fillColor: AppColors.surface,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(
+                                  color: AppColors.cardBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(
+                                  color: AppColors.cardBorder),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide:
+                                  const BorderSide(color: AppColors.gold),
+                            ),
+                          ),
+                        ),
+                        // Search Results Dropdown
+                        if (_showSearchResults) ...[
+                          const SizedBox(height: 4),
+                          Container(
+                            constraints:
+                                const BoxConstraints(maxHeight: 200),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceElevated,
+                              borderRadius: BorderRadius.circular(8),
+                              border:
+                                  Border.all(color: AppColors.cardBorder),
+                            ),
+                            child: filtered.isEmpty
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: Text('No products found',
+                                        style: TextStyle(
+                                            color:
+                                                AppColors.whiteTertiary,
+                                            fontSize: 13)),
+                                  )
+                                : ListView.separated(
+                                    shrinkWrap: true,
+                                    itemCount: filtered.length,
+                                    separatorBuilder: (_, __) =>
+                                        const Divider(
+                                            color: AppColors.divider,
+                                            height: 1),
+                                    itemBuilder: (ctx, idx) {
+                                      final p = filtered[idx];
+                                      final isSelected =
+                                          _pickedProduct?.id == p.id;
+                                      return GestureDetector(
+                                        onTap: () => setState(() {
+                                          _pickedProduct = p;
+                                          _searchCtrl.clear();
+                                          _searchQuery = '';
+                                          _showSearchResults = false;
+                                          _searchFocusNode.unfocus();
+                                        }),
+                                        child: Container(
+                                          padding:
+                                              const EdgeInsets.symmetric(
+                                                  horizontal: 12,
+                                                  vertical: 10),
+                                          color: isSelected
+                                              ? AppColors.gold
+                                                  .withValues(alpha: 0.1)
+                                              : Colors.transparent,
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  '${p.name} (${p.stockQty} left)',
+                                                  style: TextStyle(
+                                                    color: isSelected
+                                                        ? AppColors.gold
+                                                        : AppColors.white,
+                                                    fontSize: 13,
+                                                    fontWeight: isSelected
+                                                        ? FontWeight.w600
+                                                        : FontWeight
+                                                            .normal,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (isSelected)
+                                                const Icon(Icons.check,
+                                                    color: AppColors.gold,
+                                                    size: 16),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
                                   ),
-                                ))
-                            .toList(),
-                        onChanged: (v) =>
-                            setState(() => _pickedProduct = v),
-                      ),
-                    ),
-                  ),
+                          ),
+                        ],
+                      ],
+                    );
+                  }),
                   const SizedBox(height: 10),
                   // Price field
                   TextField(
