@@ -17,6 +17,7 @@ import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../core/app_constants.dart';
 import '../models/order_model.dart';
+import '../models/payment_method_model.dart';
 import '../widgets/receipt_shared_widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ class OrderReceiptPrinter {
           styles: const PosStyles()),
       // Amount: double-size only on the value — the one number that matters
       PosColumn(
-          text: _cur.format(order.totalAmount),
+          text: _cur.format(order.customerPayAmount),
           width: 7,
           styles: const PosStyles(
               bold: true,
@@ -243,6 +244,29 @@ class _OrderReceiptPreview extends StatelessWidget {
           ReceiptInfoRow(label: 'Customer', value: order.customerName),
           const SizedBox(height: 8),
           ReceiptInfoRow(label: 'Date', value: dateFmt.format(order.orderDate)),
+          // ── Payment method row ─────────────────────────────────────
+          if (order.paymentMethod != null) ...[
+            const SizedBox(height: 8),
+            ReceiptInfoRow(
+              label: 'Payment',
+              value: order.paymentMethod!.displayName +
+                  (order.paymentReference != null
+                      ? '  ···${order.paymentReference}'
+                      : ''),
+            ),
+          ],
+          // ── Reseller discount row ──────────────────────────────────
+          if (order.isReseller) ...[
+            const SizedBox(height: 8),
+            ReceiptInfoRow(
+              label: 'Discount',
+              value: '−₱${order.deductionPerItem.toStringAsFixed(0)}/item Reseller',
+              valueStyle: const TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13),
+            ),
+          ],
           // ── Account row (only shown when userName is provided) ─────
           if (userName.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -325,22 +349,64 @@ class _OrderReceiptPreview extends StatelessWidget {
 
       // ── Total ─────────────────────────────────────────────────────
       ReceiptSection(
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('TOTAL',
-                style: TextStyle(
-                    color: AppColors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 2)),
-            Text(cur.format(total),
-                style: const TextStyle(
-                    color: AppColors.gold,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800)),
-          ],
-        ),
+        child: order.isReseller
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('SRP TOTAL',
+                          style: TextStyle(
+                              color: AppColors.whiteTertiary,
+                              fontSize: 12,
+                              letterSpacing: 1.5)),
+                      Text(
+                        cur.format(order.totalAmount),
+                        style: const TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 14,
+                            decoration: TextDecoration.lineThrough),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'NET (−₱${order.deductionPerItem.toStringAsFixed(0)}/item)',
+                        style: const TextStyle(
+                            color: AppColors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 2),
+                      ),
+                      Text(cur.format(order.discountedTotal),
+                          style: const TextStyle(
+                              color: AppColors.gold,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800)),
+                    ],
+                  ),
+                ],
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('TOTAL',
+                      style: TextStyle(
+                          color: AppColors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 2)),
+                  Text(cur.format(total),
+                      style: const TextStyle(
+                          color: AppColors.gold,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800)),
+                ],
+              ),
       ),
       const ReceiptDivider(),
 

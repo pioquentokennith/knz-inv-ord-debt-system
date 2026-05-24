@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// database_helper.dart — v5: Performance indexes
+// database_helper.dart — v6: Resellers, custom_orders, v6 column additions
 // Purpose : Singleton wrapper around the SQLite database.
-//           Manages schema creation (v1) and all incremental migrations (v2–v5).
-// Changes from v4:
-//   • products  — added index on (user_id, is_deleted) for faster queries
-//   • orders    — added index on (user_id, is_deleted) for faster queries
-//   • debts     — added index on (user_id, is_deleted) for faster queries
-//   • onUpgrade — v4→v5 migration adds the new indexes safely
+// Changes from v5:
+//   • orders     — added payment_method, payment_reference, is_reseller,
+//                  discount_percent, discounted_total, order_type
+//   • resellers  — NEW table for reseller entities
+//   • custom_orders — NEW table (Feature 5, referenced here for completeness)
+//   • onUpgrade  — v5→v6 migration block
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:sqflite/sqflite.dart';
@@ -31,30 +31,30 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 5, // v5 — added indexes for performance
-      onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'), // Enforce FK constraints
-      onCreate: _onCreate,     // Called when DB is first created (fresh install)
-      onUpgrade: _onUpgrade,   // Called when version number increases
+      version: 7, // v7 — srp_price added to order_items for sales table accuracy
+      onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
+      onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
-  // Creates all tables and indexes for a brand-new database install (version 1 → 5)
+  // Creates all tables for a brand-new install (version 1 → 6)
   Future<void> _onCreate(Database db, int version) async {
-    // users — one row per registered admin account
+    // users
     await db.execute('''
       CREATE TABLE users (
         id TEXT PRIMARY KEY,
         username TEXT NOT NULL UNIQUE,
-        password TEXT NOT NULL,        -- Stored as SHA-256 hash (never plaintext)
+        password TEXT NOT NULL,
         name TEXT NOT NULL,
         email TEXT,
         role TEXT NOT NULL DEFAULT 'Administrator',
-        is_synced INTEGER NOT NULL DEFAULT 0, -- 1 = pushed to Firestore
+        is_synced INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL
       )
     ''');
 
-    // products — fragrance catalog entries owned by a user
+    // products
     await db.execute('''
       CREATE TABLE products (
         id TEXT PRIMARY KEY,
@@ -63,113 +63,152 @@ class DatabaseHelper {
         category TEXT NOT NULL,
         price REAL NOT NULL DEFAULT 0,
         stock_qty INTEGER NOT NULL DEFAULT 0,
-        min_stock_level INTEGER NOT NULL DEFAULT 5, -- Triggers low-stock alert
+        min_stock_level INTEGER NOT NULL DEFAULT 5,
         image_path TEXT,
         created_at TEXT NOT NULL,
-        user_id TEXT NOT NULL,          -- Foreign key to users.id (logical only)
-        is_deleted INTEGER NOT NULL DEFAULT 0, -- 0 = active, 1 = in Recycle Bin
-        deleted_at TEXT                 -- ISO-8601 timestamp of soft-delete
-      )
-    ''');
-
-    // orders — customer purchase records
-    await db.execute('''
-      CREATE TABLE orders (
-        id TEXT PRIMARY KEY,
-        order_id TEXT NOT NULL,         -- Human-readable ID e.g. "KNZ-042"
-        customer_name TEXT NOT NULL,
-        total_amount REAL NOT NULL,
-        status TEXT NOT NULL,           -- Pending/Processing/Shipped/Delivered/etc.
-        order_date TEXT NOT NULL,
-        notes TEXT,
         user_id TEXT NOT NULL,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT
       )
     ''');
 
-    // order_items — line items for each order (one row per product per order)
+    // orders — includes v6 payment + reseller + order-type columns
+    await db.execute('''
+      CREATE TABLE orders (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        customer_name TEXT NOT NULL,
+        total_amount REAL NOT NULL,
+        status TEXT NOT NULL,
+        order_date TEXT NOT NULL,
+        notes TEXT,
+        user_id TEXT NOT NULL,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        deleted_at TEXT,
+        payment_method TEXT,
+        payment_reference TEXT,
+        is_reseller INTEGER NOT NULL DEFAULT 0,
+        discount_percent REAL NOT NULL DEFAULT 0,
+        discounted_total REAL,
+        order_type TEXT NOT NULL DEFAULT 'regular'
+      )
+    ''');
+
+    // order_items
     await db.execute('''
       CREATE TABLE order_items (
         id TEXT PRIMARY KEY,
         order_id TEXT NOT NULL,
         product_id TEXT NOT NULL,
-        product_name TEXT NOT NULL,     -- Denormalized so name persists after product edits
+        product_name TEXT NOT NULL,
         unit_price REAL NOT NULL,
+        srp_price REAL,
         quantity INTEGER NOT NULL,
         FOREIGN KEY (order_id) REFERENCES orders (id) ON DELETE CASCADE
       )
     ''');
 
-    // debts — utang / credit records per customer
+    // debts
     await db.execute('''
       CREATE TABLE debts (
         id TEXT PRIMARY KEY,
         customer_name TEXT NOT NULL,
-        order_id TEXT NOT NULL,         -- Links debt to the originating order
+        order_id TEXT NOT NULL,
         total_amount REAL NOT NULL,
-        amount_paid REAL NOT NULL DEFAULT 0, -- Running total of all payments made
+        amount_paid REAL NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         user_id TEXT NOT NULL,
         is_deleted INTEGER NOT NULL DEFAULT 0,
-        deleted_at TEXT
+        deleted_at TEXT,
+        interest_rate REAL NOT NULL DEFAULT 0,
+        interest_type TEXT DEFAULT 'none',
+        interest_start_date TEXT
       )
     ''');
 
-    // payments — individual payment installments against a debt
+    // payments
     await db.execute('''
       CREATE TABLE payments (
         id TEXT PRIMARY KEY,
         debt_id TEXT NOT NULL,
         amount REAL NOT NULL,
         paid_at TEXT NOT NULL,
-        note TEXT,                      -- Optional note from collector
+        note TEXT,
         FOREIGN KEY (debt_id) REFERENCES debts (id) ON DELETE CASCADE
       )
     ''');
 
-    // activity_logs — audit trail of all user actions (add, update, delete, login)
+    // activity_logs
     await db.execute('''
       CREATE TABLE activity_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         message TEXT NOT NULL,
-        type TEXT NOT NULL,             -- e.g. 'auth', 'product', 'order', 'payment'
+        type TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         user_id TEXT NOT NULL
       )
     ''');
 
-    // sync_queue — offline operations waiting to be pushed to Firestore
+    // sync_queue
     await db.execute('''
       CREATE TABLE sync_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        operation TEXT NOT NULL,        -- e.g. 'save_product', 'soft_delete_order'
-        collection TEXT NOT NULL,       -- Firestore collection name
+        operation TEXT NOT NULL,
+        collection TEXT NOT NULL,
         user_id TEXT NOT NULL,
-        doc_id TEXT NOT NULL,           -- Firestore document ID
-        data TEXT NOT NULL,             -- JSON-encoded payload
+        doc_id TEXT NOT NULL,
+        data TEXT NOT NULL,
         created_at TEXT NOT NULL
       )
     ''');
 
-    // ── v5: Indexes — speed up WHERE clauses used in every getAll() call ────
-    // Composite indexes on (user_id, is_deleted) cover the most common filter
-    await db.execute('CREATE INDEX idx_products_user    ON products(user_id, is_deleted)');
-    await db.execute('CREATE INDEX idx_orders_user      ON orders(user_id, is_deleted)');
-    await db.execute('CREATE INDEX idx_order_items_order ON order_items(order_id)'); // JOIN key
-    await db.execute('CREATE INDEX idx_debts_user       ON debts(user_id, is_deleted)');
-    await db.execute('CREATE INDEX idx_payments_debt    ON payments(debt_id)');       // JOIN key
-    await db.execute('CREATE INDEX idx_logs_user        ON activity_logs(user_id)');
+    // resellers (v6)
+    await db.execute('''
+      CREATE TABLE resellers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        contact TEXT,
+        discount_percent REAL NOT NULL DEFAULT 0,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        is_deleted INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    // custom_orders (v6 — Feature 5 placeholder, fully used in Phase 3)
+    await db.execute('''
+      CREATE TABLE custom_orders (
+        id TEXT PRIMARY KEY,
+        customer_name TEXT NOT NULL,
+        contact TEXT,
+        fragrance_specs TEXT NOT NULL,
+        agreed_price REAL NOT NULL,
+        deposit_paid REAL NOT NULL DEFAULT 0,
+        delivery_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pending',
+        terms TEXT,
+        user_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        is_deleted INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    // ── v5/v6 indexes ─────────────────────────────────────────────────────
+    await db.execute('CREATE INDEX idx_products_user       ON products(user_id, is_deleted)');
+    await db.execute('CREATE INDEX idx_orders_user         ON orders(user_id, is_deleted)');
+    await db.execute('CREATE INDEX idx_order_items_order   ON order_items(order_id)');
+    await db.execute('CREATE INDEX idx_debts_user          ON debts(user_id, is_deleted)');
+    await db.execute('CREATE INDEX idx_payments_debt       ON payments(debt_id)');
+    await db.execute('CREATE INDEX idx_logs_user           ON activity_logs(user_id)');
+    await db.execute('CREATE INDEX idx_resellers_user      ON resellers(user_id, is_deleted)');
   }
 
-  // Incremental migrations — each block runs only once when upgrading from an older version
+  // Incremental migrations
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // v1 → v2: Added email and is_synced columns to users
     if (oldVersion < 2) {
       try { await db.execute('ALTER TABLE users ADD COLUMN email TEXT'); } catch (_) {}
       try { await db.execute('ALTER TABLE users ADD COLUMN is_synced INTEGER NOT NULL DEFAULT 0'); } catch (_) {}
     }
-    // v2 → v3: Added sync_queue table for offline Firestore batching
     if (oldVersion < 3) {
       try {
         await db.execute('''
@@ -185,9 +224,7 @@ class DatabaseHelper {
         ''');
       } catch (_) {}
     }
-    // v3 → v4: Added soft-delete columns to products, orders, and debts
     if (oldVersion < 4) {
-      // Soft-delete columns — safe to run on any existing DB
       for (final stmt in [
         'ALTER TABLE products ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
         'ALTER TABLE products ADD COLUMN deleted_at TEXT',
@@ -195,23 +232,75 @@ class DatabaseHelper {
         'ALTER TABLE orders  ADD COLUMN deleted_at TEXT',
         'ALTER TABLE debts   ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0',
         'ALTER TABLE debts   ADD COLUMN deleted_at TEXT',
-      ]) {
-        try { await db.execute(stmt); } catch (_) {} // Ignore if column already exists
-      }
+      ]) { try { await db.execute(stmt); } catch (_) {} }
     }
-    // v4 → v5: Added performance indexes for common WHERE / JOIN clauses
     if (oldVersion < 5) {
-      // Add performance indexes — CREATE INDEX IF NOT EXISTS is safe to repeat
       for (final stmt in [
-        'CREATE INDEX IF NOT EXISTS idx_products_user    ON products(user_id, is_deleted)',
-        'CREATE INDEX IF NOT EXISTS idx_orders_user      ON orders(user_id, is_deleted)',
-        'CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)',
-        'CREATE INDEX IF NOT EXISTS idx_debts_user       ON debts(user_id, is_deleted)',
-        'CREATE INDEX IF NOT EXISTS idx_payments_debt    ON payments(debt_id)',
-        'CREATE INDEX IF NOT EXISTS idx_logs_user        ON activity_logs(user_id)',
-      ]) {
-        try { await db.execute(stmt); } catch (_) {}
-      }
+        'CREATE INDEX IF NOT EXISTS idx_products_user       ON products(user_id, is_deleted)',
+        'CREATE INDEX IF NOT EXISTS idx_orders_user         ON orders(user_id, is_deleted)',
+        'CREATE INDEX IF NOT EXISTS idx_order_items_order   ON order_items(order_id)',
+        'CREATE INDEX IF NOT EXISTS idx_debts_user          ON debts(user_id, is_deleted)',
+        'CREATE INDEX IF NOT EXISTS idx_payments_debt       ON payments(debt_id)',
+        'CREATE INDEX IF NOT EXISTS idx_logs_user           ON activity_logs(user_id)',
+      ]) { try { await db.execute(stmt); } catch (_) {} }
+    }
+    // ── v5 → v6 ─────────────────────────────────────────────────────────────
+    if (oldVersion < 6) {
+      // Extend orders with payment + reseller + order-type columns
+      for (final stmt in [
+        'ALTER TABLE orders ADD COLUMN payment_method TEXT',
+        'ALTER TABLE orders ADD COLUMN payment_reference TEXT',
+        'ALTER TABLE orders ADD COLUMN is_reseller INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE orders ADD COLUMN discount_percent REAL NOT NULL DEFAULT 0',
+        'ALTER TABLE orders ADD COLUMN discounted_total REAL',
+        "ALTER TABLE orders ADD COLUMN order_type TEXT NOT NULL DEFAULT 'regular'",
+        // Extend debts with interest columns
+        'ALTER TABLE debts ADD COLUMN interest_rate REAL NOT NULL DEFAULT 0',
+        "ALTER TABLE debts ADD COLUMN interest_type TEXT DEFAULT 'none'",
+        'ALTER TABLE debts ADD COLUMN interest_start_date TEXT',
+      ]) { try { await db.execute(stmt); } catch (_) {} }
+
+      // New tables
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS resellers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            contact TEXT,
+            discount_percent REAL NOT NULL DEFAULT 0,
+            user_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_deleted INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_resellers_user ON resellers(user_id, is_deleted)'
+        );
+      } catch (_) {}
+
+      try {
+        await db.execute('''
+          CREATE TABLE IF NOT EXISTS custom_orders (
+            id TEXT PRIMARY KEY,
+            customer_name TEXT NOT NULL,
+            contact TEXT,
+            fragrance_specs TEXT NOT NULL,
+            agreed_price REAL NOT NULL,
+            deposit_paid REAL NOT NULL DEFAULT 0,
+            delivery_date TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'Pending',
+            terms TEXT,
+            user_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_deleted INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+      } catch (_) {}
+    }
+    // ── v6 → v7 ─────────────────────────────────────────────────────────────
+    if (oldVersion < 7) {
+      // Add srp_price to order_items so Sales Table can show both SRP and actual price
+      try { await db.execute('ALTER TABLE order_items ADD COLUMN srp_price REAL'); } catch (_) {}
     }
   }
 }

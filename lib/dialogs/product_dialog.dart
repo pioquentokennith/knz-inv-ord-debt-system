@@ -132,9 +132,7 @@ class _ProductDialogState extends State<ProductDialog> {
   Future<void> _submit() async {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Product name is required')),
-      );
+      KnzToast.warning(context, 'Product name is required.');
       return;
     }
 
@@ -153,6 +151,7 @@ class _ProductDialogState extends State<ProductDialog> {
           ? 'Save changes to "$name"?'
           : 'Add "$name" to inventory?',
       confirmLabel: actionLabel,
+      icon: _isEditing ? Icons.edit_rounded : Icons.add_box_rounded,
     );
     if (!confirmed || !mounted) {
       setState(() => _isSaving = false);
@@ -169,9 +168,13 @@ class _ProductDialogState extends State<ProductDialog> {
           price:         price,
           stockQty:      stock,
           minStockLevel: minStock,
-          imagePath:     _imagePath, // local path or null
+          imagePath:     _imagePath,
         );
         await AppState().updateProduct(updated);
+        if (mounted) {
+          Navigator.pop(context);
+          KnzToast.success(context, '✏️ "$name" updated successfully.');
+        }
       } else {
         final product = Product(
           id:            const Uuid().v4(),
@@ -181,11 +184,14 @@ class _ProductDialogState extends State<ProductDialog> {
           price:         price,
           stockQty:      stock,
           minStockLevel: minStock,
-          imagePath:     _imagePath, // local path or null
+          imagePath:     _imagePath,
         );
         await AppState().addProduct(product);
+        if (mounted) {
+          Navigator.pop(context);
+          KnzToast.success(context, '✅ "$name" added to inventory.');
+        }
       }
-      if (mounted) Navigator.pop(context);
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }

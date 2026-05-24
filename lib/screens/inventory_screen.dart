@@ -57,32 +57,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
     return list;
   }
 
-  // Shows a confirmation AlertDialog then calls AppState.deleteProduct()
-  // to soft-delete the product (moves it to the Recycle Bin).
+  // Shows a confirmation dialog then soft-deletes the product (Recycle Bin).
   void _deleteProduct(Product p) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text('Delete Product',
-            style: TextStyle(color: AppColors.white)),
-        content: Text('Remove "${p.name}" from inventory?',
-            style: const TextStyle(color: AppColors.whiteSecondary)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppColors.whiteTertiary)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete',
-                style: TextStyle(color: AppColors.error)),
-          ),
-        ],
-      ),
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Delete Product',
+      message: 'Remove "${p.name}" from inventory? It can be restored from the Recycle Bin.',
+      confirmLabel: 'Delete',
+      confirmColor: AppColors.error,
+      icon: Icons.delete_outline_rounded,
     );
-    if (confirm == true) await AppState().deleteProduct(p.id);
+    if (!confirm || !mounted) return;
+    await AppState().deleteProduct(p.id);
+    if (mounted) KnzToast.error(context, '🗑️ "${p.name}" moved to Recycle Bin.');
   }
 
   @override
@@ -277,7 +264,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                   duration: const Duration(milliseconds: 300),
                                   child: SlideAnimation(
                                     horizontalOffset: 30,
-                                    child: FadeInAnimation(
+                                    child: KnzFadeIn(
                                       child: isWide
                                           ? _ProductRowWide(
                                               index: i + 1,

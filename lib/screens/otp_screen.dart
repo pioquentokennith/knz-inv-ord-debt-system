@@ -17,6 +17,7 @@ import 'package:animate_do/animate_do.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_dotenv/flutter_dotenv.dart'; 
 import '../core/app_constants.dart';
+import '../widgets/shared_widgets.dart';
 
 enum OtpPurpose { register, resetPassword }
 
@@ -235,23 +236,11 @@ class _OtpScreenState extends State<OtpScreen> {
 
   void _showSnack(String msg, {required bool isError}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      backgroundColor:
-          isError ? AppColors.error : AppColors.surfaceElevated,
-      duration: const Duration(seconds: 4),
-      content: Row(children: [
-        Icon(
-          isError ? Icons.error_outline : Icons.mark_email_read_outlined,
-          color: isError ? AppColors.white : AppColors.gold,
-          size: 16,
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(msg,
-              style: const TextStyle(color: AppColors.white, fontSize: 13)),
-        ),
-      ]),
-    ));
+    if (isError) {
+      KnzToast.error(context, msg);
+    } else {
+      KnzToast.info(context, msg);
+    }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────

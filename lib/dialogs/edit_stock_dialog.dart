@@ -44,7 +44,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
       backgroundColor: AppColors.surface,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -130,10 +130,14 @@ class _EditStockDialogState extends State<EditStockDialog> {
                         message:
                             'Set stock for "${widget.product.name}" to $v units?',
                         confirmLabel: 'Update',
+                        icon: Icons.inventory_2_rounded,
                       );
                       if (!confirmed || !context.mounted) return;
                       await AppState().updateStock(widget.product.id, v);
-                      if (context.mounted) Navigator.pop(context);
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        KnzToast.success(context, '📦 Stock for "${widget.product.name}" set to $v units.');
+                      }
                     },
                   ),
                 ),

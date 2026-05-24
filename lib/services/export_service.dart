@@ -22,6 +22,7 @@ import 'package:share_plus/share_plus.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/debt_model.dart';
+import '../models/custom_order_model.dart';
 import '../core/app_constants.dart';
 
 // All methods are static — ExportService is a namespace, not an instance
@@ -76,7 +77,7 @@ class ExportService {
         o.status.displayName,
         // Join multiple items into a single readable cell
         o.items.map((i) => '${i.productName} x${i.quantity}').join(' | '),
-        o.totalAmount.toStringAsFixed(2), // Plain number — Excel can sum these
+        o.customerPayAmount.toStringAsFixed(2), // FIX: was totalAmount (SRP for resellers)
         o.notes ?? '',
       ]);
     }
@@ -144,10 +145,10 @@ class ExportService {
     rows.add(['=== ANALYTICS SUMMARY ===', 'Generated: $now']);
     rows.add(['Metric', 'Value']);
 
-    // Mirror app_state.dart: deliveredRevenue = delivered orders only
+    // Mirror app_state.dart: deliveredRevenue = delivered orders only (net, not SRP)
     final deliveredRevenue = orders
         .where((o) => o.status == OrderStatus.delivered)
-        .fold(0.0, (s, o) => s + o.totalAmount);
+        .fold(0.0, (s, o) => s + o.customerPayAmount); // FIX: was o.totalAmount (SRP for resellers)
     final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
     // ── TOTAL REVENUE = Delivered Revenue + Utang Collected ───────────────────
     final totalRevenue   = deliveredRevenue + utangCollected;
@@ -303,7 +304,7 @@ class ExportService {
     final now = _dateTimeFmt.format(DateTime.now());
     final revenue = orders
         .where((o) => o.status == OrderStatus.delivered)
-        .fold(0.0, (s, o) => s + o.totalAmount);
+        .fold(0.0, (s, o) => s + o.customerPayAmount); // FIX: was o.totalAmount (SRP for resellers)
 
     pdf.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.a4,
@@ -360,7 +361,7 @@ class ExportService {
                   _cell(o.items
                       .map((i) => '${i.productName} x${i.quantity}')
                       .join(', ')),
-                  _cell(_pdfCurrency.format(o.totalAmount), bold: true),
+                  _cell(_pdfCurrency.format(o.customerPayAmount), bold: true), // FIX: was totalAmount
                 ],
               );
             }),
@@ -374,7 +375,7 @@ class ExportService {
                 _cell(''),
                 _cell(
                   _pdfCurrency.format(
-                      orders.fold(0.0, (s, o) => s + o.totalAmount)),
+                      orders.fold(0.0, (s, o) => s + o.customerPayAmount)), // FIX: was totalAmount
                   bold: true,
                   color: PdfColors.grey800,
                 ),
@@ -601,7 +602,7 @@ class ExportService {
     // ── Derived values ────────────────────────────────────────────────────────
     final deliveredRevenue = orders
         .where((o) => o.status == OrderStatus.delivered)
-        .fold(0.0, (s, o) => s + o.totalAmount);
+        .fold(0.0, (s, o) => s + o.customerPayAmount); // FIX: was o.totalAmount (SRP for resellers)
     final utangCollected = debts.fold(0.0, (s, d) => s + d.amountPaid);
     // ── TOTAL REVENUE = Delivered Revenue + Utang Collected ───────────────────
     final totalRevenue   = deliveredRevenue + utangCollected;
@@ -957,6 +958,31 @@ class ExportService {
       case OrderStatus.utang:     return PdfColors.amber700;
       default:                    return PdfColors.grey700;
     }
+  }
+
+  // ── Custom Orders CSV export (Feature 5 / Feature 6) ─────────────────────
+
+  /// Exports all custom perfume agreements to CSV.
+  static Future<void> exportCustomOrdersCsv(List<CustomOrder> orders) async {
+    final rows = <List<dynamic>>[
+      ['Customer', 'Contact', 'Fragrance Specs', 'Agreed Price (PHP)',
+       'Deposit Paid (PHP)', 'Balance Due (PHP)', 'Delivery Date', 'Status', 'Terms'],
+    ];
+    for (final o in orders) {
+      rows.add([
+        o.customerName,
+        o.contact ?? '',
+        o.fragranceSpecs,
+        o.agreedPrice.toStringAsFixed(2),
+        o.depositPaid.toStringAsFixed(2),
+        o.balanceDue.toStringAsFixed(2),
+        _dateFormat.format(o.deliveryDate),
+        o.status.displayName,
+        o.terms ?? '',
+      ]);
+    }
+    await _csvShare(rows, 'KNZ_CustomOrders_${_dateFormat.format(DateTime.now())}.csv',
+        'KNZ Scent — Custom Orders');
   }
 
   // ════════════════════════════════════════════════════════════════════════════

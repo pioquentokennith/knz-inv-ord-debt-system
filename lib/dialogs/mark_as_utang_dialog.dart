@@ -1,14 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// mark_as_utang_dialog.dart
-// Purpose : Dialog for converting a completed order into a debt (utang) record.
-// Function: First checks if the order already has an existing debt record to prevent
-//           duplicates. If not, shows a form where the admin can enter an initial
-//           payment amount (0 if nothing was paid). Validates the amount, shows a
-//           confirmation dialog, then creates a CustomerDebt record in AppState.
-//           Updates the order status to 'utang' and auto-navigates to the Utang tab.
-// Usage   : MarkAsUtangDialog.show(context, order);
+// mark_as_utang_dialog.dart  (v6: optional interest rate fields added)
+// Purpose : Converts a completed order into a debt record.
+//           v6 adds: interest rate %, type (daily/monthly/none), start date.
 // ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../core/app_constants.dart';
@@ -23,34 +19,13 @@ class MarkAsUtangDialog extends StatefulWidget {
 
   const MarkAsUtangDialog({super.key, required this.order});
 
-  // Factory method that checks for an existing debt record before opening the dialog.
-  // Shows a snackbar error and returns early if a duplicate is found.
   static void show(BuildContext context, Order order) {
-    // ── DUPLICATE CHECK ───────────────────────────────────────────────────
-    // Bago buksan ang dialog, tingnan kung may existing na utang ang order.
-    // Kung mayroon na, ipakita lang ang error snackbar — hindi na bubuksan
-    // ang dialog para hindi malito ang admin/user.
-    final alreadyExists = AppState()
-        .debts
-        .any((d) => d.orderId == order.orderId);
-
+    final alreadyExists = AppState().debts.any((d) => d.orderId == order.orderId);
     if (alreadyExists) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: AppColors.error,
-          content: Text(
-            'May utang na ang order na ito. Hindi pwedeng mag-record ulit.',
-            style: TextStyle(color: AppColors.white),
-          ),
-        ),
-      );
-      return; // ← hindi na bubuksan ang dialog
+      KnzToast.error(context, 'May utang na ang order na ito. Hindi pwedeng mag-record ulit.');
+      return;
     }
-
-    showDialog(
-      context: context,
-      builder: (_) => MarkAsUtangDialog(order: order),
-    );
+    showDialog(context: context, builder: (_) => MarkAsUtangDialog(order: order));
   }
 
   @override
@@ -58,23 +33,26 @@ class MarkAsUtangDialog extends StatefulWidget {
 }
 
 class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
-  final _amountCtrl = TextEditingController();
+  final _amountCtrl      = TextEditingController();
+  final _interestCtrl    = TextEditingController(text: '0');
   final _uuid = const Uuid();
   String? _error;
 
-  // Calculates the total order amount by summing all item subtotals
-  double get _orderTotal =>
-      widget.order.items.fold(0.0, (sum, i) => sum + i.subtotal);
+  // v6 interest
+  String _interestType = 'none'; // 'none' | 'daily' | 'monthly'
+
+  // Use order.discountedTotal — this is the actual net amount the customer owes.
+  // For reseller orders: totalAmount = SRP, discountedTotal = net selling price.
+  // For regular orders: discountedTotal falls back to totalAmount (no difference).
+  double get _orderTotal => widget.order.discountedTotal;
 
   @override
   void dispose() {
     _amountCtrl.dispose();
+    _interestCtrl.dispose();
     super.dispose();
   }
 
-  // Validates the initial payment amount, confirms with the user, creates
-  // a CustomerDebt record, updates the order status to 'utang', then
-  // navigates to the Utang tab automatically.
   Future<void> _submit() async {
     final initialPaid = double.tryParse(_amountCtrl.text.trim()) ?? 0;
 
@@ -88,71 +66,60 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
       return;
     }
 
-    // ── Confirmation prompt ───────────────────────────────────────────────
-    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    final interestRate = double.tryParse(_interestCtrl.text.trim()) ?? 0;
+    if (interestRate < 0) {
+      setState(() => _error = 'Interest rate cannot be negative.');
+      return;
+    }
+
+    final currency  = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     final remaining = _orderTotal - initialPaid;
-    final confirmed = await showConfirmDialog(
-      context,
-      title: 'Record Utang?',
-      message:
-          'Record ₱${remaining.toStringAsFixed(2)} utang for ${widget.order.customerName} (${widget.order.orderId})?'
-          '${initialPaid > 0 ? '\n\nInitial payment: ${currency.format(initialPaid)}' : ''}',
-      confirmLabel: 'Yes, Record',
-      confirmColor: AppColors.warning,
-    );
+
+    String confirmMsg =
+        'Record ₱${remaining.toStringAsFixed(2)} utang for ${widget.order.customerName} (${widget.order.orderId})?'
+        '${initialPaid > 0 ? '\n\nInitial payment: ${currency.format(initialPaid)}' : ''}';
+
+    if (_interestType != 'none' && interestRate > 0) {
+      confirmMsg += '\nInterest: $interestRate% $_interestType';
+    }
+
+    final confirmed = await showConfirmDialog(context,
+        title: 'Record Utang?',
+        message: confirmMsg,
+        confirmLabel: 'Yes, Record',
+        confirmColor: AppColors.warning);
     if (!confirmed || !mounted) return;
-    // ── END Confirmation ──────────────────────────────────────────────────
 
     final debt = CustomerDebt(
-      id:           _uuid.v4(),
-      customerName: widget.order.customerName,
-      orderId:      widget.order.orderId,
-      totalAmount:  _orderTotal,
-      amountPaid:   initialPaid,
-      createdAt:    DateTime.now(),
-      payments: initialPaid > 0
-          ? [
-              PaymentRecord(
-                id:     _uuid.v4(),
-                amount: initialPaid,
-                paidAt: DateTime.now(),
-                note:   'Initial payment',
-              )
-            ]
+      id:              _uuid.v4(),
+      customerName:    widget.order.customerName,
+      orderId:         widget.order.orderId,
+      totalAmount:     _orderTotal,
+      amountPaid:      initialPaid,
+      createdAt:       DateTime.now(),
+      payments:        initialPaid > 0
+          ? [PaymentRecord(id: _uuid.v4(), amount: initialPaid,
+              paidAt: DateTime.now(), note: 'Initial payment')]
           : [],
+      // v6 interest
+      interestRate:     interestRate,
+      interestType:     _interestType,
+      interestStartDate: DateTime.now(),
     );
 
     final ok = await AppState().addDebt(debt, onError: (msg) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: AppColors.error,
-            content: Text(msg,
-                style: const TextStyle(color: AppColors.white)),
-          ),
-        );
-      }
+      if (mounted) KnzToast.error(context, msg);
     });
 
     if (!ok || !mounted) return;
-
     await AppState().updateOrderStatus(widget.order.id, OrderStatus.utang);
     if (!mounted) return;
-
     Navigator.pop(context);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppColors.warning,
-        content: Text(
-          'Utang recorded for ${widget.order.customerName} — '
-          '₱${debt.remainingBalance.toStringAsFixed(2)} remaining',
-          style: const TextStyle(color: AppColors.background),
-        ),
-      ),
+    KnzToast.warning(context,
+      '💳 Utang recorded for ${widget.order.customerName} — '
+      '₱${debt.remainingBalance.toStringAsFixed(2)} remaining.',
     );
-
-    // Auto-navigate to Utang tab
     final shell = context.findAncestorStateOfType<MainShellState>();
     shell?.navigateTo(NavItem.utang);
   }
@@ -165,7 +132,7 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
       backgroundColor: AppColors.surface,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -176,10 +143,8 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
               Icon(Icons.money_off, color: AppColors.warning, size: 20),
               SizedBox(width: 10),
               Text('Mark as Utang',
-                  style: TextStyle(
-                      color: AppColors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 16)),
+                  style: TextStyle(color: AppColors.white,
+                      fontWeight: FontWeight.w700, fontSize: 16)),
             ]),
             const SizedBox(height: 16),
 
@@ -192,83 +157,136 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
                 border: Border.all(color: AppColors.cardBorder),
               ),
               child: Column(children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(widget.order.customerName,
-                        style: const TextStyle(
-                            color: AppColors.white,
-                            fontWeight: FontWeight.w600)),
+                        style: const TextStyle(color: AppColors.white, fontWeight: FontWeight.w600)),
                     Text(widget.order.orderId,
-                        style: const TextStyle(
-                            color: AppColors.gold, fontSize: 12)),
-                  ],
-                ),
+                        style: const TextStyle(color: AppColors.gold, fontSize: 12)),
+                  ]),
                 const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Order Total',
-                        style: TextStyle(
-                            color: AppColors.whiteTertiary, fontSize: 12)),
-                    Text(currency.format(_orderTotal),
-                        style: const TextStyle(
-                            color: AppColors.white,
-                            fontWeight: FontWeight.w700)),
-                  ],
-                ),
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('Order Total',
+                      style: TextStyle(color: AppColors.whiteTertiary, fontSize: 12)),
+                  Text(currency.format(_orderTotal),
+                      style: const TextStyle(color: AppColors.white, fontWeight: FontWeight.w700)),
+                ]),
               ]),
             ),
             const SizedBox(height: 16),
 
             // Initial payment
             const Text('INITIAL PAYMENT (0 if walang bayad)',
-                style: TextStyle(
-                    color: AppColors.whiteTertiary,
-                    fontSize: 11,
-                    letterSpacing: 1.2)),
+                style: TextStyle(color: AppColors.whiteTertiary, fontSize: 11, letterSpacing: 1.2)),
             const SizedBox(height: 6),
             TextField(
               controller: _amountCtrl,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               style: const TextStyle(color: AppColors.white),
               decoration: InputDecoration(
                 hintText: '0.00',
-                hintStyle:
-                    const TextStyle(color: AppColors.whiteTertiary),
+                hintStyle: const TextStyle(color: AppColors.whiteTertiary),
                 prefixText: '₱ ',
                 prefixStyle: const TextStyle(color: AppColors.gold),
                 filled: true,
                 fillColor: AppColors.inputFill,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide:
-                        const BorderSide(color: AppColors.cardBorder)),
-                enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide:
-                        const BorderSide(color: AppColors.cardBorder)),
-                focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide:
-                        const BorderSide(color: AppColors.warning)),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.cardBorder)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.cardBorder)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                    borderSide: const BorderSide(color: AppColors.warning)),
               ),
             ),
+            const SizedBox(height: 16),
 
-            if (_error != null) ...[
+            // ── v6: Interest rate section ─────────────────────────────────
+            const Divider(color: AppColors.cardBorder),
+            const SizedBox(height: 10),
+            const Text('INTEREST (OPTIONAL)',
+                style: TextStyle(color: AppColors.whiteTertiary, fontSize: 11,
+                    letterSpacing: 1.2, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 10),
+
+            // Interest type selector
+            Row(children: [
+              for (final type in ['none', 'daily', 'monthly'])
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () => setState(() => _interestType = type),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _interestType == type
+                            ? AppColors.warning.withValues(alpha: 0.15)
+                            : AppColors.inputFill,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _interestType == type
+                              ? AppColors.warning
+                              : AppColors.cardBorder,
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        type == 'none' ? 'None' : type[0].toUpperCase() + type.substring(1),
+                        style: TextStyle(
+                          color: _interestType == type
+                              ? AppColors.warning
+                              : AppColors.whiteTertiary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ]),
+
+            if (_interestType != 'none') ...[
+              const SizedBox(height: 12),
+              const Text('RATE (%)',
+                  style: TextStyle(color: AppColors.whiteTertiary,
+                      fontSize: 11, letterSpacing: 1.2)),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _interestCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))],
+                style: const TextStyle(color: AppColors.white),
+                decoration: InputDecoration(
+                  hintText: '2.0',
+                  hintStyle: const TextStyle(color: AppColors.whiteTertiary),
+                  suffixText: '%  $_interestType',
+                  suffixStyle: const TextStyle(color: AppColors.warning, fontSize: 12),
+                  filled: true,
+                  fillColor: AppColors.inputFill,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppColors.cardBorder)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppColors.cardBorder)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppColors.warning, width: 1.5)),
+                ),
+              ),
               const SizedBox(height: 8),
-              Text(_error!,
-                  style: const TextStyle(
-                      color: AppColors.error, fontSize: 12)),
+              Text(
+                _interestType == 'daily'
+                    ? 'Accrued = balance × rate% × days unpaid'
+                    : 'Accrued = balance × rate% × (days/30)',
+                style: const TextStyle(color: AppColors.whiteTertiary, fontSize: 10),
+              ),
             ],
 
             const SizedBox(height: 8),
-            const Text(
-              'Ang remaining balance ay itatala bilang utang ng customer.',
-              style: TextStyle(
-                  color: AppColors.whiteTertiary, fontSize: 11),
-            ),
+            if (_error != null)
+              Text(_error!, style: const TextStyle(color: AppColors.error, fontSize: 12)),
+
+            const SizedBox(height: 8),
+            const Text('Ang remaining balance ay itatala bilang utang ng customer.',
+                style: TextStyle(color: AppColors.whiteTertiary, fontSize: 11)),
             const SizedBox(height: 20),
 
             Row(children: [
@@ -276,8 +294,7 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
                 child: TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text('Cancel',
-                      style:
-                          TextStyle(color: AppColors.whiteTertiary)),
+                      style: TextStyle(color: AppColors.whiteTertiary)),
                 ),
               ),
               const SizedBox(width: 12),
@@ -290,15 +307,11 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
                     decoration: BoxDecoration(
                       color: AppColors.warning.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color:
-                              AppColors.warning.withValues(alpha: 0.5)),
+                      border: Border.all(color: AppColors.warning.withValues(alpha: 0.5)),
                     ),
                     alignment: Alignment.center,
                     child: const Text('Record Utang',
-                        style: TextStyle(
-                            color: AppColors.warning,
-                            fontWeight: FontWeight.w700)),
+                        style: TextStyle(color: AppColors.warning, fontWeight: FontWeight.w700)),
                   ),
                 ),
               ),

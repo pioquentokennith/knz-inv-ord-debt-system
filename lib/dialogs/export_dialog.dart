@@ -19,7 +19,7 @@ import '../models/order_model.dart';
 import '../models/debt_model.dart';
 import '../services/export_service.dart';
 
-enum ExportType { orders, inventory, debts, analytics }
+enum ExportType { orders, inventory, debts, analytics, customOrders, accounting }
 
 class ExportDialog extends StatefulWidget {
   final ExportType type;
@@ -39,15 +39,19 @@ class _ExportDialogState extends State<ExportDialog> {
 
   String get _typeLabel {
     switch (widget.type) {
-      case ExportType.orders:    return 'Orders';
-      case ExportType.inventory: return 'Inventory';
-      case ExportType.debts:     return 'Utang / Debts';
-      case ExportType.analytics: return 'Analytics Report';
+      case ExportType.orders:       return 'Orders';
+      case ExportType.inventory:    return 'Inventory';
+      case ExportType.debts:        return 'Utang / Debts';
+      case ExportType.analytics:    return 'Analytics Report';
+      case ExportType.customOrders: return 'Custom Orders';
+      case ExportType.accounting:   return 'Accounting Summary';
     }
   }
 
   // MINOR 3 FIX: Whether this export type supports date filtering
-  bool get _supportsDateFilter => widget.type != ExportType.inventory;
+  bool get _supportsDateFilter =>
+      widget.type != ExportType.inventory &&
+      widget.type != ExportType.customOrders;
 
   // MINOR 3 FIX: Human-readable label for the selected range
   String get _dateRangeLabel {
@@ -182,6 +186,28 @@ class _ExportDialogState extends State<ExportDialog> {
             );
           }
           break;
+
+        case ExportType.customOrders:
+          await ExportService.exportCustomOrdersCsv(state.customOrders);
+          break;
+
+        case ExportType.accounting:
+          final acctOrders = _filteredOrders(state.orders);
+          final acctDebts  = _filteredDebts(state.debts);
+          if (format == 'csv') {
+            await ExportService.exportAnalyticsCsv(
+              orders: acctOrders,
+              debts: acctDebts,
+            );
+          } else {
+            await ExportService.exportAnalyticsPdf(
+              orders: acctOrders,
+              debts: acctDebts,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
+          }
+          break;
       }
 
       if (mounted) Navigator.pop(context);
@@ -201,7 +227,7 @@ class _ExportDialogState extends State<ExportDialog> {
       backgroundColor: AppColors.surface,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,

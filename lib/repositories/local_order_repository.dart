@@ -14,6 +14,7 @@
 import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import '../models/order_model.dart';
+import '../models/payment_method_model.dart';
 import 'base_repository.dart';
 import 'order_repository.dart';
 import 'firestore_sync.dart';
@@ -85,6 +86,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
                 'product_id':   item['product_id'],
                 'product_name': item['product_name'],
                 'unit_price':   item['unit_price'],
+                'srp_price':    item['srp_price'], // preserve SRP for discount tracking
                 'quantity':     item['quantity'],
               });
             } catch (_) {}
@@ -116,10 +118,17 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         o.status        AS o_status,
         o.order_date    AS o_order_date,
         o.notes         AS o_notes,
+        o.is_reseller        AS o_is_reseller,
+        o.discount_percent   AS o_discount_percent,
+        o.discounted_total   AS o_discounted_total,
+        o.payment_method     AS o_payment_method,
+        o.payment_reference  AS o_payment_reference,
+        o.order_type         AS o_order_type,
         oi.id           AS oi_id,
         oi.product_id   AS oi_product_id,
         oi.product_name AS oi_product_name,
         oi.unit_price   AS oi_unit_price,
+        oi.srp_price    AS oi_srp_price,
         oi.quantity     AS oi_quantity
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
@@ -134,13 +143,19 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       final oid = row['o_id'] as String;
       // putIfAbsent ensures we only create the order entry once per unique order ID
       ordersMap.putIfAbsent(oid, () => {
-        'id':            row['o_id'],
-        'order_id':      row['o_order_id'],
-        'customer_name': row['o_customer_name'],
-        'total_amount':  row['o_total_amount'],
-        'status':        row['o_status'],
-        'order_date':    row['o_order_date'],
-        'notes':         row['o_notes'],
+        'id':                row['o_id'],
+        'order_id':          row['o_order_id'],
+        'customer_name':     row['o_customer_name'],
+        'total_amount':      row['o_total_amount'],
+        'status':            row['o_status'],
+        'order_date':        row['o_order_date'],
+        'notes':             row['o_notes'],
+        'is_reseller':       row['o_is_reseller'],
+        'discount_percent':  row['o_discount_percent'],
+        'discounted_total':  row['o_discounted_total'],
+        'payment_method':    row['o_payment_method'],
+        'payment_reference': row['o_payment_reference'],
+        'order_type':        row['o_order_type'],
       });
       // oi_id is null when the LEFT JOIN finds no matching order_items row
       if (row['oi_id'] != null) {
@@ -149,6 +164,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           'product_id':   row['oi_product_id'],
           'product_name': row['oi_product_name'],
           'unit_price':   row['oi_unit_price'],
+          'srp_price':    row['oi_srp_price'],
           'quantity':     row['oi_quantity'],
         }));
       }
@@ -173,10 +189,17 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         o.status        AS o_status,
         o.order_date    AS o_order_date,
         o.notes         AS o_notes,
+        o.is_reseller        AS o_is_reseller,
+        o.discount_percent   AS o_discount_percent,
+        o.discounted_total   AS o_discounted_total,
+        o.payment_method     AS o_payment_method,
+        o.payment_reference  AS o_payment_reference,
+        o.order_type         AS o_order_type,
         oi.id           AS oi_id,
         oi.product_id   AS oi_product_id,
         oi.product_name AS oi_product_name,
         oi.unit_price   AS oi_unit_price,
+        oi.srp_price    AS oi_srp_price,
         oi.quantity     AS oi_quantity
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
@@ -189,13 +212,19 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     for (final row in joinRows) {
       final oid = row['o_id'] as String;
       ordersMap.putIfAbsent(oid, () => {
-        'id':            row['o_id'],
-        'order_id':      row['o_order_id'],
-        'customer_name': row['o_customer_name'],
-        'total_amount':  row['o_total_amount'],
-        'status':        row['o_status'],
-        'order_date':    row['o_order_date'],
-        'notes':         row['o_notes'],
+        'id':                row['o_id'],
+        'order_id':          row['o_order_id'],
+        'customer_name':     row['o_customer_name'],
+        'total_amount':      row['o_total_amount'],
+        'status':            row['o_status'],
+        'order_date':        row['o_order_date'],
+        'notes':             row['o_notes'],
+        'is_reseller':       row['o_is_reseller'],
+        'discount_percent':  row['o_discount_percent'],
+        'discounted_total':  row['o_discounted_total'],
+        'payment_method':    row['o_payment_method'],
+        'payment_reference': row['o_payment_reference'],
+        'order_type':        row['o_order_type'],
       });
       if (row['oi_id'] != null) {
         itemsMap.putIfAbsent(oid, () => []).add(_itemFromMap({
@@ -203,6 +232,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           'product_id':   row['oi_product_id'],
           'product_name': row['oi_product_name'],
           'unit_price':   row['oi_unit_price'],
+          'srp_price':    row['oi_srp_price'],
           'quantity':     row['oi_quantity'],
         }));
       }
@@ -418,16 +448,22 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
 
   // Converts an Order model to a SQLite column map (excludes items — stored separately)
   Map<String, dynamic> _orderToMap(Order o, String userId) => {
-    'id':            o.id,
-    'order_id':      o.orderId,
-    'customer_name': o.customerName,
-    'total_amount':  o.totalAmount,
-    'status':        o.status.displayName,
-    'order_date':    o.orderDate.toIso8601String(),
-    'notes':         o.notes,
-    'user_id':       userId,
-    'is_deleted':    0,
-    'deleted_at':    null,
+    'id':               o.id,
+    'order_id':         o.orderId,
+    'customer_name':    o.customerName,
+    'total_amount':     o.totalAmount,
+    'status':           o.status.displayName,
+    'order_date':       o.orderDate.toIso8601String(),
+    'notes':            o.notes,
+    'user_id':          userId,
+    'is_deleted':       0,
+    'deleted_at':       null,
+    'is_reseller':      o.isReseller ? 1 : 0,
+    'discount_percent': o.deductionPerItem,
+    'discounted_total': o.isReseller ? o.discountedTotal : null,
+    'payment_method':   o.paymentMethod?.storageKey,
+    'payment_reference': o.paymentReference,
+    'order_type':       o.orderType,
   };
 
   // Converts an OrderItem model to a SQLite column map for the order_items table
@@ -437,19 +473,26 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     'product_id':   item.productId,
     'product_name': item.productName,
     'unit_price':   item.unitPrice,
+    'srp_price':    item.srpPrice,
     'quantity':     item.quantity,
   };
 
   // Assembles an Order model from a flat column map and its pre-fetched items list
   Order _orderFromMap(Map<String, dynamic> m, List<OrderItem> items) => Order(
-    id:           m['id']            as String,
-    orderId:      m['order_id']      as String,
-    customerName: m['customer_name'] as String,
-    items:        items,
-    totalAmount:  (m['total_amount'] as num).toDouble(),
-    status:       OrderStatusExtension.fromString(m['status'] as String),
-    orderDate:    DateTime.parse(m['order_date'] as String),
-    notes:        m['notes']         as String?,
+    id:              m['id']            as String,
+    orderId:         m['order_id']      as String,
+    customerName:    m['customer_name'] as String,
+    items:           items,
+    totalAmount:     (m['total_amount'] as num).toDouble(),
+    status:          OrderStatusExtension.fromString(m['status'] as String),
+    orderDate:       DateTime.parse(m['order_date'] as String),
+    notes:           m['notes']         as String?,
+    isReseller:      (m['is_reseller']  as int? ?? 0) == 1,
+    deductionPerItem: (m['discount_percent'] as num?)?.toDouble() ?? 0,
+    discountedTotal: (m['discounted_total'] as num?)?.toDouble(),
+    paymentMethod:   PaymentMethodExtension.fromString(m['payment_method'] as String?),
+    paymentReference: m['payment_reference'] as String?,
+    orderType:       m['order_type']    as String? ?? 'regular',
   );
 
   // Converts a raw SQLite row map into an OrderItem model instance
@@ -458,6 +501,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     productId:   m['product_id']   as String,
     productName: m['product_name'] as String,
     unitPrice:   (m['unit_price']  as num).toDouble(),
+    srpPrice:    (m['srp_price']   as num?)?.toDouble(),
     quantity:    m['quantity']     as int,
   );
 }

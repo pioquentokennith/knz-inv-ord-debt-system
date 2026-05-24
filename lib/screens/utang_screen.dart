@@ -123,36 +123,18 @@ class _UtangScreenState extends State<UtangScreen> {
     );
   }
 
-  void _confirmDelete(CustomerDebt debt) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        title: const Text('Delete Record',
-            style: TextStyle(color: AppColors.white)),
-        content: Text(
-          'Delete utang record for ${debt.customerName}?',
-          style: const TextStyle(color: AppColors.whiteSecondary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel',
-                style: TextStyle(color: AppColors.whiteTertiary)),
-          ),
-          TextButton(
-            onPressed: () async {
-              await AppState().deleteDebt(debt.id);
-              if (!mounted) return;
-              Navigator.pop(context);
-            },
-            child: const Text('Delete',
-                style: TextStyle(color: AppColors.error)),
-          ),
-        ],
-      ),
+  void _confirmDelete(CustomerDebt debt) async {
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Delete Utang Record',
+      message: 'Delete utang record for ${debt.customerName}? It can be restored from the Recycle Bin.',
+      confirmLabel: 'Delete',
+      confirmColor: AppColors.error,
+      icon: Icons.delete_outline_rounded,
     );
+    if (!confirm || !mounted) return;
+    await AppState().deleteDebt(debt.id);
+    if (mounted) KnzToast.error(context, '🗑️ Utang for ${debt.customerName} moved to Recycle Bin.');
   }
 }
 
@@ -466,6 +448,33 @@ class _DebtCardState extends State<_DebtCard> {
                                         '${debt.daysOld}d overdue',
                                         style: const TextStyle(
                                             color: AppColors.error,
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
+                                  // ── v6: Interest badge ──────────────────
+                                  if (debt.hasInterest)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.warning
+                                            .withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: AppColors.warning
+                                              .withValues(alpha: 0.4),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        // FIX: Abbreviated to prevent overflow on narrow screens.
+                                        // Old: "10% daily (+₱1,234 as of May 23)" — 35+ chars
+                                        // New: "10%/day +₱1,234"
+                                        '${debt.interestRate.toStringAsFixed(0)}%'
+                                        '/${debt.interestType == 'daily' ? 'day' : 'mo'} '
+                                        '+${NumberFormat.currency(symbol: '₱', decimalDigits: 0).format(debt.accruedInterest)}',
+                                        style: const TextStyle(
+                                            color: AppColors.warning,
                                             fontSize: 10,
                                             fontWeight: FontWeight.w600),
                                       ),

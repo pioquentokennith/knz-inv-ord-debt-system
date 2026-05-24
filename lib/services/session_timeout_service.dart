@@ -34,36 +34,64 @@ class SessionTimeoutService {
   /// Override before calling start() if a shorter or longer timeout is needed.
   Duration timeoutDuration = const Duration(minutes: 10);
 
-  Timer?        _timer;     // Active inactivity countdown; null when not running
-  VoidCallback? _onTimeout; // Called once when the timer fires
+  Timer?        _timer;       // Active inactivity countdown; null when not running
+  Timer?        _warnTimer;   // Fires 60 s before _timer to show a warning toast
+  VoidCallback? _onTimeout;   // Called once when the timer fires
+  VoidCallback? _onWarning;   // Called 60 s before timeout to show a warning
 
   /// Starts (or restarts) the inactivity timer.
   /// [onTimeout] is called exactly once when the configured duration elapses.
+  /// [onWarning] is called 60 seconds before timeout — use it to show a toast
+  /// so the user can tap anything to reset the timer before being logged out.
   /// Calling start() while already running resets the countdown to zero.
-  void start({required VoidCallback onTimeout}) {
+  void start({required VoidCallback onTimeout, VoidCallback? onWarning}) {
     _onTimeout = onTimeout;
+    _onWarning = onWarning;
     _resetTimer(); // Cancel any existing timer and start a fresh one
   }
 
   /// Resets the inactivity countdown — call this on any user activity event.
+  /// Also cancels any pending warning timer.
   /// Ignores the call if start() has not been called yet (timer is null).
   void bump() {
     if (_timer == null) return; // Session not started — ignore activity events
     _resetTimer();
   }
 
-  /// Permanently stops the inactivity timer.
-  /// Call this after logout so the timer does not fire on a signed-out session.
-  void stop() {
-    _timer?.cancel();
-    _timer     = null;
-    _onTimeout = null; // Clear the callback to prevent a stale reference
+  /// Returns how many seconds remain before auto-logout. 0 if not running.
+  int get secondsRemaining {
+    if (_timer == null) return 0;
+    // Dart Timer doesn't expose remaining time directly, so we track it via
+    // the warning timer's existence: if _warnTimer is still alive the session
+    // has more than 60 s left; otherwise it's in the final-minute countdown.
+    return _warnTimer != null ? timeoutDuration.inSeconds : 60;
   }
 
-  // Cancels the current timer and starts a new one from zero
+  /// Permanently stops the inactivity timer and the warning timer.
+  /// Call this after logout so the timers do not fire on a signed-out session.
+  void stop() {
+    _timer?.cancel();
+    _warnTimer?.cancel();
+    _timer     = null;
+    _warnTimer = null;
+    _onTimeout = null; // Clear the callbacks to prevent stale references
+    _onWarning = null;
+  }
+
+  // Cancels both timers and restarts from zero.
+  // Warning fires at (timeoutDuration - 60 s); main timer fires at timeoutDuration.
+  // If timeoutDuration <= 60 s the warning timer is skipped entirely.
   void _resetTimer() {
     _timer?.cancel();
+    _warnTimer?.cancel();
     _timer = Timer(timeoutDuration, _handleTimeout);
+    final warnDelay = timeoutDuration - const Duration(seconds: 60);
+    if (warnDelay > Duration.zero && _onWarning != null) {
+      _warnTimer = Timer(warnDelay, () {
+        _warnTimer = null;
+        _onWarning?.call();
+      });
+    }
   }
 
   // Fired by the Timer when the inactivity period expires

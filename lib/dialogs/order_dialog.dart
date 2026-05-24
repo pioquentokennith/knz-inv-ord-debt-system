@@ -16,7 +16,10 @@ import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
+import '../models/payment_method_model.dart';
+import '../models/reseller_model.dart';
 import '../widgets/shared_widgets.dart';
+import '../screens/main_shell.dart';
 
 class OrderDialog extends StatefulWidget {
   const OrderDialog({super.key});
@@ -29,6 +32,17 @@ class _OrderDialogState extends State<OrderDialog> {
   final _customerCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
   OrderStatus _status = OrderStatus.pending;
+
+  // ── v6: Payment method ──────────────────────────────────────────────────
+  PaymentMethod _paymentMethod = PaymentMethod.cashOnDelivery;
+  final _paymentRefCtrl = TextEditingController();
+
+  // ── v6: Reseller discount ───────────────────────────────────────────────
+  Reseller? _selectedReseller; // null = no reseller discount
+
+  // ── v7: Interest for Utang orders (optional) ────────────────────────────
+  String _interestType = 'none'; // 'none' | 'daily' | 'monthly'
+  final _interestCtrl = TextEditingController(text: '0');
 
   // Cart items holding each selected product with its quantity and custom price
   final List<_CartEntry> _cart = [];
@@ -48,16 +62,29 @@ class _OrderDialogState extends State<OrderDialog> {
   void dispose() {
     _customerCtrl.dispose();
     _notesCtrl.dispose();
+    _paymentRefCtrl.dispose();
     _pickedQtyCtrl.dispose();
     _pickedPriceCtrl.dispose();
     _searchCtrl.dispose();
     _searchFocusNode.dispose();
+    _interestCtrl.dispose();
     super.dispose();
   }
 
   // Computed total: sum of (customPrice * qty) across all cart entries
   double get _cartTotal =>
       _cart.fold(0, (sum, e) => sum + e.customPrice * e.qty);
+
+  // Discounted total when a reseller is selected (fixed ₱ deduction per item)
+  double get _discountedCartTotal {
+    if (_selectedReseller == null) return _cartTotal;
+    final deduction = _selectedReseller!.deductionPerItem;
+    // Sum: (customPrice - deduction) × qty, clamped so price never goes below 0
+    return _cart.fold(0.0, (sum, e) =>
+        sum + ((e.customPrice - deduction).clamp(0.0, e.customPrice) * e.qty));
+  }
+
+  double get _deductionPerItem => _selectedReseller?.deductionPerItem ?? 0;
 
   // Validates and adds the currently selected product to the cart.
   // Merges with an existing cart entry if the same product is already in the cart.
@@ -67,38 +94,36 @@ class _OrderDialogState extends State<OrderDialog> {
     if (product == null) return;
     final qty = int.tryParse(_pickedQtyCtrl.text) ?? 1;
     if (qty <= 0) return;
-    final price = double.tryParse(_pickedPriceCtrl.text.replaceAll(',', ''));
-    if (price == null || price < 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a valid price')),
-      );
+
+    final srp = product.price;
+    final deduction = double.tryParse(_pickedPriceCtrl.text.replaceAll(',', '')) ?? 0;
+    if (deduction < 0) {
+      KnzToast.warning(context, 'Discount cannot be negative.');
       return;
     }
+    if (deduction > srp) {
+      KnzToast.error(context,
+        'Discount (₱${deduction.toStringAsFixed(2)}) cannot exceed SRP (₱${srp.toStringAsFixed(2)})');
+      return;
+    }
+    final finalPrice = srp - deduction;
 
-    // Check stock — get current qty already in cart for this product
     final existingIdx = _cart.indexWhere((e) => e.product.id == product.id);
     final alreadyInCart = existingIdx >= 0 ? _cart[existingIdx].qty : 0;
     final totalQty = alreadyInCart + qty;
 
     if (totalQty > product.stockQty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: AppColors.error,
-          content: Text(
-            'Not enough stock! Only ${product.stockQty - alreadyInCart} left available.',
-            style: const TextStyle(color: AppColors.white),
-          ),
-        ),
-      );
+      KnzToast.error(context,
+        'Not enough stock! Only ${product.stockQty - alreadyInCart} left available.');
       return;
     }
 
     setState(() {
       if (existingIdx >= 0) {
         _cart[existingIdx] = _CartEntry(
-            _cart[existingIdx].product, totalQty, _cart[existingIdx].customPrice);
+            _cart[existingIdx].product, totalQty, _cart[existingIdx].srp, _cart[existingIdx].customPrice);
       } else {
-        _cart.add(_CartEntry(product, qty, price));
+        _cart.add(_CartEntry(product, qty, srp, finalPrice));
       }
       _pickedQtyCtrl.text = '1';
       _pickedPriceCtrl.clear();
@@ -115,15 +140,11 @@ class _OrderDialogState extends State<OrderDialog> {
   Future<void> _submit() async {
     final customer = _customerCtrl.text.trim();
     if (customer.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Customer name is required')),
-      );
+      KnzToast.warning(context, 'Customer name is required.');
       return;
     }
     if (_cart.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Add at least one product')),
-      );
+      KnzToast.warning(context, 'Add at least one product to continue.');
       return;
     }
 
@@ -131,57 +152,100 @@ class _OrderDialogState extends State<OrderDialog> {
 
     // ── Confirmation prompt ───────────────────────────────────────────────
     final currency2 = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
+    final displayTotal = _selectedReseller != null ? _discountedCartTotal : _cartTotal;
+    final resellerNote = _selectedReseller != null
+        ? ' (after −₱${_deductionPerItem.toStringAsFixed(0)}/item discount)'
+        : '';
+    final interestNote = _paymentMethod == PaymentMethod.utang &&
+            _interestType != 'none' &&
+            (double.tryParse(_interestCtrl.text.trim()) ?? 0) > 0
+        ? '\nInterest: ${_interestCtrl.text.trim()}% $_interestType'
+        : '';
     final confirmed = await showConfirmDialog(
       context,
       title: 'Create Order?',
       message:
-          'Create order for $customer with ${_cart.length} item(s) totaling ${currency2.format(_cartTotal)}?',
+          'Create order for $customer with ${_cart.length} item(s) totaling ${currency2.format(displayTotal)}$resellerNote?$interestNote',
       confirmLabel: 'Create Order',
     );
     if (!confirmed || !mounted) return;
     // ── END Confirmation ──────────────────────────────────────────────────
 
+    // For reseller orders: apply the fixed deduction to unitPrice so that
+    //   item.unitPrice = srp - deductionPerItem (e.g. 220 - 50 = 170)  ← net selling price
+    //   item.srpPrice  = srp (e.g. 220)                                 ← catalog price
+    // This ensures itemDiscountAmount = (srpPrice - unitPrice) * qty is always correct.
+    // The discount field is hidden for resellers so e.customPrice == e.srp (no manual discount).
+    final resellerDeduction = _selectedReseller?.deductionPerItem ?? 0;
     final items = _cart
         .map((e) => OrderItem(
               id: const Uuid().v4(),
               productId: e.product.id,
               productName: e.product.name,
-              unitPrice: e.customPrice,
+              unitPrice: resellerDeduction > 0
+                  ? (e.srp - resellerDeduction).clamp(0.0, e.srp)
+                  : e.customPrice, // non-reseller: use manually entered discounted price
+              srpPrice: e.srp,     // always original catalog price
               quantity: e.qty,
             ))
         .toList();
 
     final orderId = await state.generateOrderId();
+    // If payment method is Utang, force status to utang so it auto-creates a debt record
+    final effectiveStatus = _paymentMethod == PaymentMethod.utang
+        ? OrderStatus.utang
+        : _status;
+    // FIXED: For reseller orders, save totalAmount = SRP (full price) so the receipt
+    // shows the crossed-out SRP, and save discountedTotal = NET (amount paid).
+    // For regular orders with item-level discount: totalAmount = net (unitPrice×qty),
+    // discountedTotal = null. Accounting derives discount from (srpPrice-unitPrice)×qty.
+    final savedTotal = _cartTotal; // SRP total for resellers; net total for regular
+    final savedDiscountedTotal = _selectedReseller != null ? _discountedCartTotal : null;
     final order = Order(
       id: const Uuid().v4(),
       orderId: orderId,
       customerName: customer,
       items: items,
-      totalAmount: _cartTotal,
-      status: _status,
+      totalAmount: savedTotal,
+      status: effectiveStatus,
       orderDate: DateTime.now(),
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+      // v6 fields
+      paymentMethod:    _paymentMethod,
+      paymentReference: _paymentRefCtrl.text.trim().isEmpty
+          ? null
+          : _paymentRefCtrl.text.trim(),
+      isReseller:       _selectedReseller != null,
+      deductionPerItem:  _deductionPerItem,
+      discountedTotal:  savedDiscountedTotal,
     );
 
-    // FIX 3: Gamitin ang onError callback para malaman ng user kung failed ang order creation.
-    // Dati walang error feedback — nag-pop agad ang dialog kahit failed.
-    final success = await state.addOrder(order, onError: (msg) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(msg),
-            backgroundColor: AppColors.error,
-          ),
-        );
+    final success = await state.addOrder(order,
+      onError: (msg) {
+        if (mounted) KnzToast.error(context, msg);
+      },
+      interestRate: _paymentMethod == PaymentMethod.utang
+          ? (double.tryParse(_interestCtrl.text.trim()) ?? 0)
+          : 0,
+      interestType: _paymentMethod == PaymentMethod.utang ? _interestType : 'none',
+    );
+    if (success && mounted) {
+      Navigator.pop(context);
+      KnzToast.success(context, '✅ Order created for $customer.');
+      if (_paymentMethod == PaymentMethod.utang) {
+        final shell = context.findAncestorStateOfType<MainShellState>();
+        shell?.navigateTo(NavItem.utang);
       }
-    });
-    if (success && mounted) Navigator.pop(context);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final products = AppState().products;
-    _pickedProduct ??= products.isNotEmpty ? products.first : null;
+    if (_pickedProduct == null && products.isNotEmpty) {
+      _pickedProduct = products.first;
+      // Deduction field starts empty — SRP is shown as a locked display
+    }
     final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     return Dialog(
       backgroundColor: AppColors.surface,
@@ -332,6 +396,8 @@ class _OrderDialogState extends State<OrderDialog> {
                                       return GestureDetector(
                                         onTap: () => setState(() {
                                           _pickedProduct = p;
+                                          // Clear deduction when switching products
+                                          _pickedPriceCtrl.clear();
                                           _searchCtrl.clear();
                                           _searchQuery = '';
                                           _showSearchResults = false;
@@ -379,41 +445,142 @@ class _OrderDialogState extends State<OrderDialog> {
                     );
                   }),
                   const SizedBox(height: 10),
-                  // Price field
-                  TextField(
-                    controller: _pickedPriceCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                    ],
-                    style: const TextStyle(color: AppColors.white, fontSize: 14),
-                    decoration: InputDecoration(
-                      labelText: 'PRICE (₱)',
-                      labelStyle: const TextStyle(
-                          color: AppColors.whiteTertiary, fontSize: 12),
-                      hintText: 'Enter price...',
-                      hintStyle: const TextStyle(
-                          color: AppColors.whiteTertiary, fontSize: 13),
-                      prefixText: '₱ ',
-                      prefixStyle: const TextStyle(color: AppColors.gold, fontWeight: FontWeight.w600),
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: AppColors.cardBorder),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: AppColors.cardBorder),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: AppColors.gold),
-                      ),
+                  // ── SRP (read-only) ────────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.cardBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        const Text('SRP',
+                            style: TextStyle(
+                                color: AppColors.whiteTertiary,
+                                fontSize: 11,
+                                letterSpacing: 1,
+                                fontWeight: FontWeight.w600)),
+                        const SizedBox(width: 10),
+                        Text(
+                          _pickedProduct != null
+                              ? '₱${_pickedProduct!.price.toStringAsFixed(2)}'
+                              : '₱0.00',
+                          style: const TextStyle(
+                              color: AppColors.gold,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 16),
+                        ),
+                        const Spacer(),
+                        const Icon(Icons.lock_outline,
+                            color: AppColors.whiteTertiary, size: 14),
+                        const SizedBox(width: 4),
+                        const Text('Fixed',
+                            style: TextStyle(
+                                color: AppColors.whiteTertiary,
+                                fontSize: 11)),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  // ── Discount deduction — hidden when a reseller is selected ──
+                  // Resellers get a fixed peso deduction applied at cart level;
+                  // showing a manual discount field at the same time causes
+                  // confusion and potential double-discount data entry.
+                  if (_selectedReseller == null) Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const Text('−',
+                          style: TextStyle(
+                              color: AppColors.gold,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: TextField(
+                          controller: _pickedPriceCtrl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                          ],
+                          style: const TextStyle(color: AppColors.white, fontSize: 14),
+                          onChanged: (_) => setState(() {}),
+                          decoration: InputDecoration(
+                            labelText: 'DISCOUNT (OPTIONAL)',
+                            labelStyle: const TextStyle(
+                                color: AppColors.whiteTertiary, fontSize: 12),
+                            hintText: '0',
+                            hintStyle: const TextStyle(
+                                color: AppColors.whiteTertiary, fontSize: 13),
+                            prefixText: '₱ ',
+                            prefixStyle: const TextStyle(
+                                color: AppColors.error, fontWeight: FontWeight.w600),
+                            filled: true,
+                            fillColor: AppColors.surface,
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(color: AppColors.cardBorder),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(color: AppColors.cardBorder),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(color: AppColors.gold),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      // Live final price preview
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Builder(builder: (_) {
+                            final srp    = _pickedProduct?.price ?? 0;
+                            final deduct = double.tryParse(_pickedPriceCtrl.text) ?? 0;
+                            final sell   = (srp - deduct).clamp(0.0, srp);
+                            final hasDeduct = deduct > 0 && _pickedProduct != null;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (hasDeduct) ...[
+                                  Text(
+                                    '₱${srp.toStringAsFixed(2)} − ₱${deduct.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                        color: AppColors.whiteTertiary,
+                                        fontSize: 10),
+                                  ),
+                                  const Text('=',
+                                      style: TextStyle(
+                                          color: AppColors.whiteTertiary,
+                                          fontSize: 10)),
+                                ],
+                                const Text('SELLING PRICE',
+                                    style: TextStyle(
+                                        color: AppColors.whiteTertiary,
+                                        fontSize: 10,
+                                        letterSpacing: 1)),
+                                Text(
+                                  _pickedProduct == null
+                                      ? '₱0.00'
+                                      : '₱${sell.toStringAsFixed(2)}',
+                                  style: TextStyle(
+                                      color: hasDeduct
+                                          ? AppColors.success
+                                          : AppColors.gold,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 15),
+                                ),
+                              ],
+                            );
+                          }),
+                        ],                      ),
+                    ],
+                  ),  // end of discount Row
                   const SizedBox(height: 10),
                   // Qty + Add button
                   Row(
@@ -541,6 +708,30 @@ class _OrderDialogState extends State<OrderDialog> {
                                               color: AppColors.white,
                                               fontWeight: FontWeight.w600,
                                               fontSize: 13)),
+                                      if (e.srp != e.customPrice) ...[
+                                        // Show SRP and deduction when discounted
+                                        Row(
+                                          children: [
+                                            Text(
+                                              'SRP ${currency.format(e.srp)}',
+                                              style: const TextStyle(
+                                                  color: AppColors.whiteTertiary,
+                                                  fontSize: 10,
+                                                  decoration: TextDecoration.lineThrough),
+                                            ),
+                                            const Text(' − ',
+                                                style: TextStyle(
+                                                    color: AppColors.error,
+                                                    fontSize: 10)),
+                                            Text(
+                                              currency.format(e.srp - e.customPrice),
+                                              style: const TextStyle(
+                                                  color: AppColors.error,
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600)),
+                                          ],
+                                        ),
+                                      ],
                                       Text(
                                         '${currency.format(e.customPrice)} × ${e.qty} = ${currency.format(e.customPrice * e.qty)}',
                                         style: const TextStyle(
@@ -559,7 +750,7 @@ class _OrderDialogState extends State<OrderDialog> {
                                         setState(() {
                                           if (e.qty > 1) {
                                             _cart[i] = _CartEntry(
-                                                e.product, e.qty - 1, e.customPrice);
+                                                e.product, e.qty - 1, e.srp, e.customPrice);
                                           } else {
                                             _cart.removeAt(i);
                                           }
@@ -579,19 +770,12 @@ class _OrderDialogState extends State<OrderDialog> {
                                       icon: Icons.add,
                                       onTap: () {
                                         if (e.qty >= e.product.stockQty) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(
-                                              backgroundColor: AppColors.error,
-                                              content: Text(
-                                                'Max stock reached! Only ${e.product.stockQty} available.',
-                                                style: const TextStyle(color: AppColors.white),
-                                              ),
-                                            ),
-                                          );
+                                          KnzToast.warning(context,
+                                            'Max stock reached! Only ${e.product.stockQty} available.');
                                           return;
                                         }
                                         setState(() => _cart[i] =
-                                            _CartEntry(e.product, e.qty + 1, e.customPrice));
+                                            _CartEntry(e.product, e.qty + 1, e.srp, e.customPrice));
                                       },
                                     ),
                                   ],
@@ -655,6 +839,264 @@ class _OrderDialogState extends State<OrderDialog> {
             ),
             const SizedBox(height: 14),
 
+            // ── v6: Reseller discount ──────────────────────────────────────
+            ListenableBuilder(
+              listenable: AppState(),
+              builder: (context, _) {
+                final resellers = AppState().resellers;
+                if (resellers.isEmpty) return const SizedBox.shrink();
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('RESELLER DISCOUNT',
+                        style: TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 11,
+                            letterSpacing: 1.2,
+                            fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 6),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceElevated,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.cardBorder),
+                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<Reseller?>(
+                          isExpanded: true,
+                          value: _selectedReseller,
+                          dropdownColor: AppColors.surfaceElevated,
+                          style: const TextStyle(color: AppColors.white),
+                          hint: const Text('No discount (regular order)',
+                              style: TextStyle(
+                                  color: AppColors.whiteTertiary)),
+                          items: [
+                            const DropdownMenuItem<Reseller?>(
+                              value: null,
+                              child: Text('No discount (regular order)',
+                                  style: TextStyle(
+                                      color: AppColors.whiteSecondary)),
+                            ),
+                            ...resellers.map((r) => DropdownMenuItem<Reseller?>(
+                              value: r,
+                              child: Text(r.label,
+                                  style: const TextStyle(
+                                      color: AppColors.gold)),
+                            )),
+                          ],
+                          onChanged: (r) =>
+                              setState(() {
+                                _selectedReseller = r;
+                                // Clear any manual discount when a reseller is
+                                // selected — the field is now hidden and its
+                                // value would otherwise silently affect pricing.
+                                _pickedPriceCtrl.clear();
+                              }),
+                        ),
+                      ),
+                    ),
+                    if (_selectedReseller != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: AppColors.gold.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color:
+                                  AppColors.gold.withValues(alpha: 0.3)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'SRP:  ${NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(_cartTotal)}',
+                              style: const TextStyle(
+                                  color: AppColors.whiteSecondary,
+                                  fontSize: 13),
+                            ),
+                            Text(
+                              'NET: ${NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(_discountedCartTotal)}',
+                              style: const TextStyle(
+                                  color: AppColors.gold,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                  ],
+                );
+              },
+            ),
+
+            // ── v6: Payment method ─────────────────────────────────────────
+            const Text('PAYMENT METHOD',
+                style: TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontSize: 11,
+                    letterSpacing: 1.2,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.surfaceElevated,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.cardBorder),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<PaymentMethod>(
+                  isExpanded: true,
+                  value: _paymentMethod,
+                  dropdownColor: AppColors.surfaceElevated,
+                  style: const TextStyle(color: AppColors.white),
+                  items: PaymentMethod.values
+                      .map((m) => DropdownMenuItem(
+                            value: m,
+                            child: Row(
+                              children: [
+                                Icon(m.icon,
+                                    color: AppColors.gold, size: 18),
+                                const SizedBox(width: 8),
+                                Text(m.displayName),
+                              ],
+                            ),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v != null) {
+                      setState(() {
+                        _paymentMethod = v;
+                        if (!v.requiresReference) {
+                          _paymentRefCtrl.clear();
+                        }
+                        if (v != PaymentMethod.utang) {
+                          _interestType = 'none';
+                          _interestCtrl.text = '0';
+                        }
+                      });
+                    }
+                  },
+                ),
+              ),
+            ),
+            if (_paymentMethod.requiresReference) ...[
+              const SizedBox(height: 10),
+              DarkTextField(
+                label: 'REFERENCE NUMBER',
+                hint: _paymentMethod.referenceHint,
+                controller: _paymentRefCtrl,
+              ),
+            ],
+
+            // ── v7: Interest section — only visible for Utang orders ─────
+            if (_paymentMethod == PaymentMethod.utang) ...[
+              const SizedBox(height: 14),
+              const Divider(color: AppColors.cardBorder),
+              const SizedBox(height: 10),
+              const Text('INTEREST (OPTIONAL)',
+                  style: TextStyle(
+                      color: AppColors.whiteTertiary,
+                      fontSize: 11,
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 10),
+              Row(children: [
+                for (final type in ['none', 'daily', 'monthly'])
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: () => setState(() => _interestType = type),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.only(right: 6),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _interestType == type
+                              ? AppColors.warning.withValues(alpha: 0.15)
+                              : AppColors.inputFill,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: _interestType == type
+                                ? AppColors.warning
+                                : AppColors.cardBorder,
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          type == 'none'
+                              ? 'None'
+                              : type[0].toUpperCase() + type.substring(1),
+                          style: TextStyle(
+                            color: _interestType == type
+                                ? AppColors.warning
+                                : AppColors.whiteTertiary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ]),
+              if (_interestType != 'none') ...[
+                const SizedBox(height: 12),
+                const Text('RATE (%)',
+                    style: TextStyle(
+                        color: AppColors.whiteTertiary,
+                        fontSize: 11,
+                        letterSpacing: 1.2)),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _interestCtrl,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                  ],
+                  style: const TextStyle(color: AppColors.white),
+                  decoration: InputDecoration(
+                    hintText: '2.0',
+                    hintStyle:
+                        const TextStyle(color: AppColors.whiteTertiary),
+                    suffixText: '%  $_interestType',
+                    suffixStyle: const TextStyle(
+                        color: AppColors.warning, fontSize: 12),
+                    filled: true,
+                    fillColor: AppColors.inputFill,
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: AppColors.cardBorder)),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: AppColors.cardBorder)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(
+                            color: AppColors.warning, width: 1.5)),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _interestType == 'daily'
+                      ? 'Accrued = balance × rate% × days unpaid'
+                      : 'Accrued = balance × rate% × (days/30)',
+                  style: const TextStyle(
+                      color: AppColors.whiteTertiary, fontSize: 10),
+                ),
+              ],
+              const SizedBox(height: 4),
+            ],
+
+            const SizedBox(height: 14),
+
             // Notes
             DarkTextField(
               label: 'NOTES (OPTIONAL)',
@@ -704,12 +1146,13 @@ class _OrderDialogState extends State<OrderDialog> {
   }
 }
 
-// Helper model for cart entries
+// Helper model for cart entries — stores both the original SRP and the actual selling price
 class _CartEntry {
   final Product product;
   final int qty;
-  final double customPrice;
-  _CartEntry(this.product, this.qty, this.customPrice);
+  final double srp;         // Original catalog price (locked, never changes)
+  final double customPrice; // Actual selling price (srp - deduction)
+  _CartEntry(this.product, this.qty, this.srp, this.customPrice);
 }
 
 // Small +/- button

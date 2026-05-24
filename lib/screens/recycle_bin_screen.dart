@@ -16,6 +16,7 @@ import '../core/app_state.dart';
 import '../models/debt_model.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
+import '../widgets/shared_widgets.dart';
 
 class RecycleBinScreen extends StatefulWidget {
   const RecycleBinScreen({super.key});
@@ -98,158 +99,94 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
   // Shows a restore confirmation dialog, then calls AppState.restoreOrder()
   // to move the order back to the active list. Refreshes the bin list after.
   Future<void> _restoreOrder(Order order) async {
-    final confirm = await _restoreDialog(
-        'Restore order ${order.orderId}?',
-        'This will move it back to your active Orders list.');
-    if (confirm != true) return;
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Restore Order',
+      message: 'Move order ${order.orderId} back to your active Orders list?',
+      confirmLabel: 'Restore',
+      confirmColor: AppColors.success,
+      icon: Icons.restore_rounded,
+    );
+    if (!confirm || !mounted) return;
     await _appState.restoreOrder(order.id);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Order ${order.orderId} restored'),
-        backgroundColor: AppColors.success,
-      ));
-    }
+    if (mounted) KnzToast.success(context, '♻️ Order ${order.orderId} restored.');
     await _load();
   }
 
   Future<void> _restoreProduct(Product product) async {
-    final confirm = await _restoreDialog(
-        'Restore "${product.name}"?',
-        'This will move it back to your active Inventory list.');
-    if (confirm != true) return;
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Restore Product',
+      message: 'Move "${product.name}" back to your active Inventory list?',
+      confirmLabel: 'Restore',
+      confirmColor: AppColors.success,
+      icon: Icons.restore_rounded,
+    );
+    if (!confirm || !mounted) return;
     await _appState.restoreProduct(product.id);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('"${product.name}" restored'),
-        backgroundColor: AppColors.success,
-      ));
-    }
+    if (mounted) KnzToast.success(context, '♻️ "${product.name}" restored to Inventory.');
     await _load();
   }
 
-  // Shows a permanent-delete confirmation dialog, then calls hardDeleteOrder()
-  // to irreversibly remove the record from the database.
   Future<void> _hardDeleteOrder(Order order) async {
-    final confirm = await _confirmDialog(
-        'Permanently delete order ${order.orderId}?\n\nThis cannot be undone.');
-    if (confirm != true) return;
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Delete Forever?',
+      message: 'Permanently delete order ${order.orderId}? This cannot be undone.',
+      confirmLabel: 'Delete Forever',
+      confirmColor: AppColors.error,
+      icon: Icons.delete_forever_rounded,
+    );
+    if (!confirm || !mounted) return;
     await _appState.hardDeleteOrder(order.id);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Order permanently deleted'),
-        backgroundColor: AppColors.error,
-      ));
-    }
+    if (mounted) KnzToast.error(context, '❌ Order ${order.orderId} permanently deleted.');
     await _load();
   }
 
   Future<void> _hardDeleteProduct(Product product) async {
-    final confirm = await _confirmDialog(
-        'Permanently delete "${product.name}"?\n\nThis cannot be undone.');
-    if (confirm != true) return;
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Delete Forever?',
+      message: 'Permanently delete "${product.name}"? This cannot be undone.',
+      confirmLabel: 'Delete Forever',
+      confirmColor: AppColors.error,
+      icon: Icons.delete_forever_rounded,
+    );
+    if (!confirm || !mounted) return;
     await _appState.hardDeleteProduct(product.id);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Product permanently deleted'),
-        backgroundColor: AppColors.error,
-      ));
-    }
+    if (mounted) KnzToast.error(context, '❌ "${product.name}" permanently deleted.');
     await _load();
   }
 
   Future<void> _restoreDebt(CustomerDebt debt) async {
-    final confirm = await _restoreDialog(
-        'Restore utang for ${debt.customerName}?',
-        'This will move it back to your active Utang list.');
-    if (confirm != true) return;
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Restore Utang',
+      message: 'Move utang for ${debt.customerName} back to your active Utang list?',
+      confirmLabel: 'Restore',
+      confirmColor: AppColors.success,
+      icon: Icons.restore_rounded,
+    );
+    if (!confirm || !mounted) return;
     await _appState.restoreDebt(debt.id);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Utang for ${debt.customerName} restored'),
-        backgroundColor: AppColors.success,
-      ));
-    }
+    if (mounted) KnzToast.success(context, '♻️ Utang for ${debt.customerName} restored.');
     await _load();
   }
 
   Future<void> _hardDeleteDebt(CustomerDebt debt) async {
-    final confirm = await _confirmDialog(
-        'Permanently delete utang for ${debt.customerName}?\n\nThis cannot be undone.');
-    if (confirm != true) return;
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Delete Forever?',
+      message: 'Permanently delete utang record for ${debt.customerName}? This cannot be undone.',
+      confirmLabel: 'Delete Forever',
+      confirmColor: AppColors.error,
+      icon: Icons.delete_forever_rounded,
+    );
+    if (!confirm || !mounted) return;
     await _appState.hardDeleteDebt(debt.id);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Utang record permanently deleted'),
-        backgroundColor: AppColors.error,
-      ));
-    }
+    if (mounted) KnzToast.error(context, '❌ Utang record for ${debt.customerName} permanently deleted.');
     await _load();
   }
-
-  Future<bool?> _restoreDialog(String title, String message) => showDialog<bool>(
-    context: context,
-    builder: (_) => AlertDialog(
-      backgroundColor: AppColors.surface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      title: Row(children: [
-        Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: AppColors.success.withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: const Icon(Icons.restore, color: AppColors.success, size: 18),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(title,
-              style: const TextStyle(color: AppColors.white, fontSize: 15)),
-        ),
-      ]),
-      content: Text(message,
-          style: const TextStyle(color: AppColors.whiteSecondary, fontSize: 13)),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel',
-              style: TextStyle(color: AppColors.whiteTertiary)),
-        ),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.success,
-            foregroundColor: AppColors.white,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8)),
-          ),
-          icon: const Icon(Icons.restore, size: 16),
-          label: const Text('Yes, Restore'),
-          onPressed: () => Navigator.pop(context, true),
-        ),
-      ],
-    ),
-  );
-
-  Future<bool?> _confirmDialog(String message) => showDialog<bool>(
-    context: context,
-    builder: (_) => AlertDialog(
-      backgroundColor: AppColors.surface,
-      title: const Text('Confirm', style: TextStyle(color: AppColors.white)),
-      content: Text(message,
-          style: const TextStyle(color: AppColors.whiteSecondary)),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel',
-              style: TextStyle(color: AppColors.whiteTertiary)),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('Delete Forever',
-              style: TextStyle(color: AppColors.error)),
-        ),
-      ],
-    ),
-  );
 
   @override
   Widget build(BuildContext context) {

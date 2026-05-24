@@ -70,12 +70,15 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     // FIX N+1: Single JOIN query instead of one query per debt for payments
     final joinRows = await database.rawQuery('''
       SELECT
-        d.id            AS d_id,
-        d.customer_name AS d_customer_name,
-        d.order_id      AS d_order_id,
-        d.total_amount  AS d_total_amount,
-        d.amount_paid   AS d_amount_paid,
-        d.created_at    AS d_created_at,
+        d.id                  AS d_id,
+        d.customer_name       AS d_customer_name,
+        d.order_id            AS d_order_id,
+        d.total_amount        AS d_total_amount,
+        d.amount_paid         AS d_amount_paid,
+        d.created_at          AS d_created_at,
+        d.interest_rate       AS d_interest_rate,
+        d.interest_type       AS d_interest_type,
+        d.interest_start_date AS d_interest_start_date,
         p.id            AS p_id,
         p.amount        AS p_amount,
         p.paid_at       AS p_paid_at,
@@ -92,12 +95,15 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     for (final row in joinRows) {
       final did = row['d_id'] as String;
       debtsMap.putIfAbsent(did, () => {
-        'id':            row['d_id'],
-        'customer_name': row['d_customer_name'],
-        'order_id':      row['d_order_id'],
-        'total_amount':  row['d_total_amount'],
-        'amount_paid':   row['d_amount_paid'],
-        'created_at':    row['d_created_at'],
+        'id':                   row['d_id'],
+        'customer_name':        row['d_customer_name'],
+        'order_id':             row['d_order_id'],
+        'total_amount':         row['d_total_amount'],
+        'amount_paid':          row['d_amount_paid'],
+        'created_at':           row['d_created_at'],
+        'interest_rate':        row['d_interest_rate'],
+        'interest_type':        row['d_interest_type'],
+        'interest_start_date':  row['d_interest_start_date'],
       });
       // p_id is null when LEFT JOIN finds no matching payments row
       if (row['p_id'] != null) {
@@ -230,12 +236,15 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     // Same JOIN pattern as getAll() but filters is_deleted = 1
     final joinRows = await database.rawQuery('''
       SELECT
-        d.id            AS d_id,
-        d.customer_name AS d_customer_name,
-        d.order_id      AS d_order_id,
-        d.total_amount  AS d_total_amount,
-        d.amount_paid   AS d_amount_paid,
-        d.created_at    AS d_created_at,
+        d.id                  AS d_id,
+        d.customer_name       AS d_customer_name,
+        d.order_id            AS d_order_id,
+        d.total_amount        AS d_total_amount,
+        d.amount_paid         AS d_amount_paid,
+        d.created_at          AS d_created_at,
+        d.interest_rate       AS d_interest_rate,
+        d.interest_type       AS d_interest_type,
+        d.interest_start_date AS d_interest_start_date,
         p.id            AS p_id,
         p.amount        AS p_amount,
         p.paid_at       AS p_paid_at,
@@ -251,12 +260,15 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     for (final row in joinRows) {
       final did = row['d_id'] as String;
       debtsMap.putIfAbsent(did, () => {
-        'id':            row['d_id'],
-        'customer_name': row['d_customer_name'],
-        'order_id':      row['d_order_id'],
-        'total_amount':  row['d_total_amount'],
-        'amount_paid':   row['d_amount_paid'],
-        'created_at':    row['d_created_at'],
+        'id':                   row['d_id'],
+        'customer_name':        row['d_customer_name'],
+        'order_id':             row['d_order_id'],
+        'total_amount':         row['d_total_amount'],
+        'amount_paid':          row['d_amount_paid'],
+        'created_at':           row['d_created_at'],
+        'interest_rate':        row['d_interest_rate'],
+        'interest_type':        row['d_interest_type'],
+        'interest_start_date':  row['d_interest_start_date'],
       });
       if (row['p_id'] != null) {
         paymentsMap.putIfAbsent(did, () => []).add(_paymentFromMap({
@@ -329,15 +341,19 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
 
   // Converts a CustomerDebt model to a SQLite column map
   Map<String, dynamic> _debtToMap(CustomerDebt d, String userId) => {
-    'id':            d.id,
-    'customer_name': d.customerName,
-    'order_id':      d.orderId,
-    'total_amount':  d.totalAmount,
-    'amount_paid':   d.amountPaid,
-    'created_at':    d.createdAt.toIso8601String(),
-    'user_id':       userId,
-    'is_deleted':    0,
-    'deleted_at':    null,
+    'id':                   d.id,
+    'customer_name':        d.customerName,
+    'order_id':             d.orderId,
+    'total_amount':         d.totalAmount,
+    'amount_paid':          d.amountPaid,
+    'created_at':           d.createdAt.toIso8601String(),
+    'user_id':              userId,
+    'is_deleted':           0,
+    'deleted_at':           null,
+    // v6 interest fields
+    'interest_rate':        d.interestRate,
+    'interest_type':        d.interestType,
+    'interest_start_date':  d.interestStartDate?.toIso8601String(),
   };
 
   // Converts a PaymentRecord model to a SQLite column map for the payments table
@@ -352,13 +368,19 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   // Assembles a CustomerDebt model from a flat column map and its payments list
   CustomerDebt _debtFromMap(Map<String, dynamic> m, List<PaymentRecord> payments) =>
       CustomerDebt(
-        id:           m['id']            as String,
-        customerName: m['customer_name'] as String,
-        orderId:      m['order_id']      as String,
-        totalAmount:  (m['total_amount'] as num).toDouble(),
-        amountPaid:   (m['amount_paid']  as num).toDouble(),
-        createdAt:    DateTime.parse(m['created_at'] as String),
-        payments:     payments,
+        id:                 m['id']            as String,
+        customerName:       m['customer_name'] as String,
+        orderId:            m['order_id']      as String,
+        totalAmount:        (m['total_amount'] as num).toDouble(),
+        amountPaid:         (m['amount_paid']  as num).toDouble(),
+        createdAt:          DateTime.parse(m['created_at'] as String),
+        payments:           payments,
+        // v6 interest fields — safe defaults for old rows
+        interestRate:       (m['interest_rate']  as num?)?.toDouble() ?? 0,
+        interestType:       m['interest_type']    as String? ?? 'none',
+        interestStartDate:  m['interest_start_date'] != null
+            ? DateTime.tryParse(m['interest_start_date'] as String)
+            : null,
       );
 
   // Converts a raw SQLite row map into a PaymentRecord model instance

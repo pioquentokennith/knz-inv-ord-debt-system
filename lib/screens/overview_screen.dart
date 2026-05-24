@@ -52,7 +52,7 @@ class _OverviewScreenState extends State<OverviewScreen> {
                   duration: const Duration(milliseconds: 400),
                   childAnimationBuilder: (widget) => SlideAnimation(
                     verticalOffset: 30,
-                    child: FadeInAnimation(child: widget),
+                    child: KnzFadeIn(child: widget),
                   ),
                   children: [
                     // ── Header ──────────────────────────────────────────
@@ -371,12 +371,20 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                   const SizedBox(height: 10),
                                   // Filtered logs
                                   Builder(builder: (_) {
+                                    // FIX: Products/Stock filter must match both 'product'
+                                    // (addProduct / updateProduct / deleteProduct) and 'stock'
+                                    // (updateStock) log types. Previously only 'product' was
+                                    // checked, so stock-change entries were invisible in this filter.
                                     final filtered = _selectedFilter == 'All'
                                         ? state.activityLogs
                                         : state.activityLogs
-                                            .where((log) =>
-                                                log.type ==
-                                                _filterType(_selectedFilter))
+                                            .where((log) {
+                                              final t = _filterType(_selectedFilter);
+                                              if (_selectedFilter == 'Products/Stock') {
+                                                return log.type == 'product' || log.type == 'stock';
+                                              }
+                                              return log.type == t;
+                                            })
                                             .toList();
 
                                     if (filtered.isEmpty) {

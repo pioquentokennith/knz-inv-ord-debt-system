@@ -26,6 +26,11 @@ import '../services/debt_service.dart';
 import '../services/auth_service.dart';
 import '../services/login_rate_limiter.dart'; // ← Brute-force login protection
 import '../services/notification_service.dart'; // ← Low-stock push notifications
+import '../models/reseller_model.dart';
+import '../models/sales_record_model.dart';
+import '../models/custom_order_model.dart';
+import '../repositories/local_reseller_repository.dart';
+import '../repositories/local_custom_order_repository.dart';
 
 // Singleton ChangeNotifier — widgets listen to this for reactive UI updates
 class AppState extends ChangeNotifier {
@@ -98,6 +103,11 @@ class AppState extends ChangeNotifier {
   List<Order>        _orders       = [];
   List<CustomerDebt> _debts        = [];
   List<ActivityLog>  _activityLogs = [];
+  List<Reseller>     _resellers    = [];
+  List<CustomOrder>  _customOrders = [];
+
+  final LocalResellerRepository     _resellerRepo     = LocalResellerRepository();
+  final LocalCustomOrderRepository  _customOrderRepo  = LocalCustomOrderRepository();
 
   // ── Public read-only getters ──────────────────────────────────────────────
   bool     get isLoggedIn  => _isLoggedIn;
@@ -110,6 +120,8 @@ class AppState extends ChangeNotifier {
   List<Order>        get orders       => List.unmodifiable(_orders);
   List<CustomerDebt> get debts        => List.unmodifiable(_debts);
   List<ActivityLog>  get activityLogs => List.unmodifiable(_activityLogs);
+  List<Reseller>     get resellers    => List.unmodifiable(_resellers);
+  List<CustomOrder>  get customOrders => List.unmodifiable(_customOrders);
 
   // ── Computed aggregate getters ────────────────────────────────────────────
   int get totalProducts  => _products.length;
@@ -130,18 +142,22 @@ class AppState extends ChangeNotifier {
 
   // Billed revenue (lahat maliban cancelled) — para sa analytics na gusto ng gross view
   // Gross revenue including pending/processing/utang orders (not yet cancelled)
+  // FIX: Use customerPayAmount (net) instead of totalAmount (SRP) so reseller orders
+  // don't inflate the figure.
   double get totalBilledRevenue => _orders
       .where((o) => o.status != OrderStatus.cancelled)
-      .fold(0.0, (s, o) => s + o.totalAmount);
+      .fold(0.0, (s, o) => s + o.customerPayAmount);
 
   // Total outstanding debt across all customers
   double get totalDebtAmount => _debts.fold(0.0, (s, d) => s + d.remainingBalance);
 
   // Sum ng lahat ng delivered orders lang.
+  // FIX: Use customerPayAmount (net) instead of totalAmount (SRP) so reseller
+  // delivered orders don't overcount revenue by the discount amount.
   double get deliveredRevenue {
     return _orders
         .where((o) => o.status == OrderStatus.delivered)
-        .fold(0.0, (s, o) => s + o.totalAmount);
+        .fold(0.0, (s, o) => s + o.customerPayAmount);
   }
 
   // Total Revenue = Delivered Revenue + Utang Collected (paid utang)
@@ -235,7 +251,7 @@ class AppState extends ChangeNotifier {
       _currentUser = user;
       _isLoggedIn  = true;
       // New account starts with empty lists — no existing data to load
-      _products    = []; _orders = []; _debts = []; _activityLogs = [];
+      _products    = []; _orders = []; _debts = []; _activityLogs = []; _resellers = []; _customOrders = [];
       _addLogSilent('New account registered: $name', 'auth');
       _setLoading(false);
       return true;
@@ -262,7 +278,10 @@ class AppState extends ChangeNotifier {
     _isLoggedIn  = false;
     _currentUser = null;
     _activeUser  = '';
-    _products    = []; _orders = []; _debts = []; _activityLogs = [];
+    _products    = []; _orders = []; _debts = []; _activityLogs = []; _resellers = [];
+    // FIX: Also clear _customOrders — omitting this caused the previous user's
+    // custom orders to be briefly visible until _loadAllData() finished on re-login.
+    _customOrders = [];
     _batchNotify();
   }
 
@@ -288,6 +307,18 @@ class AppState extends ChangeNotifier {
       _debts        = debts;
       _activityLogs = logs;
 
+      try {
+        _resellers = await _resellerRepo.getAll(_activeUser);
+      } catch (_) {
+        _resellers = [];
+      }
+
+      try {
+        _customOrders = await _customOrderRepo.getAll(_activeUser);
+      } catch (_) {
+        _customOrders = [];
+      }
+
       // BUG 2 FIX: Notifications fire on login only — not on every refresh/restore
       if (isLogin) {
         // ── Low-stock push notification ──────────────────────────────────
@@ -307,7 +338,7 @@ class AppState extends ChangeNotifier {
       }
     } catch (_) {
       // On any failure, fall back to empty lists rather than crashing
-      _products = []; _orders = []; _debts = []; _activityLogs = [];
+      _products = []; _orders = []; _debts = []; _activityLogs = []; _resellers = []; _customOrders = [];
     } finally {
       _setLoading(false); // Always clears spinner even on error
     }
@@ -413,23 +444,45 @@ class AppState extends ChangeNotifier {
   // Creates a new order, deducts stock via OrderService, and refreshes both lists.
   // AUTO-UTANG: If the order status is utang, automatically creates a matching
   // CustomerDebt record so the order appears in the Utang Tracker immediately.
-  Future<bool> addOrder(Order order, {void Function(String)? onError}) async {
+  Future<bool> addOrder(Order order, {
+    void Function(String)? onError,
+    double interestRate = 0,
+    String interestType = 'none',
+  }) async {
     try {
       await _os.createOrder(order, _activeUser, _products);
 
       // AUTO-UTANG: create the debt record right after the order is saved
       // so the user does not need to go to the Utang screen and record it manually.
+      // FIX: Use order.discountedTotal (net amount customer owes) instead of
+      // order.totalAmount (SRP). For reseller orders totalAmount = SRP while
+      // discountedTotal = net selling price. For regular orders discountedTotal
+      // falls back to totalAmount, so this is safe for both order types.
       if (order.status == OrderStatus.utang) {
         final debt = CustomerDebt(
           id:           const Uuid().v4(),
           customerName: order.customerName,
           orderId:      order.orderId,
-          totalAmount:  order.totalAmount,
+          totalAmount:  order.discountedTotal, // ← was order.totalAmount (used SRP for reseller orders)
           amountPaid:   0,
           createdAt:    DateTime.now(),
           payments:     [],
+          interestRate:      interestRate,
+          interestType:      interestType,
+          // FIX: Use order.orderDate so backdated orders don't start the interest
+          // clock at the time of data-entry. DateTime.now() would undercount interest
+          // for any order recorded after the fact.
+          interestStartDate: order.orderDate,
         );
         await _ds.addDebt(debt, _activeUser);
+        // FIX: Log the auto-created debt so it shows up in Recent Activity.
+        // Previously _ds.addDebt() was called directly, bypassing the log write
+        // that addDebt() (the AppState method) performs.
+        _addLogSilent(
+          'Utang auto-recorded for ${order.customerName} — '
+          '₱${debt.remainingBalance.toStringAsFixed(2)} remaining',
+          'payment',
+        );
       }
 
       // Refresh both products (stock changed) and orders (new entry)
@@ -645,7 +698,11 @@ class AppState extends ChangeNotifier {
   Future<void> addPayment(String debtId, PaymentRecord payment) async {
     try {
       final debt = _debts.firstWhere((d) => d.id == debtId);
-      await _ds.addPayment(debtId, payment, debt.remainingBalance);
+      // FIX: Pass totalWithInterest (principal + accrued interest) as the ceiling,
+      // not remainingBalance (principal only). The dialog validates against
+      // totalWithInterest, so the service must use the same ceiling or it will
+      // silently reject valid interest-inclusive payments.
+      await _ds.addPayment(debtId, payment, debt.totalWithInterest);
       // Full reload because amountPaid and isPaid may have changed
       _debts = await _ds.getAll(_activeUser);
       _addLogSilent(
@@ -667,6 +724,149 @@ class AppState extends ChangeNotifier {
     } finally {
       _batchNotify();
     }
+  }
+
+  // ── Custom Orders (Feature 5) ─────────────────────────────────────────────
+
+  Future<void> addCustomOrder(CustomOrder order) async {
+    try {
+      await _customOrderRepo.save(order);
+      _customOrders = [order, ..._customOrders];
+      _addLogSilent('Custom order created for ${order.customerName}', 'custom_order');
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] addCustomOrder: $e\n$st');
+    } finally {
+      _batchNotify();
+    }
+  }
+
+  Future<void> updateCustomOrder(CustomOrder order) async {
+    try {
+      await _customOrderRepo.update(order);
+      final idx = _customOrders.indexWhere((o) => o.id == order.id);
+      if (idx != -1) {
+        _customOrders = List.of(_customOrders)..[idx] = order;
+      } else {
+        _customOrders = await _customOrderRepo.getAll(_activeUser);
+      }
+      _addLogSilent('Custom order updated for ${order.customerName}', 'custom_order');
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] updateCustomOrder: $e\n$st');
+    } finally {
+      _batchNotify();
+    }
+  }
+
+  Future<void> updateCustomOrderStatus(String id, CustomOrderStatus status) async {
+    try {
+      await _customOrderRepo.updateStatus(id, status.storageKey);
+      final idx = _customOrders.indexWhere((o) => o.id == id);
+      if (idx != -1) {
+        _customOrders = List.of(_customOrders)
+          ..[idx] = _customOrders[idx].copyWith(status: status);
+      }
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] updateCustomOrderStatus: $e\n$st');
+    } finally {
+      _batchNotify();
+    }
+  }
+
+  Future<void> deleteCustomOrder(String id) async {
+    try {
+      await _customOrderRepo.delete(id);
+      _customOrders = _customOrders.where((o) => o.id != id).toList();
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('[AppState] deleteCustomOrder: $e\n$st');
+    } finally {
+      _batchNotify();
+    }
+  }
+
+  // ── Resellers ─────────────────────────────────────────────────────────────
+
+  /// Loads resellers from SQLite into memory.
+  Future<void> loadResellers() async {
+    try {
+      _resellers = await _resellerRepo.getAll(_activeUser);
+    } catch (_) {
+      _resellers = [];
+    }
+    _batchNotify();
+  }
+
+  /// Adds a new reseller and reloads the list.
+  Future<void> addReseller(Reseller reseller) async {
+    try {
+      await _resellerRepo.save(reseller);
+      _resellers = await _resellerRepo.getAll(_activeUser);
+      _addLogSilent('Reseller added: ${reseller.name}', 'reseller');
+    } catch (_) {} finally {
+      _batchNotify();
+    }
+  }
+
+  /// Updates an existing reseller.
+  Future<void> updateReseller(Reseller reseller) async {
+    try {
+      await _resellerRepo.update(reseller);
+      _resellers = await _resellerRepo.getAll(_activeUser);
+      _addLogSilent('Reseller updated: ${reseller.name}', 'reseller');
+    } catch (_) {} finally {
+      _batchNotify();
+    }
+  }
+
+  /// Soft-deletes a reseller.
+  Future<void> deleteReseller(String resellerId) async {
+    try {
+      await _resellerRepo.delete(resellerId);
+      _resellers = _resellers.where((r) => r.id != resellerId).toList();
+    } catch (_) {} finally {
+      _batchNotify();
+    }
+  }
+
+  // ── Sales Records (flattened view for Feature 8) ──────────────────────────
+
+  /// Flattens all active orders + their items into SalesRecord rows.
+  /// Filtered to non-cancelled orders only.
+  List<SalesRecord> get salesRecords {
+    final List<SalesRecord> records = [];
+    for (final order in _orders) {
+      if (order.status == OrderStatus.cancelled) continue;
+      for (final item in order.items) {
+        // unitPrice = actual selling price (after deduction, always correct)
+        final discountedPrice = item.unitPrice;
+
+        // SRP: use stored srpPrice. For legacy orders saved before the fix,
+        // srpPrice == unitPrice (both 220) — no item-level discount was tracked then.
+        // Do NOT try to reconstruct SRP from deductionPerItem for legacy rows:
+        //   220 + 50 = 270 is WRONG — the true SRP was already 220.
+        // New orders (post-fix) correctly save unitPrice=170, srpPrice=220.
+        final double srp = item.srpPrice; // _srpPrice ?? _unitPrice
+
+        final displayDiscountPct = srp > 0 && srp != discountedPrice
+            ? ((srp - discountedPrice) / srp * 100)
+            : 0.0;
+        records.add(SalesRecord(
+          itemId:          item.id,
+          orderId:         order.orderId,
+          itemName:        item.productName,
+          srp:             srp,
+          discountedPrice: discountedPrice,
+          quantity:        item.quantity,
+          customerName:    order.customerName,
+          datePurchased:   order.orderDate,
+          totalSales:      discountedPrice * item.quantity,
+          isReseller:      order.isReseller,
+          discountPercent: displayDiscountPct,
+        ));
+      }
+    }
+    // Most recent first
+    records.sort((a, b) => b.datePurchased.compareTo(a.datePurchased));
+    return records;
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

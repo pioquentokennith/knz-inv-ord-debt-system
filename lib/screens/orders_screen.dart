@@ -33,11 +33,42 @@ class _OrdersScreenState extends State<OrdersScreen> {
   // Local UI state only — search text and filter dropdown
   final _searchCtrl = TextEditingController();
   OrderStatus? _filterStatus;
+  bool _bulkDelivering = false; // Guards the bulk-deliver button against double-tap
 
   @override
   void dispose() {
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  // Marks all currently-filtered pending orders as Delivered in one tap.
+  // Shows a confirmation dialog first so the user can't trigger it accidentally.
+  Future<void> _bulkMarkDelivered(List<Order> filtered) async {
+    final pending = filtered
+        .where((o) => o.status == OrderStatus.pending ||
+                      o.status == OrderStatus.processing ||
+                      o.status == OrderStatus.shipped)
+        .toList();
+    if (pending.isEmpty) {
+      KnzToast.warning(context, 'No pending orders to mark as delivered.');
+      return;
+    }
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Mark All as Delivered?',
+      message: 'This will mark ${pending.length} order${pending.length == 1 ? '' : 's'} as Delivered. Continue?',
+      confirmLabel: 'Mark All',
+      icon: Icons.done_all_rounded,
+    );
+    if (!confirmed || !mounted) return;
+    setState(() => _bulkDelivering = true);
+    for (final order in pending) {
+      await AppState().updateOrderStatus(order.id, OrderStatus.delivered);
+    }
+    if (mounted) {
+      setState(() => _bulkDelivering = false);
+      KnzToast.success(context, '✅ ${pending.length} order${pending.length == 1 ? '' : 's'} marked as Delivered.');
+    }
   }
 
   // Filters the order list by search query and/or status dropdown.
@@ -84,60 +115,63 @@ class _OrdersScreenState extends State<OrdersScreen> {
 
     if (result == null) return;
 
+    // ── Utang warning: if marking Delivered but customer has an open debt ──
+    if (result == OrderStatus.delivered && mounted) {
+      final openDebt = AppState().debts.where((d) =>
+          d.orderId == order.orderId && !d.isPaid).isNotEmpty;
+      if (openDebt) {
+        final proceed = await showConfirmDialog(
+          context,
+          title: '⚠️ May Utang pa si ${order.customerName}',
+          message:
+              'Ang order na ito ay may hindi pa nababayarang utang. '
+              'Sigurado ka bang i-mark as Delivered?',
+          confirmLabel: 'Oo, I-Deliver',
+          confirmColor: AppColors.warning,
+          icon: Icons.warning_amber_rounded,
+        );
+        if (!proceed || !mounted) return;
+      }
+    }
+
     // ── Confirmation prompt ───────────────────────────────────────────────
     if (!mounted) return;
     final confirmed = await showConfirmDialog(
       context,
       title: 'Update Status?',
-      message:
-          'Change status of ${order.orderId} to "${result.displayName}"?',
+      message: 'Change status of ${order.orderId} to "${result.displayName}"?',
       confirmLabel: 'Update',
+      icon: Icons.swap_horiz_rounded,
     );
     if (!confirmed || !mounted) return;
     // ── END Confirmation ──────────────────────────────────────────────────
 
     try {
-      await AppState().updateOrderStatus(order.id, result);
       if (result == OrderStatus.utang && mounted) {
         MarkAsUtangDialog.show(context, order);
+      } else {
+        await AppState().updateOrderStatus(order.id, result);
+        if (mounted) KnzToast.success(context, '✅ ${order.orderId} → ${result.displayName}.');
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().replaceFirst('Exception: ', '')),
-          backgroundColor: Colors.red,
-          duration: const Duration(seconds: 4),
-        ),
-      );
+      KnzToast.error(context, e.toString().replaceFirst('Exception: ', ''));
     }
   }
 
   // Shows a confirmation dialog then soft-deletes the order via AppState.
   void _deleteOrder(Order order) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text('Delete Order',
-            style: TextStyle(color: AppColors.white)),
-        content: Text('Remove order ${order.orderId}?',
-            style:
-                const TextStyle(color: AppColors.whiteSecondary)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel',
-                  style:
-                      TextStyle(color: AppColors.whiteTertiary))),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete',
-                  style: TextStyle(color: AppColors.error))),
-        ],
-      ),
+    final confirm = await showConfirmDialog(
+      context,
+      title: 'Delete Order',
+      message: 'Remove order ${order.orderId} (${order.customerName})? It can be restored from the Recycle Bin.',
+      confirmLabel: 'Delete',
+      confirmColor: AppColors.error,
+      icon: Icons.delete_outline_rounded,
     );
-    if (confirm == true) await AppState().deleteOrder(order.id);
+    if (!confirm || !mounted) return;
+    await AppState().deleteOrder(order.id);
+    if (mounted) KnzToast.error(context, '🗑️ Order ${order.orderId} moved to Recycle Bin.');
   }
 
   @override
@@ -315,22 +349,73 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                         fontWeight: FontWeight.w700,
                                         fontSize: 16)),
                               ]),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: AppColors.gold
-                                      .withValues(alpha: 0.15),
-                                  borderRadius:
-                                      BorderRadius.circular(20),
-                                ),
-                                child: Text(
-                                  '${filtered.length} ORDERS',
-                                  style: const TextStyle(
-                                      color: AppColors.gold,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700),
-                                ),
+                              Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      color: AppColors.gold
+                                          .withValues(alpha: 0.15),
+                                      borderRadius:
+                                          BorderRadius.circular(20),
+                                    ),
+                                    child: Text(
+                                      '${filtered.length} ORDERS',
+                                      style: const TextStyle(
+                                          color: AppColors.gold,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  // Bulk deliver: marks all non-cancelled,
+                                  // non-delivered filtered orders as Delivered.
+                                  Tooltip(
+                                    message: 'Mark all as Delivered',
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(6),
+                                      onTap: _bulkDelivering
+                                          ? null
+                                          : () => _bulkMarkDelivered(filtered),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.success
+                                              .withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: AppColors.success
+                                                .withValues(alpha: 0.35),
+                                          ),
+                                        ),
+                                        child: _bulkDelivering
+                                            ? const SizedBox(
+                                                width: 12, height: 12,
+                                                child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: AppColors.success,
+                                                ),
+                                              )
+                                            : const Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(Icons.done_all,
+                                                      color: AppColors.success,
+                                                      size: 13),
+                                                  SizedBox(width: 4),
+                                                  Text('Mark All Delivered',
+                                                      style: TextStyle(
+                                                          color: AppColors.success,
+                                                          fontSize: 11,
+                                                          fontWeight: FontWeight.w600)),
+                                                ],
+                                              ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -360,7 +445,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                             milliseconds: 300),
                                         child: SlideAnimation(
                                           horizontalOffset: 30,
-                                          child: FadeInAnimation(
+                                          child: KnzFadeIn(
                                             child: isWide
                                                 ? _OrderRowWide(
                                                     order: o,
@@ -484,7 +569,7 @@ class _OrderCard extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    currency.format(item.subtotal),
+                    currency.format(item.srpPrice * item.quantity),
                     style: const TextStyle(
                         color: AppColors.whiteTertiary,
                         fontSize: 12),
@@ -498,7 +583,7 @@ class _OrderCard extends StatelessWidget {
               Text(dateFmt.format(order.orderDate),
                   style: const TextStyle(
                       color: AppColors.whiteTertiary, fontSize: 11)),
-              Text(currency.format(order.totalAmount),
+              Text(currency.format(order.customerPayAmount),
                   style: const TextStyle(
                       color: AppColors.gold,
                       fontWeight: FontWeight.w700,
@@ -595,7 +680,7 @@ class _OrderRowWide extends StatelessWidget {
         const SizedBox(width: 12),
         OrderStatusBadge(status: order.status),
         const SizedBox(width: 16),
-        Text(currency.format(order.totalAmount),
+        Text(currency.format(order.customerPayAmount),
             style: const TextStyle(
                 color: AppColors.gold,
                 fontWeight: FontWeight.w700,

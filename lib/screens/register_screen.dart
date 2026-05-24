@@ -150,24 +150,18 @@ class _RegisterScreenState extends State<RegisterScreen>
     if (!mounted) return;
 
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          backgroundColor: Color(0xFF1E4D2B),
-          content: Row(
-            children: [
-              Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 16),
-              SizedBox(width: 8),
-              Text('Account created! Welcome to ${AppStrings.appName}.',
-                  style: TextStyle(color: Colors.white)),
-            ],
-          ),
-        ),
-      );
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const MainShell()),
         (route) => false,
       );
+      // Show toast after navigation so it appears on MainShell
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (context.mounted) {
+          KnzToast.success(context,
+            '🎉 Account created! Welcome to ${AppStrings.appName}.');
+        }
+      });
     } else {
       setState(() {
         _isLoading = false;

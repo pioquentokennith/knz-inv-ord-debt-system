@@ -225,7 +225,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                     const Duration(milliseconds: 400),
                                 columnCount: crossAxisCount,
                                 child: ScaleAnimation(
-                                  child: FadeInAnimation(
+                                  child: KnzFadeIn(
                                     child: _ProductCard(
                                       product: p,
                                       stockPct: stockPct,
@@ -241,8 +241,17 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                             EditStockDialog(product: p),
                                       ),
                                       onDelete: () async {
-                                        await AppState()
-                                            .deleteProduct(p.id);
+                                        final confirm = await showConfirmDialog(
+                                          context,
+                                          title: 'Delete Product',
+                                          message: 'Remove "${p.name}" from inventory? It can be restored from the Recycle Bin.',
+                                          confirmLabel: 'Delete',
+                                          confirmColor: AppColors.error,
+                                          icon: Icons.delete_outline_rounded,
+                                        );
+                                        if (!confirm || !context.mounted) return;
+                                        await AppState().deleteProduct(p.id);
+                                        if (context.mounted) KnzToast.error(context, '🗑️ "${p.name}" moved to Recycle Bin.');
                                       },
                                     ),
                                   ),

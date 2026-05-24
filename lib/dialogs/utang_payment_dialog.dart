@@ -61,9 +61,14 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
       setState(() => _error = 'Please enter a valid amount.');
       return;
     }
-    if (amount > widget.debt.remainingBalance) {
+    // FIX: Validate against totalWithInterest (principal + accrued interest) instead
+    // of remainingBalance (principal only). Without this, paying the full amount shown
+    // in the UI ("Total Now Due") would be incorrectly blocked as "exceeds balance".
+    // For debts with no interest, totalWithInterest == remainingBalance, so this is safe.
+    final maxAllowed = widget.debt.totalWithInterest;
+    if (amount > maxAllowed) {
       setState(() => _error =
-          'Amount exceeds remaining balance of ₱${widget.debt.remainingBalance.toStringAsFixed(2)}');
+          'Amount exceeds total due of ₱${maxAllowed.toStringAsFixed(2)}');
       return;
     }
     if (_method == 'GCash') {
@@ -110,50 +115,30 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
     if (!mounted) return;
     Navigator.pop(context);
 
-    final newRemaining = widget.debt.remainingBalance - amount;
+    // FIX: Read the fresh debt from AppState after addPayment() completes instead
+    // of computing newRemaining from the stale widget.debt.remainingBalance.
+    // widget.debt is the snapshot passed at dialog-open time; AppState now holds
+    // the updated record after the DB write.
+    final freshDebt = AppState().debts.cast<CustomerDebt?>()
+        .firstWhere((d) => d?.id == widget.debt.id, orElse: () => null);
+    final newRemaining = freshDebt?.remainingBalance ?? 0.0;
     if (newRemaining <= 0) {
-      // Fully paid — special congratulatory message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: AppColors.success,
-          duration: const Duration(seconds: 3),
-          content: Row(children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                '🎉 Fully Paid! Tapos na ang utang ni ${widget.debt.customerName}.',
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ]),
-        ),
-      );
+      KnzToast.success(context,
+        '🎉 Fully Paid! Tapos na ang utang ni ${widget.debt.customerName}.');
     } else {
-      // Partial payment — show how much is still remaining
       final currency2 = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: AppColors.gold,
-          duration: const Duration(seconds: 3),
-          content: Row(children: [
-            const Icon(Icons.payments_outlined, color: Colors.black, size: 20),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Payment successful! Remaining balance: ${currency2.format(newRemaining)}',
-                style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w600),
-              ),
-            ),
-          ]),
-        ),
-      );
+      KnzToast.info(context,
+        '💳 Payment received! Remaining: ${currency2.format(newRemaining)}');
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final remaining = widget.debt.remainingBalance;
+    // FIX: "Full" fills totalWithInterest (principal + interest) so the customer
+    // can pay the actual total due in one tap. For no-interest debts,
+    // totalWithInterest == remainingBalance so behaviour is unchanged.
+    final fullPayAmount = widget.debt.totalWithInterest;
     final currency  = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
 
     return Dialog(
@@ -187,28 +172,69 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: AppColors.cardBorder),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
                   children: [
-                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(widget.debt.customerName,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Text(widget.debt.customerName,
+                              style: const TextStyle(
+                                  color: AppColors.white,
+                                  fontWeight: FontWeight.w600)),
+                          Text(widget.debt.orderId,
+                              style: const TextStyle(
+                                  color: AppColors.gold, fontSize: 12)),
+                        ]),
+                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          const Text('Principal Balance',
+                              style: TextStyle(
+                                  color: AppColors.whiteTertiary, fontSize: 11)),
+                          Text(currency.format(remaining),
+                              style: const TextStyle(
+                                  color: AppColors.error,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15)),
+                        ]),
+                      ],
+                    ),
+                    // ── v6: Interest breakdown (only when interest is active) ──
+                    if (widget.debt.hasInterest) ...[
+                      const SizedBox(height: 8),
+                      const Divider(color: AppColors.divider, height: 1),
+                      const SizedBox(height: 8),
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        Text(
+                          'Interest (${widget.debt.interestRate.toStringAsFixed(0)}% '
+                          '${widget.debt.interestType} × '
+                          '${widget.debt.interestDaysOld} days)',
                           style: const TextStyle(
-                              color: AppColors.white,
-                              fontWeight: FontWeight.w600)),
-                      Text(widget.debt.orderId,
+                              color: AppColors.warning, fontSize: 11),
+                        ),
+                        Text(
+                          '+ ${currency.format(widget.debt.accruedInterest)}',
                           style: const TextStyle(
-                              color: AppColors.gold, fontSize: 12)),
-                    ]),
-                    Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                      const Text('Remaining',
-                          style: TextStyle(
-                              color: AppColors.whiteTertiary, fontSize: 11)),
-                      Text(currency.format(remaining),
+                              color: AppColors.warning,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12),
+                        ),
+                      ]),
+                      const SizedBox(height: 4),
+                      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        const Text('Total Now Due',
+                            style: TextStyle(
+                                color: AppColors.white,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 12)),
+                        Text(
+                          currency.format(widget.debt.totalWithInterest),
                           style: const TextStyle(
-                              color: AppColors.error,
+                              color: AppColors.gold,
                               fontWeight: FontWeight.w700,
-                              fontSize: 15)),
-                    ]),
+                              fontSize: 14),
+                        ),
+                      ]),
+                    ],
                   ],
                 ),
               ),
@@ -271,7 +297,7 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
                       borderSide: const BorderSide(color: AppColors.gold)),
                   suffixIcon: TextButton(
                     onPressed: () => _amountCtrl.text =
-                        remaining.toStringAsFixed(2),
+                        fullPayAmount.toStringAsFixed(2),
                     child: const Text('Full',
                         style: TextStyle(
                             color: AppColors.gold, fontSize: 12)),
