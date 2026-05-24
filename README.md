@@ -7,7 +7,7 @@
 
 ## 📱 Overview
 
-**KNZ Scent Admin** is a business management system designed for a small fragrance business. It allows administrators to manage products, track orders, monitor inventory, handle customer debts (*utang*), export reports, and view sales analytics — all from a mobile device, even without an internet connection.
+**KNZ Scent Admin** is a business management system designed for a small fragrance business. It allows administrators to manage products, track orders, monitor inventory, handle customer debts (*utang*), manage resellers, export reports, and view sales analytics — all from a mobile device, even without an internet connection.
 
 > Built as a school project demonstrating the practical application of **Object-Oriented Programming (OOP)** principles in a real-world Flutter mobile application.
 
@@ -17,18 +17,22 @@
 
 | Feature | Description |
 |---|---|
-| 🔐 **Authentication** | Secure login, registration, OTP email verification, and password reset |
-| 📦 **Inventory Management** | Add, edit, soft-delete, and restore stock items; low-stock alerts included |
+| 🔐 **Authentication** | Secure login, registration, OTP email verification, and password reset with persistent brute-force lockout (5 attempts → 30s lockout, survives app restarts) |
+| 📦 **Inventory Management** | Add, edit, soft-delete, and restore stock items; low-stock alerts with push notifications |
 | 🛒 **Order Management** | Create and track orders with statuses: Pending, Processing, Shipped, Delivered, Cancelled, Utang |
 | 💸 **Utang (Credit) System** | Record customer debts, accept partial payments, and print Bluetooth debt receipts |
+| 🏪 **Reseller Management** | Track resellers with a fixed peso deduction per item; dedicated reseller accounting view |
+| 📋 **Custom Orders** | Create and manage custom/bespoke orders separate from standard orders |
+| 💰 **Sales & Accounting** | Sales records screen and a dedicated accounting screen for financial reconciliation |
 | 📊 **Analytics Dashboard** | Visual sales reports, revenue trends, and product performance charts |
-| 🗂️ **Product Catalog** | Manage fragrance products with categories, pricing, and images |
+| 🗂️ **Product Catalog** | Manage fragrance products with categories, pricing, image support, and minimum stock levels |
 | 📋 **Activity Logs** | Full audit trail of all admin actions |
 | 🗑️ **Recycle Bin** | Soft-deleted records are stored and can be restored or permanently deleted |
 | 📤 **Export** | Export inventory, orders, and debt records as PDF or CSV and share them |
-| 🖨️ **Bluetooth Printing** | Print receipts wirelessly to ESC/POS Bluetooth thermal printers |
-| 🔄 **Offline-First Sync** | Works without internet; auto-syncs to Firebase Firestore when back online |
+| 🖨️ **Bluetooth Printing** | Print receipts and debt agreements wirelessly to ESC/POS Bluetooth thermal printers |
+| 🔄 **Offline-First Sync** | Works without internet; auto-syncs to Firebase Firestore when back online via a persistent sync queue |
 | ⏱️ **Session Timeout** | Automatically logs out after a period of inactivity for security |
+| 🔔 **Push Notifications** | Local notifications for low-stock restock reminders |
 
 ---
 
@@ -38,71 +42,90 @@ This project follows a **layered architecture** with clear separation of concern
 
 ```
 lib/
-├── core/                          # App-wide constants, colors, text styles, and state management
-│   ├── app_constants.dart
-│   ├── app_state.dart             # Singleton ChangeNotifier — central app state
+├── core/                              # App-wide constants, colors, text styles, and state management
+│   ├── app_constants.dart             # AppColors, AppStrings — single source of truth for design tokens
+│   ├── app_state.dart                 # Singleton ChangeNotifier — central app state
 │   └── app_state_builder.dart
 │
-├── models/                        # Data entities (all extend BaseModel)
+├── models/                            # Data entities (all extend BaseModel)
 │   ├── base_model.dart
-│   ├── product_model.dart
-│   ├── order_model.dart
-│   ├── debt_model.dart
+│   ├── product_model.dart             # ProductCategory enum (EDP, EDT, Body Mist, Perfume Oil, Gift Set)
+│   ├── order_model.dart               # OrderStatus enum + OrderItem
+│   ├── payment_method_model.dart      # PaymentMethod enum (GCash, Maya, COD, Card, Utang)
+│   ├── debt_model.dart                # CustomerDebt + PaymentRecord
+│   ├── reseller_model.dart            # Reseller with deductionPerItem
+│   ├── custom_order_model.dart
+│   ├── sales_record_model.dart
+│   ├── reseller_accounting_summary.dart
 │   └── user_model.dart
 │
-├── repositories/                  # Data access layer (local SQLite + Firestore sync)
+├── repositories/                      # Data access layer (local SQLite + Firestore sync)
 │   ├── base_repository.dart
-│   ├── product_repository.dart    # Abstract interface
-│   ├── order_repository.dart      # Abstract interface
-│   ├── debt_repository.dart       # Abstract interface
-│   ├── user_repository.dart       # Abstract interface
+│   ├── product_repository.dart        # Abstract interface
+│   ├── order_repository.dart          # Abstract interface
+│   ├── debt_repository.dart           # Abstract interface
+│   ├── user_repository.dart           # Abstract interface
 │   ├── local_product_repository.dart
 │   ├── local_order_repository.dart
 │   ├── local_debt_repository.dart
 │   ├── local_user_repository.dart
+│   ├── local_reseller_repository.dart
+│   ├── local_custom_order_repository.dart
 │   ├── activity_log_repository.dart
 │   ├── i_activity_log_repository.dart
-│   ├── firestore_sync.dart        # Syncs local data to Firebase Firestore
-│   └── sync_queue.dart            # Queues offline writes for retry when online
+│   ├── firestore_sync.dart            # Syncs local data to Firebase Firestore
+│   └── sync_queue.dart               # Queues offline writes for retry when online (SharedPreferences-backed)
 │
-├── services/                      # Business logic layer (interface + implementation)
+├── services/                          # Business logic layer (interface + implementation)
 │   ├── auth_service.dart
 │   ├── product_service.dart
 │   ├── order_service.dart
 │   ├── debt_service.dart
-│   ├── export_service.dart        # PDF and CSV export logic
+│   ├── accounting_service.dart
+│   ├── agreement_pdf_service.dart     # Generates Bluetooth-printable debt agreement PDFs
+│   ├── export_service.dart            # PDF and CSV export logic
+│   ├── notification_service.dart      # Local push notifications (low-stock alerts)
+│   ├── login_rate_limiter.dart        # Persistent brute-force lockout (SharedPreferences-backed)
 │   └── session_timeout_service.dart
 │
-├── screens/                       # UI screens (one per feature)
+├── screens/                           # UI screens (one per feature)
 │   ├── login_screen.dart
 │   ├── register_screen.dart
 │   ├── otp_screen.dart
 │   ├── forgot_password_screen.dart
-│   ├── main_shell.dart            # Navigation shell with sidebar
+│   ├── main_shell.dart               # Navigation shell with sidebar
 │   ├── overview_screen.dart
 │   ├── inventory_screen.dart
 │   ├── products_screen.dart
 │   ├── orders_screen.dart
 │   ├── utang_screen.dart
+│   ├── sales_screen.dart
+│   ├── reports_screen.dart
 │   ├── analytics_screen.dart
+│   ├── accounting_screen.dart
+│   ├── reseller_screen.dart
+│   ├── reseller_accounting_screen.dart
+│   ├── custom_orders_screen.dart
 │   ├── receipt_screen.dart
-│   └── recycle_bin_screen.dart    # Soft-deleted items management
+│   └── recycle_bin_screen.dart
 │
-├── dialogs/                       # Reusable dialog components
+├── dialogs/                           # Reusable dialog components
 │   ├── order_dialog.dart
+│   ├── custom_order_dialog.dart
 │   ├── product_dialog.dart
 │   ├── edit_stock_dialog.dart
+│   ├── reseller_dialog.dart
 │   ├── mark_as_utang_dialog.dart
 │   ├── utang_payment_dialog.dart
 │   ├── utang_receipt_printer.dart
-│   └── export_dialog.dart         # Export format selection (PDF / CSV)
+│   └── export_dialog.dart            # Export format selection (PDF / CSV)
 │
-├── widgets/                       # Shared reusable UI widgets
+├── widgets/                           # Shared reusable UI widgets
 │   ├── shared_widgets.dart
 │   └── receipt_shared_widgets.dart
 │
 ├── database/
-│   └── database_helper.dart       # SQLite setup and schema migrations
+│   └── database_helper.dart          # SQLite setup and schema migrations (current version: 7)
 │
 ├── firebase_options.dart
 └── main.dart
@@ -136,6 +159,8 @@ BaseModel
 │   └── OrderItem
 ├── CustomerDebt
 │   └── PaymentRecord
+├── Reseller
+├── CustomOrder
 └── AppUser
 ```
 
@@ -150,7 +175,7 @@ IDebtService    _debtService;
 IAuthService    _authService;
 ```
 
-`OrderStatus` also uses a **map-based dispatch** instead of switch statements for polymorphic behavior (display names, colors, icons).
+`OrderStatus` and `PaymentMethod` both use **map-based dispatch** instead of switch statements for polymorphic behavior (display names, colors, icons).
 
 ### 4. ⚙️ Dependency Inversion Principle (DIP)
 `AppState` receives its dependencies through a `configure()` method, making the app testable and modular. Concrete repositories and services are only wired up in `main.dart`, keeping the rest of the codebase decoupled.
@@ -161,7 +186,7 @@ IAuthService    _authService;
 
 - **Local:** SQLite via `sqflite` (primary, offline-first)
 - **Cloud:** Firebase Firestore (backup, synced when back online)
-- **Schema Version:** 3
+- **Schema Version:** 7
 
 ### Tables
 
@@ -169,10 +194,14 @@ IAuthService    _authService;
 |---|---|
 | `users` | Admin accounts |
 | `products` | Fragrance product inventory |
-| `orders` | Customer orders and order line items |
-| `debts` | Customer credit/utang records and payment history |
+| `orders` | Customer orders |
+| `order_items` | Line items per order (includes `srp_price` for sales accuracy) |
+| `debts` | Customer credit/utang records |
+| `payments` | Payment records against debts |
 | `activity_logs` | Audit trail of all admin actions |
 | `sync_queue` | Pending Firestore operations queued for retry when offline |
+| `resellers` | Reseller accounts with per-item deduction amounts |
+| `custom_orders` | Custom/bespoke order records |
 
 ---
 
@@ -181,16 +210,22 @@ IAuthService    _authService;
 - **Theme:** Dark mode with a luxury gold accent
 - **Color Palette:**
 
-| Role | Hex | Preview |
+| Role | Hex | Token |
 |---|---|---|
-| Background | `#0D0D0D` | ⬛ |
-| Surface | `#1A1A1A` | 🟫 |
-| Gold (base) | `#B8960C` | 🟡 |
-| Gold (main) | `#D4AF37` | 🟡 |
-| Gold (light) | `#E8C547` | 🟡 |
+| Background | `#0D0D0D` | `AppColors.background` |
+| Surface | `#1A1A1A` | `AppColors.surface` |
+| Surface Elevated | `#222222` | `AppColors.surfaceElevated` |
+| Sidebar | `#111111` | `AppColors.sidebar` |
+| Gold (main) | `#D4AF37` | `AppColors.gold` |
+| Gold (light) | `#E8C547` | `AppColors.goldLight` |
+| Gold (dark) | `#B8960C` | `AppColors.goldDark` |
+| Error | `#E53935` | `AppColors.error` |
+| Success | `#43A047` | `AppColors.success` |
+| Warning | `#FFA726` | `AppColors.warning` |
 
 - **Typography:** Roboto with wide letter-spacing for a premium feel
 - **Component library:** Material Design 3 with a custom dark `ColorScheme`
+- **Gradients:** Horizontal gold sweep (`goldGradient`) for headings/buttons; vertical dark fade (`sidebarGradient`) for the nav rail
 
 ---
 
@@ -198,12 +233,24 @@ IAuthService    _authService;
 
 | Status | Color | Description |
 |---|---|---|
-| Pending | 🟠 Orange | Order placed, not yet processed |
-| Processing | 🔵 Blue | Order is being prepared |
-| Shipped | 🟣 Purple | Order is on its way |
-| Delivered | 🟢 Green | Order successfully delivered |
-| Cancelled | 🔴 Red | Order was cancelled |
-| Utang | 🟡 Gold | Order marked as credit/debt |
+| Pending | 🟠 Orange `#FFA726` | Order placed, not yet processed |
+| Processing | 🔵 Blue `#29B6F6` | Order is being prepared |
+| Shipped | 🟣 Purple `#AB47BC` | Order is on its way |
+| Delivered | 🟢 Green `#43A047` | Order successfully delivered |
+| Cancelled | 🔴 Red `#E53935` | Order was cancelled |
+| Utang | 🟡 Gold `#D4AF37` | Order marked as credit/debt |
+
+---
+
+## 💳 Payment Methods
+
+| Method | Description |
+|---|---|
+| GCash | GCash e-wallet |
+| Maya | Maya (formerly PayMaya) e-wallet |
+| Credit / Debit Card | Visa / Mastercard / etc. |
+| Cash on Delivery | COD — no digital reference |
+| Utang (Credit) | Customer owes payment |
 
 ---
 
@@ -223,41 +270,24 @@ The app supports the following fragrance product categories:
 
 | Layer | Technology |
 |---|---|
-| Framework | Flutter (Dart) `>=3.4.0` |
-| Local Database | SQLite (`sqflite`) |
-| Cloud Database | Firebase Firestore |
-| Authentication | Custom + Firebase |
+| Framework | Flutter (Dart) `>=3.4.0 <4.0.0` |
+| Local Database | SQLite (`sqflite 2.4.1`) |
+| Cloud Database | Firebase Firestore (`cloud_firestore 5.6.5`) |
+| Authentication | Custom (SHA-256 via `crypto`) + Firebase |
 | State Management | `ChangeNotifier` — singleton `AppState` |
-| Email / OTP | Brevo API (via `.env`) |
-| Environment Config | `flutter_dotenv` |
-| Password Hashing | SHA-256 via `crypto` |
-| Analytics Charts | `fl_chart` |
-| Bluetooth Printing | `flutter_blue_plus` + `esc_pos_utils_plus` |
-| Export (PDF) | `pdf` + `printing` + `share_plus` |
-| Export (CSV) | `csv` + `share_plus` |
-| Crash Reporting | Firebase Crashlytics |
-
----
-
-## 🧪 Unit Tests
-
-The project includes unit tests covering core business logic:
-
-| Test File | Coverage |
-|---|---|
-| `app_state_test.dart` | Central state management |
-| `auth_appstate_test.dart` | Authentication flows |
-| `product_service_test.dart` | Product CRUD and validation |
-| `order_service_test.dart` | Order creation and status transitions |
-| `debt_service_test.dart` | Utang recording and payment handling |
-| `activity_log_test.dart` | Audit log creation |
-| `session_timeout_service_test.dart` | Auto-logout after inactivity |
-
-Run all tests with:
-
-```bash
-flutter test
-```
+| Email / OTP | Brevo API (via `.env` loaded with `flutter_dotenv`) |
+| Environment Config | `flutter_dotenv 5.2.1` |
+| Password Hashing | SHA-256 via `crypto 3.0.5` |
+| Login Protection | Persistent rate limiter via `shared_preferences 2.3.2` |
+| Analytics Charts | `fl_chart 0.70.2` |
+| Bluetooth Printing | `flutter_blue_plus 1.35.5` + `esc_pos_utils_plus 2.0.4` |
+| Export (PDF) | `pdf 3.11.1` + `printing 5.13.1` + `share_plus 10.0.0` |
+| Export (CSV) | `csv 6.0.0` + `share_plus 10.0.0` |
+| Push Notifications | `flutter_local_notifications 18.0.1` |
+| Crash Reporting | Firebase Crashlytics `4.3.3` (disabled in debug mode) |
+| Image Handling | `image_picker 1.1.2` + `path_provider 2.1.5` |
+| Connectivity | `connectivity_plus 6.1.4` |
+| Animations | `animate_do 3.3.4` + `flutter_staggered_animations 1.1.1` |
 
 ---
 
@@ -267,7 +297,7 @@ flutter test
 
 - Flutter SDK `>=3.4.0`
 - Android Studio or VS Code with Flutter plugin
-- Firebase project with Firestore enabled
+- Firebase project with Firestore and Crashlytics enabled
 - Brevo account (for OTP email verification)
 - A Bluetooth ESC/POS thermal printer (optional, for receipt printing)
 
@@ -292,6 +322,7 @@ flutter test
    BREVO_SENDER_EMAIL=your_sender_email
    BREVO_SENDER_NAME=KNZ Scent
    ```
+   > The `.env` file is bundled as a Flutter asset — it must be present before `flutter run`.
 
 4. **Configure Firebase**
 
@@ -301,6 +332,20 @@ flutter test
    ```bash
    flutter run
    ```
+
+---
+
+## 🧪 Unit Tests
+
+The project structure supports unit tests covering core business logic. Run all tests with:
+
+```bash
+flutter test
+```
+
+Key areas covered: authentication flows, product CRUD and validation, order creation and status transitions, utang recording and payment handling, audit log creation, session timeout, and rate limiter behavior.
+
+> `fake_async` is used in tests to control time-sensitive logic (e.g. session timeout, lockout timers) without real-world delays.
 
 ---
 
