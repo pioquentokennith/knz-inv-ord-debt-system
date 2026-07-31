@@ -1,393 +1,379 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// local_debt_repository.dart — SQLite-backed debt (utang) repository
-// Purpose : Manages customer debt records and payment installments against
-//           local SQLite with automatic Firestore sync via SyncQueue.
-// ─────────────────────────────────────────────────────────────────────────────
+import 'package:sqflite/sqflite.dart';
 
-import 'dart:convert';
+import '../core/domain_exceptions.dart';
+import '../database/database_helper.dart';
+import '../dto/debt_dto.dart';
 import '../models/debt_model.dart';
 import 'base_repository.dart';
 import 'debt_repository.dart';
 import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
-// Concrete SQLite + Firestore implementation of DebtRepository
+/// SQLite-backed debt repository with persisted accrual and payment allocation.
 class LocalDebtRepository extends BaseRepository implements DebtRepository {
-  final _cloud = FirestoreSync.instance;
-  final _queue = SyncQueue.instance;
+  LocalDebtRepository({
+    Future<Database> Function()? databaseProvider,
+    SyncOutbox? queue,
+    FirestoreSync? cloud,
+    DateTime Function()? now,
+  }) : _databaseProvider =
+           databaseProvider ?? (() => DatabaseHelper.instance.database),
+       _queue = queue ?? SyncQueue.instance,
+       _cloud = cloud ?? FirestoreSync.instance,
+       _now = now ?? (() => DateTime.now().toUtc());
 
-  // Returns all active (non-deleted) debts with their payment records (JOIN query)
+  final Future<Database> Function() _databaseProvider;
+  final SyncOutbox _queue;
+  final FirestoreSync _cloud;
+  final DateTime Function() _now;
+
   @override
   Future<List<CustomerDebt>> getAll(String userId) => safeCall(() async {
-    final database = await db.database;
-    // Basic query used only for cloud fallback check — must exclude soft-deleted rows
-    // so that deleted-only local data doesn't suppress the cloud restore path
-    final debtMaps = await database.query('debts',
-        where: 'user_id = ? AND is_deleted = 0', whereArgs: [userId], orderBy: 'created_at DESC');
-
-    // Local is empty and online — restore debts from Firestore
-    if (debtMaps.isEmpty && _queue.isOnline) {
-      final cloudDebts = await _cloud.getDebts(userId);
-      for (final d in cloudDebts) {
-        try {
-          // Check first to avoid duplicate entries on partial sync
-          final existing = await database.query('debts',
-              where: 'id = ?', whereArgs: [d['id']]);
-          if (existing.isNotEmpty) continue;
-
-          // BUG FIX (Cloud restore skips is_deleted/deleted_at): always insert both
-          // columns explicitly so the row is consistent with locally-created rows.
-          // Firestore docs from soft-deleted records carry is_deleted=1 and a
-          // deleted_at timestamp; active records have is_deleted=0/null.
-          await database.insert('debts', {
-            'id':            d['id'],
-            'customer_name': d['customer_name'],
-            'order_id':      d['order_id'],
-            'total_amount':  d['total_amount'],
-            'amount_paid':   d['amount_paid'],
-            'created_at':    d['created_at'],
-            'user_id':       userId,
-            'is_deleted':    (d['is_deleted'] as int? ?? 0),
-            'deleted_at':    d['deleted_at'] as String?,
-          });
-          // Insert each payment record linked to this debt
-          final payments = List<Map<String, dynamic>>.from(d['payments'] ?? []);
-          for (final p in payments) {
-            try {
-              await database.insert('payments', {
-                'id':      p['id'],
-                'debt_id': d['id'],
-                'amount':  p['amount'],
-                'paid_at': p['paid_at'],
-                'note':    p['note'],
-              });
-            } catch (_) {}
-          }
-        } catch (_) {}
-      }
+    final database = await _databaseProvider();
+    final partition = await database.query(
+      'debts',
+      columns: const ['id'],
+      where: 'user_id = ?',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (partition.isEmpty && _queue.isOnline) {
+      await _restoreCloudPartition(database, userId);
     }
+    final debts = await _accrueAndLoad(database, userId, _now());
+    _queue.requestSync();
+    return debts;
+  });
 
-    // FIX N+1: Single JOIN query instead of one query per debt for payments
-    final joinRows = await database.rawQuery('''
-      SELECT
-        d.id                  AS d_id,
-        d.customer_name       AS d_customer_name,
-        d.order_id            AS d_order_id,
-        d.total_amount        AS d_total_amount,
-        d.amount_paid         AS d_amount_paid,
-        d.created_at          AS d_created_at,
-        d.interest_rate       AS d_interest_rate,
-        d.interest_type       AS d_interest_type,
-        d.interest_start_date AS d_interest_start_date,
-        p.id            AS p_id,
-        p.amount        AS p_amount,
-        p.paid_at       AS p_paid_at,
-        p.note          AS p_note
-      FROM debts d
-      LEFT JOIN payments p ON p.debt_id = d.id
-      WHERE d.user_id = ? AND d.is_deleted = 0
-      ORDER BY d.created_at DESC, p.paid_at ASC
-    ''', [userId]);
-
-    // Group flat JOIN rows back into CustomerDebt objects with their PaymentRecord lists
-    final debtsMap    = <String, Map<String, dynamic>>{};
-    final paymentsMap = <String, List<PaymentRecord>>{};
-    for (final row in joinRows) {
-      final did = row['d_id'] as String;
-      debtsMap.putIfAbsent(did, () => {
-        'id':                   row['d_id'],
-        'customer_name':        row['d_customer_name'],
-        'order_id':             row['d_order_id'],
-        'total_amount':         row['d_total_amount'],
-        'amount_paid':          row['d_amount_paid'],
-        'created_at':           row['d_created_at'],
-        'interest_rate':        row['d_interest_rate'],
-        'interest_type':        row['d_interest_type'],
-        'interest_start_date':  row['d_interest_start_date'],
-      });
-      // p_id is null when LEFT JOIN finds no matching payments row
-      if (row['p_id'] != null) {
-        paymentsMap.putIfAbsent(did, () => []).add(_paymentFromMap({
-          'id':      row['p_id'],
-          'amount':  row['p_amount'],
-          'paid_at': row['p_paid_at'],
-          'note':    row['p_note'],
-        }));
-      }
-    }
-    return debtsMap.entries
-        .map((e) => _debtFromMap(e.value, paymentsMap[e.key] ?? []))
-        .toList();
-  }, []);
-
-  // Inserts a new debt record and any initial payments in a single transaction
   @override
   Future<void> add(CustomerDebt debt, String userId) => safeVoidCall(() async {
-    final database = await db.database;
-    // Atomic: if any insert fails, neither the debt nor its payments are saved
+    _validateNewDebt(debt, userId);
+    final database = await _databaseProvider();
+    final dto = DebtDto.fromDomain(debt, userId: userId);
+    final debtData = dto.toLocal();
+    final payments = dto.payments.map((payment) => payment.toLocal()).toList();
     await database.transaction((txn) async {
-      await txn.insert('debts', _debtToMap(debt, userId));
-      for (final payment in debt.payments) {
-        await txn.insert('payments', _paymentToMap(payment, debt.id));
+      if (await txn.insert('debts', debtData) <= 0) {
+        throw StateError('Debt was not inserted.');
       }
-    });
-
-    // Sync to Firestore with embedded payments array
-    final paymentsData = debt.payments.map((p) => _paymentToMap(p, debt.id)).toList();
-    final debtData = _debtToMap(debt, userId);
-
-    if (_queue.isOnline) {
-      await _cloud.saveDebt(userId, debtData, paymentsData);
-    } else {
+      for (final payment in payments) {
+        if (await txn.insert('payments', payment) <= 0) {
+          throw StateError('Debt payment was not inserted.');
+        }
+      }
       await _queue.enqueue(
-        operation:  'save_debt',
+        operation: 'save_debt',
         collection: 'debts',
-        userId:     userId,
-        docId:      debt.id,
-        data:       {...debtData, '_payments': jsonEncode(paymentsData)},
+        userId: userId,
+        docId: debt.id,
+        data: _outboxPayload(dto),
+        executor: txn,
       );
-    }
-  });
-
-  // Appends a payment installment to a debt and updates the running amount_paid total
-  @override
-  Future<void> addPayment(String debtId, PaymentRecord payment) => safeVoidCall(() async {
-    final database = await db.database;
-
-    // Atomic: payment insert and amount_paid update happen together
-    await database.transaction((txn) async {
-      await txn.insert('payments', _paymentToMap(payment, debtId));
-      // Read the current amount_paid and increment it by the new payment amount
-      final debtMaps = await txn.query('debts',
-          where: 'id = ?', whereArgs: [debtId]);
-      if (debtMaps.isNotEmpty) {
-        final current = (debtMaps.first['amount_paid'] as num).toDouble();
-        await txn.update('debts', {'amount_paid': current + payment.amount},
-            where: 'id = ?', whereArgs: [debtId]);
-      }
     });
-
-    // Fetch updated debt row to build Firestore sync payload
-    final debtMaps = await database.query('debts',
-        where: 'id = ?', whereArgs: [debtId]);
-    if (debtMaps.isNotEmpty) {
-      final userId     = debtMaps.first['user_id']     as String;
-      final amountPaid = (debtMaps.first['amount_paid'] as num).toDouble();
-      // Fetch all payments to send the full list in the Firestore update
-      final allPayments = await database.query('payments',
-          where: 'debt_id = ?', whereArgs: [debtId]);
-      final paymentsData = allPayments
-          .map((p) => _paymentToMap(_paymentFromMap(p), debtId))
-          .toList();
-
-      if (_queue.isOnline) {
-        await _cloud.updateDebtPayment(userId, debtId, amountPaid, paymentsData);
-      } else {
-        await _queue.enqueue(
-          operation:  'update_debt_payment',
-          collection: 'debts',
-          userId:     userId,
-          docId:      debtId,
-          data:       {
-            'amount_paid': amountPaid,
-            '_payments':   jsonEncode(paymentsData),
-          },
-        );
-      }
-    }
+    _queue.requestSync();
   });
 
-  // Soft-deletes a debt: sets is_deleted=1 and records deleted_at timestamp
   @override
-  Future<void> delete(String debtId) => safeVoidCall(() async {
-    final database = await db.database;
-    final existing = await database.query('debts',
-        where: 'id = ?', whereArgs: [debtId]);
-    final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
-    final now = DateTime.now().toIso8601String();
+  Future<void> addPayment(String debtId, PaymentRecord payment) =>
+      safeVoidCall(() async {
+        if (debtId.trim().isEmpty) throw ArgumentError('Debt id is required.');
+        if (!payment.amount.isPositive || payment.isAllocated) {
+          throw ArgumentError(
+            'A new payment must be positive and not already allocated.',
+          );
+        }
+        final database = await _databaseProvider();
+        await database.transaction((txn) async {
+          final debt = await _loadOne(txn, debtId, isDeleted: false);
+          final allocation = debt.allocatePayment(payment);
+          final updatedDebt = allocation.debt;
+          final changed = await txn.update(
+            'debts',
+            _debtStateMap(updatedDebt),
+            where: 'id = ? AND is_deleted = 0',
+            whereArgs: [debtId],
+          );
+          if (changed != 1) {
+            throw StateError('Debt changed while recording payment: $debtId');
+          }
+          if (await txn.insert(
+                'payments',
+                PaymentDto.fromDomain(allocation.payment, debtId).toLocal(),
+              ) <=
+              0) {
+            throw StateError('Payment was not inserted.');
+          }
+          final allPayments = await txn.query(
+            'payments',
+            where: 'debt_id = ?',
+            whereArgs: [debtId],
+            orderBy: 'paid_at ASC, id ASC',
+          );
+          final owner = await _ownerFor(txn, debtId);
+          final fullDto = DebtDto.fromLocal(
+            DebtDto.fromDomain(updatedDebt, userId: owner).toLocal(),
+            allPayments.map(Map<String, dynamic>.from).toList(),
+          );
+          await _queue.enqueue(
+            operation: 'save_debt',
+            collection: 'debts',
+            userId: owner,
+            docId: debtId,
+            data: _outboxPayload(fullDto),
+            executor: txn,
+          );
+        });
+        _queue.requestSync();
+      });
 
-    // Soft-delete — preserves payment history for Recycle Bin recovery
-    await database.update(
-      'debts',
-      {'is_deleted': 1, 'deleted_at': now},
-      where: 'id = ?',
-      whereArgs: [debtId],
-    );
+  @override
+  Future<void> delete(String debtId) => _setDeleted(debtId, deleted: true);
 
-    if (userId.isNotEmpty) {
-      if (_queue.isOnline) {
-        await _cloud.softDeleteDebt(userId, debtId, now);
-      } else {
-        await _queue.enqueue(
-          operation:  'soft_delete_debt',
-          collection: 'debts',
-          userId:     userId,
-          docId:      debtId,
-          data:       {'id': debtId, 'is_deleted': 1, 'deleted_at': now},
-        );
-      }
-    }
-  });
-
-  // Returns all soft-deleted debts for the Recycle Bin screen (JOIN query)
   @override
   Future<List<CustomerDebt>> getDeleted(String userId) => safeCall(() async {
-    final database = await db.database;
-    // Same JOIN pattern as getAll() but filters is_deleted = 1
-    final joinRows = await database.rawQuery('''
-      SELECT
-        d.id                  AS d_id,
-        d.customer_name       AS d_customer_name,
-        d.order_id            AS d_order_id,
-        d.total_amount        AS d_total_amount,
-        d.amount_paid         AS d_amount_paid,
-        d.created_at          AS d_created_at,
-        d.interest_rate       AS d_interest_rate,
-        d.interest_type       AS d_interest_type,
-        d.interest_start_date AS d_interest_start_date,
-        p.id            AS p_id,
-        p.amount        AS p_amount,
-        p.paid_at       AS p_paid_at,
-        p.note          AS p_note
-      FROM debts d
-      LEFT JOIN payments p ON p.debt_id = d.id
-      WHERE d.user_id = ? AND d.is_deleted = 1
-      ORDER BY d.created_at DESC, p.paid_at ASC
-    ''', [userId]);
-
-    final debtsMap    = <String, Map<String, dynamic>>{};
-    final paymentsMap = <String, List<PaymentRecord>>{};
-    for (final row in joinRows) {
-      final did = row['d_id'] as String;
-      debtsMap.putIfAbsent(did, () => {
-        'id':                   row['d_id'],
-        'customer_name':        row['d_customer_name'],
-        'order_id':             row['d_order_id'],
-        'total_amount':         row['d_total_amount'],
-        'amount_paid':          row['d_amount_paid'],
-        'created_at':           row['d_created_at'],
-        'interest_rate':        row['d_interest_rate'],
-        'interest_type':        row['d_interest_type'],
-        'interest_start_date':  row['d_interest_start_date'],
-      });
-      if (row['p_id'] != null) {
-        paymentsMap.putIfAbsent(did, () => []).add(_paymentFromMap({
-          'id':      row['p_id'],
-          'amount':  row['p_amount'],
-          'paid_at': row['p_paid_at'],
-          'note':    row['p_note'],
-        }));
-      }
-    }
-    return debtsMap.entries
-        .map((e) => _debtFromMap(e.value, paymentsMap[e.key] ?? []))
-        .toList();
-  }, []);
-
-  // Restores a soft-deleted debt back to active and re-syncs it to Firestore
-  @override
-  Future<void> restore(String debtId) => safeVoidCall(() async {
-    final database = await db.database;
-    // Clear soft-delete flags
-    await database.update(
-      'debts',
-      {'is_deleted': 0, 'deleted_at': null},
-      where: 'id = ?',
-      whereArgs: [debtId],
-    );
-
-    final rows = await database.query('debts', where: 'id = ?', whereArgs: [debtId]);
-    if (rows.isNotEmpty) {
-      final userId = rows.first['user_id'] as String;
-      final data   = Map<String, dynamic>.from(rows.first);
-      if (_queue.isOnline) {
-        await _cloud.saveDebt(userId, data, []); // Payments synced separately
-      } else {
-        await _queue.enqueue(
-          operation: 'save_debt', collection: 'debts',
-          userId: userId, docId: debtId, data: data,
-        );
-      }
-    }
+    final database = await _databaseProvider();
+    return _loadDebts(database, userId, isDeleted: true);
   });
 
-  // Permanently removes a debt and its payments from SQLite and Firestore
+  @override
+  Future<void> restore(String debtId) => _setDeleted(debtId, deleted: false);
+
   @override
   Future<void> hardDelete(String debtId) => safeVoidCall(() async {
-    final database = await db.database;
-    final existing = await database.query('debts',
-        where: 'id = ?', whereArgs: [debtId]);
-    final userId = existing.isNotEmpty ? existing.first['user_id'] as String : '';
-
-    // ON DELETE CASCADE on payments ensures all payment rows are removed with the debt
-    await database.delete('debts', where: 'id = ?', whereArgs: [debtId]);
-
-    if (userId.isNotEmpty) {
-      if (_queue.isOnline) {
-        await _cloud.deleteDebt(userId, debtId);
-      } else {
-        await _queue.enqueue(
-          operation:  'delete_debt',
-          collection: 'debts',
-          userId:     userId,
-          docId:      debtId,
-          data:       {'id': debtId},
-        );
+    final database = await _databaseProvider();
+    await database.transaction((txn) async {
+      final debt = await _loadOne(txn, debtId, isDeleted: true);
+      _requireSettled(debt);
+      final userId = await _ownerFor(txn, debtId);
+      await _queue.enqueue(
+        operation: 'delete_debt',
+        collection: 'debts',
+        userId: userId,
+        docId: debtId,
+        data: {'id': debtId},
+        executor: txn,
+      );
+      if (await txn.delete(
+            'debts',
+            where: 'id = ? AND is_deleted = 1',
+            whereArgs: [debtId],
+          ) !=
+          1) {
+        throw StateError('Failed to permanently delete debt: $debtId');
       }
-    }
+    });
+    _queue.requestSync();
   });
 
-  // ── Private mapping helpers ───────────────────────────────────────────────
+  Future<void> _setDeleted(String debtId, {required bool deleted}) =>
+      safeVoidCall(() async {
+        final database = await _databaseProvider();
+        await database.transaction((txn) async {
+          final debt = await _loadOne(txn, debtId, isDeleted: !deleted);
+          _requireSettled(debt);
+          final userId = await _ownerFor(txn, debtId);
+          final deletedAt = deleted ? _now().toIso8601String() : null;
+          if (await txn.update(
+                'debts',
+                {'is_deleted': deleted ? 1 : 0, 'deleted_at': deletedAt},
+                where: 'id = ? AND is_deleted = ?',
+                whereArgs: [debtId, deleted ? 0 : 1],
+              ) !=
+              1) {
+            throw StateError('Debt state changed before it could be updated.');
+          }
+          final payments = await txn.query(
+            'payments',
+            where: 'debt_id = ?',
+            whereArgs: [debtId],
+            orderBy: 'paid_at ASC, id ASC',
+          );
+          final payload = {
+            ...DebtDto.fromDomain(debt, userId: userId).toLocal(),
+            'is_deleted': deleted ? 1 : 0,
+            'deleted_at': deletedAt,
+          };
+          final dto = DebtDto.fromLocal(
+            payload,
+            payments.map(Map<String, dynamic>.from).toList(),
+          );
+          await _queue.enqueue(
+            operation: deleted ? 'soft_delete_debt' : 'save_debt',
+            collection: 'debts',
+            userId: userId,
+            docId: debtId,
+            data: _outboxPayload(dto),
+            executor: txn,
+          );
+        });
+        _queue.requestSync();
+      });
 
-  // Converts a CustomerDebt model to a SQLite column map
-  Map<String, dynamic> _debtToMap(CustomerDebt d, String userId) => {
-    'id':                   d.id,
-    'customer_name':        d.customerName,
-    'order_id':             d.orderId,
-    'total_amount':         d.totalAmount,
-    'amount_paid':          d.amountPaid,
-    'created_at':           d.createdAt.toIso8601String(),
-    'user_id':              userId,
-    'is_deleted':           0,
-    'deleted_at':           null,
-    // v6 interest fields
-    'interest_rate':        d.interestRate,
-    'interest_type':        d.interestType,
-    'interest_start_date':  d.interestStartDate?.toIso8601String(),
-  };
-
-  // Converts a PaymentRecord model to a SQLite column map for the payments table
-  Map<String, dynamic> _paymentToMap(PaymentRecord p, String debtId) => {
-    'id':      p.id,
-    'debt_id': debtId,
-    'amount':  p.amount,
-    'paid_at': p.paidAt.toIso8601String(),
-    'note':    p.note,
-  };
-
-  // Assembles a CustomerDebt model from a flat column map and its payments list
-  CustomerDebt _debtFromMap(Map<String, dynamic> m, List<PaymentRecord> payments) =>
-      CustomerDebt(
-        id:                 m['id']            as String,
-        customerName:       m['customer_name'] as String,
-        orderId:            m['order_id']      as String,
-        totalAmount:        (m['total_amount'] as num).toDouble(),
-        amountPaid:         (m['amount_paid']  as num).toDouble(),
-        createdAt:          DateTime.parse(m['created_at'] as String),
-        payments:           payments,
-        // v6 interest fields — safe defaults for old rows
-        interestRate:       (m['interest_rate']  as num?)?.toDouble() ?? 0,
-        interestType:       m['interest_type']    as String? ?? 'none',
-        interestStartDate:  m['interest_start_date'] != null
-            ? DateTime.tryParse(m['interest_start_date'] as String)
-            : null,
+  Future<List<CustomerDebt>> _accrueAndLoad(
+    Database database,
+    String userId,
+    DateTime timestamp,
+  ) async {
+    await database.transaction((txn) async {
+      final rows = await txn.query(
+        'debts',
+        columns: const ['id'],
+        where: 'user_id = ? AND is_deleted = 0',
+        whereArgs: [userId],
       );
+      for (final row in rows) {
+        final debt = await _loadOne(txn, row['id'] as String, isDeleted: false);
+        final accrued = debt.accrueTo(timestamp);
+        if (accrued.lastAccrualTimestamp == debt.lastAccrualTimestamp &&
+            accrued.interestOutstanding == debt.interestOutstanding) {
+          continue;
+        }
+        await txn.update(
+          'debts',
+          _debtStateMap(accrued),
+          where: 'id = ? AND is_deleted = 0',
+          whereArgs: [debt.id],
+        );
+        final payments = await txn.query(
+          'payments',
+          where: 'debt_id = ?',
+          whereArgs: [debt.id],
+          orderBy: 'paid_at ASC, id ASC',
+        );
+        await _queue.enqueue(
+          operation: 'save_debt',
+          collection: 'debts',
+          userId: userId,
+          docId: debt.id,
+          data: _outboxPayload(
+            DebtDto.fromLocal(
+              DebtDto.fromDomain(accrued, userId: userId).toLocal(),
+              payments.map(Map<String, dynamic>.from).toList(),
+            ),
+          ),
+          executor: txn,
+        );
+      }
+    });
+    return _loadDebts(database, userId, isDeleted: false);
+  }
 
-  // Converts a raw SQLite row map into a PaymentRecord model instance
-  PaymentRecord _paymentFromMap(Map<String, dynamic> m) => PaymentRecord(
-    id:     m['id']    as String,
-    amount: (m['amount'] as num).toDouble(),
-    paidAt: DateTime.parse(m['paid_at'] as String),
-    note:   m['note']  as String?,
-  );
+  Future<List<CustomerDebt>> _loadDebts(
+    DatabaseExecutor database,
+    String userId, {
+    required bool isDeleted,
+  }) async {
+    final rows = await database.query(
+      'debts',
+      columns: const ['id'],
+      where: 'user_id = ? AND is_deleted = ?',
+      whereArgs: [userId, isDeleted ? 1 : 0],
+      orderBy: 'created_at DESC',
+    );
+    final result = <CustomerDebt>[];
+    for (final row in rows) {
+      result.add(
+        await _loadOne(database, row['id'] as String, isDeleted: isDeleted),
+      );
+    }
+    return result;
+  }
+
+  Future<CustomerDebt> _loadOne(
+    DatabaseExecutor database,
+    String debtId, {
+    required bool isDeleted,
+  }) async {
+    final rows = await database.query(
+      'debts',
+      where: 'id = ? AND is_deleted = ?',
+      whereArgs: [debtId, isDeleted ? 1 : 0],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      throw StateError(
+        '${isDeleted ? 'Deleted' : 'Active'} debt not found: $debtId',
+      );
+    }
+    final paymentRows = await database.query(
+      'payments',
+      where: 'debt_id = ?',
+      whereArgs: [debtId],
+      orderBy: 'paid_at ASC, id ASC',
+    );
+    return DebtDto.fromLocal(
+      Map<String, dynamic>.from(rows.single),
+      paymentRows.map((row) => Map<String, dynamic>.from(row)).toList(),
+    ).toDomain();
+  }
+
+  Future<String> _ownerFor(DatabaseExecutor database, String debtId) async {
+    final rows = await database.query(
+      'debts',
+      columns: const ['user_id'],
+      where: 'id = ?',
+      whereArgs: [debtId],
+      limit: 1,
+    );
+    if (rows.isEmpty) throw StateError('Debt owner not found: $debtId');
+    return rows.single['user_id'] as String;
+  }
+
+  Future<void> _restoreCloudPartition(Database database, String userId) async {
+    final cloudDebts = await _cloud.getDebts(userId);
+    await database.transaction((txn) async {
+      for (final cloudDebt in cloudDebts) {
+        final dto = DebtDto.fromCloud(cloudDebt, userId: userId);
+        await txn.insert(
+          'debts',
+          dto.toLocal(),
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        for (final payment in dto.payments) {
+          await txn.insert(
+            'payments',
+            payment.toLocal(),
+            conflictAlgorithm: ConflictAlgorithm.ignore,
+          );
+        }
+      }
+    });
+  }
+
+  void _validateNewDebt(CustomerDebt debt, String userId) {
+    if (debt.id.trim().isEmpty || userId.trim().isEmpty) {
+      throw ArgumentError('Debt id and user id are required.');
+    }
+    if (!debt.principalOriginal.isPositive ||
+        debt.principalOutstanding.isNegative ||
+        debt.interestOutstanding.isNegative) {
+      throw ArgumentError('Debt balances are invalid.');
+    }
+    for (final payment in debt.payments) {
+      if (!payment.isAllocated) {
+        throw ArgumentError('Persisted debt payments must be allocated.');
+      }
+    }
+  }
+
+  void _requireSettled(CustomerDebt debt) {
+    if (!debt.isPaid) {
+      throw const OpenDebtException(
+        'Settle this debt before deleting its ledger.',
+      );
+    }
+  }
+
+  Map<String, dynamic> _debtStateMap(CustomerDebt debt) => {
+    'principal_outstanding_centavos': debt.principalOutstanding.centavos,
+    'interest_outstanding_centavos': debt.interestOutstanding.centavos,
+    'last_accrual_timestamp': debt.lastAccrualTimestamp.toIso8601String(),
+    'status': debt.status.storageKey,
+  };
+
+  Map<String, dynamic> _outboxPayload(DebtDto dto) {
+    final payload = dto.toCloud();
+    payload['_payments'] = payload.remove('payments');
+    return payload;
+  }
 }

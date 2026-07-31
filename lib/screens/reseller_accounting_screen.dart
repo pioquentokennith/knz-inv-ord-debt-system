@@ -5,49 +5,46 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../models/reseller_accounting_summary.dart';
+import '../core/money.dart';
 import '../services/accounting_service.dart';
 
 class ResellerAccountingScreen extends StatelessWidget {
   const ResellerAccountingScreen({super.key});
-
-  static final _currency =
-      NumberFormat.currency(symbol: '₱', decimalDigits: 2);
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
       listenable: AppState(),
       builder: (context, _) {
-        final orders     = AppState().orders.toList();
-        final summaries  = AccountingService.instance.resellerSummary(orders);
+        final orders = AppState().orders.toList();
+        final summaries = AccountingService.instance.resellerSummary(orders);
 
         return Scaffold(
           backgroundColor: AppColors.background,
           body: SafeArea(
             child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(context),
-              if (summaries.isEmpty)
-                _buildEmpty()
-              else ...[
-                _buildGlobalRow(summaries),
-                Expanded(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: summaries.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) =>
-                        _ResellerSummaryCard(summary: summaries[i]),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(context),
+                if (summaries.isEmpty)
+                  _buildEmpty()
+                else ...[
+                  _buildGlobalRow(summaries),
+                  Expanded(
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: summaries.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      itemBuilder: (_, i) =>
+                          _ResellerSummaryCard(summary: summaries[i]),
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
-          ),
+            ),
           ),
         );
       },
@@ -66,35 +63,50 @@ class ResellerAccountingScreen extends StatelessWidget {
         children: [
           Icon(Icons.people_outline, color: AppColors.gold, size: 22),
           SizedBox(width: 10),
-          Text('Reseller Accounting',
-              style: TextStyle(
-                  color: AppColors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1)),
+          Text(
+            'Reseller Accounting',
+            style: TextStyle(
+              color: AppColors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1,
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildGlobalRow(List<ResellerAccountingSummary> summaries) {
-    final grossTotal    = summaries.fold(0.0, (s, r) => s + r.grossSales);
-    final discountTotal = summaries.fold(0.0, (s, r) => s + r.totalDiscount);
-    final netTotal      = summaries.fold(0.0, (s, r) => s + r.netRevenue);
+    final grossTotal = summaries.fold(Money.zero, (s, r) => s + r.grossSales);
+    final discountTotal = summaries.fold(
+      Money.zero,
+      (s, r) => s + r.totalDiscount,
+    );
+    final netTotal = summaries.fold(Money.zero, (s, r) => s + r.netRevenue);
 
     return Container(
       color: AppColors.surface,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          _StatMini(label: 'Gross', value: _currency.format(grossTotal),
-              color: AppColors.whiteSecondary),
+          _StatMini(
+            label: 'Gross',
+            value: grossTotal.format(),
+            color: AppColors.whiteSecondary,
+          ),
           const SizedBox(width: 16),
-          _StatMini(label: 'Discount', value: _currency.format(discountTotal),
-              color: AppColors.warning),
+          _StatMini(
+            label: 'Discount',
+            value: discountTotal.format(),
+            color: AppColors.warning,
+          ),
           const SizedBox(width: 16),
-          _StatMini(label: 'Net', value: _currency.format(netTotal),
-              color: AppColors.gold),
+          _StatMini(
+            label: 'Net',
+            value: netTotal.format(),
+            color: AppColors.gold,
+          ),
         ],
       ),
     );
@@ -103,18 +115,26 @@ class ResellerAccountingScreen extends StatelessWidget {
   Widget _buildEmpty() {
     return const Expanded(
       child: Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.people_outline,
-              color: AppColors.whiteTertiary, size: 56),
-          SizedBox(height: 12),
-          Text('No reseller orders yet',
-              style:
-                  TextStyle(color: AppColors.whiteSecondary, fontSize: 16)),
-          SizedBox(height: 4),
-          Text('Reseller-flagged orders will appear here',
-              style:
-                  TextStyle(color: AppColors.whiteTertiary, fontSize: 13)),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.people_outline,
+              color: AppColors.whiteTertiary,
+              size: 56,
+            ),
+            SizedBox(height: 12),
+            Text(
+              'No reseller orders yet',
+              style: TextStyle(color: AppColors.whiteSecondary, fontSize: 16),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Reseller-flagged orders will appear here',
+              style: TextStyle(color: AppColors.whiteTertiary, fontSize: 13),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -122,9 +142,6 @@ class ResellerAccountingScreen extends StatelessWidget {
 
 class _ResellerSummaryCard extends StatelessWidget {
   final ResellerAccountingSummary summary;
-  static final _currency =
-      NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-
   const _ResellerSummaryCard({required this.summary});
 
   @override
@@ -148,7 +165,9 @@ class _ResellerSummaryCard extends StatelessWidget {
                 child: Text(
                   summary.resellerName[0].toUpperCase(),
                   style: const TextStyle(
-                      color: AppColors.gold, fontWeight: FontWeight.w700),
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               const SizedBox(width: 12),
@@ -156,16 +175,21 @@ class _ResellerSummaryCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(summary.resellerName,
-                        style: const TextStyle(
-                            color: AppColors.white,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15)),
+                    Text(
+                      summary.resellerName,
+                      style: const TextStyle(
+                        color: AppColors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                      ),
+                    ),
                     Text(
                       '${summary.totalOrders} order${summary.totalOrders == 1 ? '' : 's'} · '
                       '−₱${summary.averageDeduction.toStringAsFixed(0)}/item avg',
                       style: const TextStyle(
-                          color: AppColors.whiteTertiary, fontSize: 12),
+                        color: AppColors.whiteTertiary,
+                        fontSize: 12,
+                      ),
                     ),
                   ],
                 ),
@@ -173,18 +197,24 @@ class _ResellerSummaryCard extends StatelessWidget {
               // Net revenue badge
               Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 4),
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.gold.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                      color: AppColors.gold.withValues(alpha: 0.3)),
+                    color: AppColors.gold.withValues(alpha: 0.3),
+                  ),
                 ),
-                child: Text(_currency.format(summary.netRevenue),
-                    style: const TextStyle(
-                        color: AppColors.gold,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13)),
+                child: Text(
+                  summary.netRevenue.format(),
+                  style: const TextStyle(
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
               ),
             ],
           ),
@@ -197,21 +227,24 @@ class _ResellerSummaryCard extends StatelessWidget {
             children: [
               Expanded(
                 child: _MetricItem(
-                    label: 'Gross Sales',
-                    value: _currency.format(summary.grossSales),
-                    color: AppColors.whiteSecondary),
+                  label: 'Gross Sales',
+                  value: summary.grossSales.format(),
+                  color: AppColors.whiteSecondary,
+                ),
               ),
               Expanded(
                 child: _MetricItem(
-                    label: 'Total Discount',
-                    value: _currency.format(summary.totalDiscount),
-                    color: AppColors.warning),
+                  label: 'Total Discount',
+                  value: summary.totalDiscount.format(),
+                  color: AppColors.warning,
+                ),
               ),
               Expanded(
                 child: _MetricItem(
-                    label: 'Net Revenue',
-                    value: _currency.format(summary.netRevenue),
-                    color: AppColors.gold),
+                  label: 'Net Revenue',
+                  value: summary.netRevenue.format(),
+                  color: AppColors.gold,
+                ),
               ),
             ],
           ),
@@ -224,25 +257,36 @@ class _ResellerSummaryCard extends StatelessWidget {
 class _MetricItem extends StatelessWidget {
   final String label;
   final String value;
-  final Color  color;
+  final Color color;
 
-  const _MetricItem(
-      {required this.label, required this.value, required this.color});
+  const _MetricItem({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(
-                color: AppColors.whiteTertiary,
-                fontSize: 10,
-                letterSpacing: 1)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppColors.whiteTertiary,
+            fontSize: 10,
+            letterSpacing: 1,
+          ),
+        ),
         const SizedBox(height: 2),
-        Text(value,
-            style: TextStyle(
-                color: color, fontWeight: FontWeight.w600, fontSize: 13)),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w600,
+            fontSize: 13,
+          ),
+        ),
       ],
     );
   }
@@ -251,24 +295,35 @@ class _MetricItem extends StatelessWidget {
 class _StatMini extends StatelessWidget {
   final String label;
   final String value;
-  final Color  color;
+  final Color color;
 
-  const _StatMini(
-      {required this.label, required this.value, required this.color});
+  const _StatMini({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(
-                color: AppColors.whiteTertiary,
-                fontSize: 10,
-                letterSpacing: 1)),
-        Text(value,
-            style: TextStyle(
-                color: color, fontWeight: FontWeight.w700, fontSize: 14)),
+        Text(
+          label,
+          style: const TextStyle(
+            color: AppColors.whiteTertiary,
+            fontSize: 10,
+            letterSpacing: 1,
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: color,
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+          ),
+        ),
       ],
     );
   }

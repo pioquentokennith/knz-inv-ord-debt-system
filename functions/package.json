@@ -1,0 +1,23 @@
+{
+  "name": "knz-scent-functions",
+  "description": "Cloud Functions for KNZ Scent Admin",
+  "private": true,
+  "scripts": {
+    "lint": "node --check index.js && node --check otp_helpers.js && node --check otp_policy.js && node --check otp_delivery.js && node --check access_helpers.js && node --check scripts/bootstrap_admin.js && node --check scripts/verify_bootstrap_admin.js && node --check test/bootstrap_admin.test.js && node --check test/prepare_emulator.js && node --check test/emulator/otp_endpoints.test.js",
+    "test": "npm run test:unit",
+    "test:unit": "node --test test/access_helpers.test.js test/bootstrap_admin.test.js test/otp_delivery.test.js test/otp_helpers.test.js test/otp_policy.test.js",
+    "test:emulator": "node test/prepare_emulator.js && firebase --config ../firebase.json emulators:exec --project demo-knz-scent --only auth,firestore,functions \"node --test test/emulator/otp_endpoints.test.js && npm --prefix ../rules-tests test\"",
+    "bootstrap:admin": "node scripts/bootstrap_admin.js",
+    "bootstrap:verify-auth": "node scripts/verify_bootstrap_admin.js --auth-only",
+    "bootstrap:verify": "node scripts/verify_bootstrap_admin.js",
+    "deploy:spark": "firebase --config ../firebase.json deploy --only firestore:rules,firestore:indexes",
+    "deploy:functions": "firebase --config ../firebase.json deploy --only functions",
+    "deploy": "firebase --config ../firebase.json deploy --only functions,firestore:rules,firestore:indexes"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^5.0.0"
+  },
+  "engines": { "node": "20" },
+  "main": "index.js"
+}

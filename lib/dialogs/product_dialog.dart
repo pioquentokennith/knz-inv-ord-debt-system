@@ -17,6 +17,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../core/money.dart';
 import '../models/product_model.dart';
 import '../widgets/shared_widgets.dart';
 
@@ -29,18 +30,18 @@ class ProductDialog extends StatefulWidget {
 }
 
 class _ProductDialogState extends State<ProductDialog> {
-  final _nameCtrl     = TextEditingController();
-  final _descCtrl     = TextEditingController();
-  final _priceCtrl    = TextEditingController(text: '0.00');
-  final _stockCtrl    = TextEditingController(text: '0');
+  final _nameCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  final _priceCtrl = TextEditingController(text: '0.00');
+  final _stockCtrl = TextEditingController(text: '0');
   final _minStockCtrl = TextEditingController(text: '5');
 
   ProductCategory _category = ProductCategory.eauDeParfum;
   String? _imagePath;
   // Tracks whether this dialog was opened for editing (true) or adding (false)
-  bool _isEditing  = false;
+  bool _isEditing = false;
   // Prevents double-submission while an async save is in progress
-  bool _isSaving   = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -48,13 +49,13 @@ class _ProductDialogState extends State<ProductDialog> {
     _isEditing = widget.existing != null;
     if (_isEditing) {
       final p = widget.existing!;
-      _nameCtrl.text     = p.name;
-      _descCtrl.text     = p.description;
-      _priceCtrl.text    = p.price.toStringAsFixed(2);
-      _stockCtrl.text    = p.stockQty.toString();
+      _nameCtrl.text = p.name;
+      _descCtrl.text = p.description;
+      _priceCtrl.text = p.price.toStringAsFixed(2);
+      _stockCtrl.text = p.stockQty.toString();
       _minStockCtrl.text = p.minStockLevel.toString();
-      _category          = p.category;
-      _imagePath         = p.imagePath; // local path only
+      _category = p.category;
+      _imagePath = p.imagePath; // local path only
     }
   }
 
@@ -84,7 +85,8 @@ class _ProductDialogState extends State<ProductDialog> {
         children: [
           const SizedBox(height: 12),
           Container(
-            width: 40, height: 4,
+            width: 40,
+            height: 4,
             decoration: BoxDecoration(
               color: AppColors.divider,
               borderRadius: BorderRadius.circular(2),
@@ -93,14 +95,18 @@ class _ProductDialogState extends State<ProductDialog> {
           const SizedBox(height: 16),
           ListTile(
             leading: const Icon(Icons.camera_alt, color: AppColors.gold),
-            title: const Text('Take Photo',
-                style: TextStyle(color: AppColors.white)),
+            title: const Text(
+              'Take Photo',
+              style: TextStyle(color: AppColors.white),
+            ),
             onTap: () => Navigator.pop(context, ImageSource.camera),
           ),
           ListTile(
             leading: const Icon(Icons.photo_library, color: AppColors.gold),
-            title: const Text('Choose from Gallery',
-                style: TextStyle(color: AppColors.white)),
+            title: const Text(
+              'Choose from Gallery',
+              style: TextStyle(color: AppColors.white),
+            ),
             onTap: () => Navigator.pop(context, ImageSource.gallery),
           ),
           const SizedBox(height: 16),
@@ -114,11 +120,11 @@ class _ProductDialogState extends State<ProductDialog> {
 
     // I-copy sa permanent local storage ng app — hindi mawawala kahit
     // mag-clear ng temp files
-    final appDir  = await getApplicationDocumentsDirectory();
-    final imgDir  = Directory('${appDir.path}/product_images');
+    final appDir = await getApplicationDocumentsDirectory();
+    final imgDir = Directory('${appDir.path}/product_images');
     if (!await imgDir.exists()) await imgDir.create(recursive: true);
 
-    final fileName      = '${const Uuid().v4()}.jpg';
+    final fileName = '${const Uuid().v4()}.jpg';
     final permanentPath = '${imgDir.path}/$fileName';
     await File(xfile.path).copy(permanentPath);
 
@@ -136,9 +142,21 @@ class _ProductDialogState extends State<ProductDialog> {
       return;
     }
 
-    final price    = double.tryParse(_priceCtrl.text)  ?? 0;
-    final stock    = int.tryParse(_stockCtrl.text)      ?? 0;
-    final minStock = int.tryParse(_minStockCtrl.text)   ?? 5;
+    final price = Money.tryParse(_priceCtrl.text.trim());
+    final stock = int.tryParse(_stockCtrl.text.trim());
+    final minStock = int.tryParse(_minStockCtrl.text.trim());
+    if (price == null || !price.isPositive) {
+      KnzToast.warning(context, 'Enter a valid price greater than zero.');
+      return;
+    }
+    if (stock == null || stock < 0) {
+      KnzToast.warning(context, 'Stock quantity must be zero or greater.');
+      return;
+    }
+    if (minStock == null || minStock < 0) {
+      KnzToast.warning(context, 'Minimum stock must be zero or greater.');
+      return;
+    }
 
     setState(() => _isSaving = true);
 
@@ -162,13 +180,13 @@ class _ProductDialogState extends State<ProductDialog> {
     try {
       if (_isEditing) {
         final updated = widget.existing!.copyWith(
-          name:          name,
-          description:   _descCtrl.text.trim(),
-          category:      _category,
-          price:         price,
-          stockQty:      stock,
+          name: name,
+          description: _descCtrl.text.trim(),
+          category: _category,
+          price: price,
+          stockQty: stock,
           minStockLevel: minStock,
-          imagePath:     _imagePath,
+          imagePath: _imagePath,
         );
         await AppState().updateProduct(updated);
         if (mounted) {
@@ -177,20 +195,27 @@ class _ProductDialogState extends State<ProductDialog> {
         }
       } else {
         final product = Product(
-          id:            const Uuid().v4(),
-          name:          name,
-          description:   _descCtrl.text.trim(),
-          category:      _category,
-          price:         price,
-          stockQty:      stock,
+          id: const Uuid().v4(),
+          name: name,
+          description: _descCtrl.text.trim(),
+          category: _category,
+          price: price,
+          stockQty: stock,
           minStockLevel: minStock,
-          imagePath:     _imagePath,
+          imagePath: _imagePath,
         );
         await AppState().addProduct(product);
         if (mounted) {
           Navigator.pop(context);
           KnzToast.success(context, '✅ "$name" added to inventory.');
         }
+      }
+    } catch (_) {
+      if (mounted) {
+        KnzToast.error(
+          context,
+          'The product could not be saved. Please try again.',
+        );
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
@@ -214,13 +239,20 @@ class _ProductDialogState extends State<ProductDialog> {
   Widget _noImageWidget() => Column(
     mainAxisAlignment: MainAxisAlignment.center,
     children: [
-      Icon(Icons.add_photo_alternate_outlined,
-          color: AppColors.gold.withValues(alpha: 0.6), size: 40),
+      Icon(
+        Icons.add_photo_alternate_outlined,
+        color: AppColors.gold.withValues(alpha: 0.6),
+        size: 40,
+      ),
       const SizedBox(height: 8),
-      const Text('Tap to add product image',
-          style: TextStyle(color: AppColors.whiteTertiary, fontSize: 13)),
-      const Text('Camera or Gallery',
-          style: TextStyle(color: AppColors.whiteTertiary, fontSize: 11)),
+      const Text(
+        'Tap to add product image',
+        style: TextStyle(color: AppColors.whiteTertiary, fontSize: 13),
+      ),
+      const Text(
+        'Camera or Gallery',
+        style: TextStyle(color: AppColors.whiteTertiary, fontSize: 11),
+      ),
     ],
   );
 
@@ -231,8 +263,7 @@ class _ProductDialogState extends State<ProductDialog> {
     return Dialog(
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      insetPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 40),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -275,17 +306,22 @@ class _ProductDialogState extends State<ProductDialog> {
                           ),
                           // Remove button
                           Positioned(
-                            top: 8, right: 8,
+                            top: 8,
+                            right: 8,
                             child: GestureDetector(
                               onTap: () => setState(() => _imagePath = null),
                               child: Container(
-                                width: 28, height: 28,
+                                width: 28,
+                                height: 28,
                                 decoration: BoxDecoration(
                                   color: AppColors.error,
                                   borderRadius: BorderRadius.circular(14),
                                 ),
-                                child: const Icon(Icons.close,
-                                    color: Colors.white, size: 16),
+                                child: const Icon(
+                                  Icons.close,
+                                  color: Colors.white,
+                                  size: 16,
+                                ),
                               ),
                             ),
                           ),
@@ -307,10 +343,10 @@ class _ProductDialogState extends State<ProductDialog> {
               label: AppStrings.category,
               value: _category,
               items: ProductCategory.values
-                  .map((c) => DropdownMenuItem(
-                        value: c,
-                        child: Text(c.displayName),
-                      ))
+                  .map(
+                    (c) =>
+                        DropdownMenuItem(value: c, child: Text(c.displayName)),
+                  )
                   .toList(),
               onChanged: (v) {
                 if (v != null) setState(() => _category = v);
@@ -325,10 +361,12 @@ class _ProductDialogState extends State<ProductDialog> {
                     hint: '0.00',
                     controller: _priceCtrl,
                     keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true),
+                      decimal: true,
+                    ),
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(
-                          RegExp(r'^\d*\.?\d{0,2}'))
+                        RegExp(r'^\d*\.?\d{0,2}'),
+                      ),
                     ],
                   ),
                 ),
@@ -339,9 +377,7 @@ class _ProductDialogState extends State<ProductDialog> {
                     hint: '0',
                     controller: _stockCtrl,
                     keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly
-                    ],
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -351,9 +387,7 @@ class _ProductDialogState extends State<ProductDialog> {
                     hint: '5',
                     controller: _minStockCtrl,
                     keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly
-                    ],
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   ),
                 ),
               ],
@@ -378,14 +412,16 @@ class _ProductDialogState extends State<ProductDialog> {
                         color: AppColors.error.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                            color: AppColors.error.withValues(alpha: 0.4)),
+                          color: AppColors.error.withValues(alpha: 0.4),
+                        ),
                       ),
                       alignment: Alignment.center,
                       child: const Text(
                         AppStrings.cancel,
                         style: TextStyle(
-                            color: AppColors.error,
-                            fontWeight: FontWeight.w600),
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -396,8 +432,8 @@ class _ProductDialogState extends State<ProductDialog> {
                     label: _isSaving
                         ? 'Saving...'
                         : _isEditing
-                            ? 'Save Changes'
-                            : AppStrings.addProduct,
+                        ? 'Save Changes'
+                        : AppStrings.addProduct,
                     onPressed: _isSaving ? () {} : _submit,
                   ),
                 ),

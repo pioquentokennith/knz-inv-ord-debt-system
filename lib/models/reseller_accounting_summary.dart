@@ -4,13 +4,16 @@
 //           Not persisted — always derived from orders table.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import '../core/money.dart';
+
 class ResellerAccountingSummary {
   final String resellerName;
-  final int    totalOrders;
-  final double grossSales;        // SRP total before deduction
-  final double totalDiscount;     // Total peso deduction given to reseller
-  final double netRevenue;        // What KNZ actually earned
-  final double averageDeduction;  // Average fixed peso deduction per item across orders
+  final int totalOrders;
+  final Money grossSales; // SRP total before deduction
+  final Money totalDiscount; // Total peso deduction given to reseller
+  final Money netRevenue; // What KNZ actually earned
+  final Money
+  averageDeduction; // Average fixed peso deduction per item across orders
 
   const ResellerAccountingSummary({
     required this.resellerName,

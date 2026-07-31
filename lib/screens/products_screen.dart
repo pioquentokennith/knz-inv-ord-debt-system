@@ -41,7 +41,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
   List<Product> _applyFilters(List<Product> products) {
     return products.where((p) {
       final q = _searchQuery.toLowerCase();
-      final matchSearch = q.isEmpty ||
+      final matchSearch =
+          q.isEmpty ||
           p.name.toLowerCase().contains(q) ||
           p.category.displayName.toLowerCase().contains(q);
       final matchCategory =
@@ -65,16 +66,20 @@ class _ProductsScreenState extends State<ProductsScreen> {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               child: Row(
                 children: [
-                  const Icon(Icons.auto_awesome,
-                      color: AppColors.gold, size: 24),
+                  const Icon(
+                    Icons.auto_awesome,
+                    color: AppColors.gold,
+                    size: 24,
+                  ),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
                       'Product Catalogue',
                       style: TextStyle(
-                          color: AppColors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700),
+                        color: AppColors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   GoldButton(
@@ -103,13 +108,21 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 decoration: InputDecoration(
                   hintText: 'Search products…',
                   hintStyle: const TextStyle(
-                      color: AppColors.whiteTertiary, fontSize: 13),
-                  prefixIcon: const Icon(Icons.search,
-                      color: AppColors.gold, size: 20),
+                    color: AppColors.whiteTertiary,
+                    fontSize: 13,
+                  ),
+                  prefixIcon: const Icon(
+                    Icons.search,
+                    color: AppColors.gold,
+                    size: 20,
+                  ),
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
-                          icon: const Icon(Icons.clear,
-                              color: AppColors.whiteTertiary, size: 18),
+                          icon: const Icon(
+                            Icons.clear,
+                            color: AppColors.whiteTertiary,
+                            size: 18,
+                          ),
                           onPressed: () {
                             _searchCtrl.clear();
                             setState(() => _searchQuery = '');
@@ -126,7 +139,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: const BorderSide(
-                        color: AppColors.gold, width: 1),
+                      color: AppColors.gold,
+                      width: 1,
+                    ),
                   ),
                 ),
               ),
@@ -155,8 +170,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       child: _FilterChip(
                         label: cat.displayName,
                         selected: _selectedCategory == cat,
-                        onTap: () =>
-                            setState(() => _selectedCategory = cat),
+                        onTap: () => setState(() => _selectedCategory = cat),
                       ),
                     );
                   }),
@@ -179,8 +193,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.search_off,
-                                color: AppColors.whiteTertiary, size: 48),
+                            const Icon(
+                              Icons.search_off,
+                              color: AppColors.whiteTertiary,
+                              size: 48,
+                            ),
                             const SizedBox(height: 12),
                             Text(
                               _searchQuery.isNotEmpty ||
@@ -189,8 +206,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                   : 'No products yet.\nTap "+ Add" to get started.',
                               textAlign: TextAlign.center,
                               style: const TextStyle(
-                                  color: AppColors.whiteTertiary,
-                                  fontSize: 13),
+                                color: AppColors.whiteTertiary,
+                                fontSize: 13,
+                              ),
                             ),
                           ],
                         ),
@@ -200,29 +218,30 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     return AnimationLimiter(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
-                          final crossAxisCount =
-                              constraints.maxWidth < 400 ? 1 : 2;
+                          final crossAxisCount = constraints.maxWidth < 400
+                              ? 1
+                              : 2;
                           return GridView.builder(
                             padding: const EdgeInsets.only(bottom: 16),
                             gridDelegate:
                                 SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: crossAxisCount,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                              mainAxisExtent: 380,
-                            ),
+                                  crossAxisCount: crossAxisCount,
+                                  crossAxisSpacing: 12,
+                                  mainAxisSpacing: 12,
+                                  mainAxisExtent: 380,
+                                ),
                             itemCount: filtered.length,
                             itemBuilder: (ctx, i) {
                               final p = filtered[i];
                               final stockPct = p.minStockLevel > 0
-                                  ? (p.stockQty /
-                                          (p.minStockLevel * 3))
-                                      .clamp(0.0, 1.0)
+                                  ? (p.stockQty / (p.minStockLevel * 3)).clamp(
+                                      0.0,
+                                      1.0,
+                                    )
                                   : 1.0;
                               return AnimationConfiguration.staggeredGrid(
                                 position: i,
-                                duration:
-                                    const Duration(milliseconds: 400),
+                                duration: const Duration(milliseconds: 400),
                                 columnCount: crossAxisCount,
                                 child: ScaleAnimation(
                                   child: KnzFadeIn(
@@ -244,14 +263,30 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                         final confirm = await showConfirmDialog(
                                           context,
                                           title: 'Delete Product',
-                                          message: 'Remove "${p.name}" from inventory? It can be restored from the Recycle Bin.',
+                                          message:
+                                              'Remove "${p.name}" from inventory? It can be restored from the Recycle Bin.',
                                           confirmLabel: 'Delete',
                                           confirmColor: AppColors.error,
                                           icon: Icons.delete_outline_rounded,
                                         );
-                                        if (!confirm || !context.mounted) return;
-                                        await AppState().deleteProduct(p.id);
-                                        if (context.mounted) KnzToast.error(context, '🗑️ "${p.name}" moved to Recycle Bin.');
+                                        if (!confirm || !context.mounted)
+                                          return;
+                                        try {
+                                          await AppState().deleteProduct(p.id);
+                                          if (context.mounted) {
+                                            KnzToast.info(
+                                              context,
+                                              '"${p.name}" moved to Recycle Bin.',
+                                            );
+                                          }
+                                        } catch (_) {
+                                          if (context.mounted) {
+                                            KnzToast.error(
+                                              context,
+                                              'The product could not be deleted. Please try again.',
+                                            );
+                                          }
+                                        }
                                       },
                                     ),
                                   ),
@@ -306,8 +341,7 @@ class _FilterChip extends StatelessWidget {
           style: TextStyle(
             color: selected ? Colors.black : AppColors.white,
             fontSize: 11,
-            fontWeight:
-                selected ? FontWeight.bold : FontWeight.normal,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           ),
         ),
       ),
@@ -351,9 +385,10 @@ class _ProductCardState extends State<_ProductCard>
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
-    _elevation = Tween<double>(begin: 0, end: 8).animate(
-      CurvedAnimation(parent: _hoverCtrl, curve: Curves.easeOut),
-    );
+    _elevation = Tween<double>(
+      begin: 0,
+      end: 8,
+    ).animate(CurvedAnimation(parent: _hoverCtrl, curve: Curves.easeOut));
   }
 
   @override
@@ -372,7 +407,10 @@ class _ProductCardState extends State<_ProductCard>
       transitionDuration: const Duration(milliseconds: 220),
       transitionBuilder: (_, anim, __, child) => FadeTransition(
         opacity: anim,
-        child: ScaleTransition(scale: Tween(begin: 0.92, end: 1.0).animate(anim), child: child),
+        child: ScaleTransition(
+          scale: Tween(begin: 0.92, end: 1.0).animate(anim),
+          child: child,
+        ),
       ),
       pageBuilder: (ctx, _, __) => GestureDetector(
         onTap: () => Navigator.of(ctx).pop(),
@@ -385,10 +423,7 @@ class _ProductCardState extends State<_ProductCard>
                 child: InteractiveViewer(
                   minScale: 0.5,
                   maxScale: 5.0,
-                  child: Image.file(
-                    File(imagePath),
-                    fit: BoxFit.contain,
-                  ),
+                  child: Image.file(File(imagePath), fit: BoxFit.contain),
                 ),
               ),
               // Close button top-right
@@ -404,8 +439,11 @@ class _ProductCardState extends State<_ProductCard>
                       shape: BoxShape.circle,
                       border: Border.all(color: AppColors.gold, width: 1),
                     ),
-                    child: const Icon(Icons.close,
-                        color: AppColors.white, size: 20),
+                    child: const Icon(
+                      Icons.close,
+                      color: AppColors.white,
+                      size: 20,
+                    ),
                   ),
                 ),
               ),
@@ -416,7 +454,9 @@ class _ProductCardState extends State<_ProductCard>
                 right: 16,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 8),
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black54,
                     borderRadius: BorderRadius.circular(10),
@@ -459,8 +499,9 @@ class _ProductCardState extends State<_ProductCard>
             ),
             boxShadow: [
               BoxShadow(
-                color: AppColors.gold
-                    .withValues(alpha: 0.05 * _elevation.value / 8),
+                color: AppColors.gold.withValues(
+                  alpha: 0.05 * _elevation.value / 8,
+                ),
                 blurRadius: _elevation.value * 2,
                 spreadRadius: _elevation.value * 0.5,
               ),
@@ -498,13 +539,19 @@ class _ProductCardState extends State<_ProductCard>
                                   cacheWidth: 400,
                                   cacheHeight: 400,
                                   errorBuilder: (_, __, ___) => const Center(
-                                    child: Icon(Icons.water_drop_outlined,
-                                        color: AppColors.gold, size: 32),
+                                    child: Icon(
+                                      Icons.water_drop_outlined,
+                                      color: AppColors.gold,
+                                      size: 32,
+                                    ),
                                   ),
                                 )
                               : const Center(
-                                  child: Icon(Icons.water_drop_outlined,
-                                      color: AppColors.gold, size: 32),
+                                  child: Icon(
+                                    Icons.water_drop_outlined,
+                                    color: AppColors.gold,
+                                    size: 32,
+                                  ),
                                 ),
                           // Zoom hint badge (only when image exists)
                           if (p.imagePath != null)
@@ -517,8 +564,11 @@ class _ProductCardState extends State<_ProductCard>
                                   color: Colors.black54,
                                   borderRadius: BorderRadius.circular(6),
                                 ),
-                                child: const Icon(Icons.zoom_in,
-                                    color: AppColors.white, size: 14),
+                                child: const Icon(
+                                  Icons.zoom_in,
+                                  color: AppColors.white,
+                                  size: 14,
+                                ),
                               ),
                             ),
                         ],
@@ -553,7 +603,9 @@ class _ProductCardState extends State<_ProductCard>
                     Text(
                       p.category.displayName,
                       style: const TextStyle(
-                          color: AppColors.whiteTertiary, fontSize: 10),
+                        color: AppColors.whiteTertiary,
+                        fontSize: 10,
+                      ),
                     ),
 
                     const SizedBox(height: 8),
@@ -562,12 +614,13 @@ class _ProductCardState extends State<_ProductCard>
                       children: [
                         Expanded(
                           child: Text(
-                            widget.currency.format(p.price),
+                            p.price.format(),
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                                color: AppColors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13),
+                              color: AppColors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 4),
@@ -580,10 +633,13 @@ class _ProductCardState extends State<_ProductCard>
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text('Stock:',
-                            style: TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 10)),
+                        const Text(
+                          'Stock:',
+                          style: TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 10,
+                          ),
+                        ),
                         Text(
                           p.stockQty.toString(),
                           style: TextStyle(
@@ -603,9 +659,9 @@ class _ProductCardState extends State<_ProductCard>
                       child: LinearProgressIndicator(
                         value: widget.stockPct,
                         backgroundColor: AppColors.inputFill,
-                        valueColor: AlwaysStoppedAnimation(p.isLowStock
-                            ? AppColors.warning
-                            : AppColors.success),
+                        valueColor: AlwaysStoppedAnimation(
+                          p.isLowStock ? AppColors.warning : AppColors.success,
+                        ),
                         minHeight: 4,
                       ),
                     ),
@@ -623,16 +679,16 @@ class _ProductCardState extends State<_ProductCard>
                               decoration: BoxDecoration(
                                 color: AppColors.surfaceElevated,
                                 borderRadius: BorderRadius.circular(6),
-                                border: Border.all(
-                                    color: AppColors.cardBorder),
+                                border: Border.all(color: AppColors.cardBorder),
                               ),
                               alignment: Alignment.center,
                               child: const Text(
                                 'Edit Stock',
                                 style: TextStyle(
-                                    color: AppColors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600),
+                                  color: AppColors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),
@@ -640,12 +696,14 @@ class _ProductCardState extends State<_ProductCard>
                         const SizedBox(width: 4),
                         DarkIconButton(
                           icon: Icons.edit_outlined,
+                          semanticLabel: 'Edit product',
                           color: AppColors.gold,
                           onPressed: widget.onEdit,
                         ),
                         const SizedBox(width: 4),
                         DarkIconButton(
                           icon: Icons.delete_outline,
+                          semanticLabel: 'Delete product',
                           color: AppColors.error,
                           onPressed: widget.onDelete,
                         ),

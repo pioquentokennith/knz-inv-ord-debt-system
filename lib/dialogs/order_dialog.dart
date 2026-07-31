@@ -11,9 +11,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
-import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../core/money.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/payment_method_model.dart';
@@ -72,19 +72,25 @@ class _OrderDialogState extends State<OrderDialog> {
   }
 
   // Computed total: sum of (customPrice * qty) across all cart entries
-  double get _cartTotal =>
-      _cart.fold(0, (sum, e) => sum + e.customPrice * e.qty);
+  Money get _cartTotal =>
+      _cart.fold(Money.zero, (sum, e) => sum + e.customPrice * e.qty);
 
   // Discounted total when a reseller is selected (fixed ₱ deduction per item)
-  double get _discountedCartTotal {
+  Money get _discountedCartTotal {
     if (_selectedReseller == null) return _cartTotal;
     final deduction = _selectedReseller!.deductionPerItem;
     // Sum: (customPrice - deduction) × qty, clamped so price never goes below 0
-    return _cart.fold(0.0, (sum, e) =>
-        sum + ((e.customPrice - deduction).clamp(0.0, e.customPrice) * e.qty));
+    return _cart.fold(
+      Money.zero,
+      (sum, e) =>
+          sum +
+          (e.customPrice - deduction).max(Money.zero).min(e.customPrice) *
+              e.qty,
+    );
   }
 
-  double get _deductionPerItem => _selectedReseller?.deductionPerItem ?? 0;
+  Money get _deductionPerItem =>
+      _selectedReseller?.deductionPerItem ?? Money.zero;
 
   // Validates and adds the currently selected product to the cart.
   // Merges with an existing cart entry if the same product is already in the cart.
@@ -96,14 +102,17 @@ class _OrderDialogState extends State<OrderDialog> {
     if (qty <= 0) return;
 
     final srp = product.price;
-    final deduction = double.tryParse(_pickedPriceCtrl.text.replaceAll(',', '')) ?? 0;
+    final deduction =
+        Money.tryParse(_pickedPriceCtrl.text.replaceAll(',', '')) ?? Money.zero;
     if (deduction < 0) {
       KnzToast.warning(context, 'Discount cannot be negative.');
       return;
     }
     if (deduction > srp) {
-      KnzToast.error(context,
-        'Discount (₱${deduction.toStringAsFixed(2)}) cannot exceed SRP (₱${srp.toStringAsFixed(2)})');
+      KnzToast.error(
+        context,
+        'Discount (₱${deduction.toStringAsFixed(2)}) cannot exceed SRP (₱${srp.toStringAsFixed(2)})',
+      );
       return;
     }
     final finalPrice = srp - deduction;
@@ -113,15 +122,21 @@ class _OrderDialogState extends State<OrderDialog> {
     final totalQty = alreadyInCart + qty;
 
     if (totalQty > product.stockQty) {
-      KnzToast.error(context,
-        'Not enough stock! Only ${product.stockQty - alreadyInCart} left available.');
+      KnzToast.error(
+        context,
+        'Not enough stock! Only ${product.stockQty - alreadyInCart} left available.',
+      );
       return;
     }
 
     setState(() {
       if (existingIdx >= 0) {
         _cart[existingIdx] = _CartEntry(
-            _cart[existingIdx].product, totalQty, _cart[existingIdx].srp, _cart[existingIdx].customPrice);
+          _cart[existingIdx].product,
+          totalQty,
+          _cart[existingIdx].srp,
+          _cart[existingIdx].customPrice,
+        );
       } else {
         _cart.add(_CartEntry(product, qty, srp, finalPrice));
       }
@@ -151,21 +166,23 @@ class _OrderDialogState extends State<OrderDialog> {
     final state = AppState();
 
     // ── Confirmation prompt ───────────────────────────────────────────────
-    final currency2 = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-    final displayTotal = _selectedReseller != null ? _discountedCartTotal : _cartTotal;
+    final displayTotal = _selectedReseller != null
+        ? _discountedCartTotal
+        : _cartTotal;
     final resellerNote = _selectedReseller != null
         ? ' (after −₱${_deductionPerItem.toStringAsFixed(0)}/item discount)'
         : '';
-    final interestNote = _paymentMethod == PaymentMethod.utang &&
+    final interestNote =
+        _paymentMethod == PaymentMethod.utang &&
             _interestType != 'none' &&
-            (double.tryParse(_interestCtrl.text.trim()) ?? 0) > 0
+            (Money.tryParse(_interestCtrl.text.trim()) ?? Money.zero).isPositive
         ? '\nInterest: ${_interestCtrl.text.trim()}% $_interestType'
         : '';
     final confirmed = await showConfirmDialog(
       context,
       title: 'Create Order?',
       message:
-          'Create order for $customer with ${_cart.length} item(s) totaling ${currency2.format(displayTotal)}$resellerNote?$interestNote',
+          'Create order for $customer with ${_cart.length} item(s) totaling ${displayTotal.format()}$resellerNote?$interestNote',
       confirmLabel: 'Create Order',
     );
     if (!confirmed || !mounted) return;
@@ -176,58 +193,66 @@ class _OrderDialogState extends State<OrderDialog> {
     //   item.srpPrice  = srp (e.g. 220)                                 ← catalog price
     // This ensures itemDiscountAmount = (srpPrice - unitPrice) * qty is always correct.
     // The discount field is hidden for resellers so e.customPrice == e.srp (no manual discount).
-    final resellerDeduction = _selectedReseller?.deductionPerItem ?? 0;
+    final resellerDeduction = _selectedReseller?.deductionPerItem ?? Money.zero;
     final items = _cart
-        .map((e) => OrderItem(
-              id: const Uuid().v4(),
-              productId: e.product.id,
-              productName: e.product.name,
-              unitPrice: resellerDeduction > 0
-                  ? (e.srp - resellerDeduction).clamp(0.0, e.srp)
-                  : e.customPrice, // non-reseller: use manually entered discounted price
-              srpPrice: e.srp,     // always original catalog price
-              quantity: e.qty,
-            ))
+        .map(
+          (e) => OrderItem(
+            id: const Uuid().v4(),
+            productId: e.product.id,
+            productName: e.product.name,
+            unitPrice: resellerDeduction > 0
+                ? (e.srp - resellerDeduction).max(Money.zero).min(e.srp)
+                : e.customPrice, // non-reseller: use manually entered discounted price
+            srpPrice: e.srp, // always original catalog price
+            quantity: e.qty,
+          ),
+        )
         .toList();
 
-    final orderId = await state.generateOrderId();
+    // The readable KNZ number is allocated by SQLite inside the create
+    // transaction. This placeholder is never persisted.
+    const orderId = 'PENDING';
     // If payment method is Utang, force status to utang so it auto-creates a debt record
     final effectiveStatus = _paymentMethod == PaymentMethod.utang
         ? OrderStatus.utang
         : _status;
-    // FIXED: For reseller orders, save totalAmount = SRP (full price) so the receipt
-    // shows the crossed-out SRP, and save discountedTotal = NET (amount paid).
-    // For regular orders with item-level discount: totalAmount = net (unitPrice×qty),
-    // discountedTotal = null. Accounting derives discount from (srpPrice-unitPrice)×qty.
-    final savedTotal = _cartTotal; // SRP total for resellers; net total for regular
-    final savedDiscountedTotal = _selectedReseller != null ? _discountedCartTotal : null;
+    // Customer-pay total is authoritative; SRP remains separately available on
+    // the order and line items for discount and receipt reference.
+    final savedTotal = displayTotal;
+    final savedDiscountedTotal = _selectedReseller != null
+        ? _discountedCartTotal
+        : null;
     final order = Order(
       id: const Uuid().v4(),
       orderId: orderId,
       customerName: customer,
       items: items,
       totalAmount: savedTotal,
+      srpTotal: _cartTotal,
       status: effectiveStatus,
       orderDate: DateTime.now(),
       notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
       // v6 fields
-      paymentMethod:    _paymentMethod,
+      paymentMethod: _paymentMethod,
       paymentReference: _paymentRefCtrl.text.trim().isEmpty
           ? null
           : _paymentRefCtrl.text.trim(),
-      isReseller:       _selectedReseller != null,
-      deductionPerItem:  _deductionPerItem,
-      discountedTotal:  savedDiscountedTotal,
+      isReseller: _selectedReseller != null,
+      deductionPerItem: _deductionPerItem,
+      discountedTotal: savedDiscountedTotal,
     );
 
-    final success = await state.addOrder(order,
+    final success = await state.addOrder(
+      order,
       onError: (msg) {
         if (mounted) KnzToast.error(context, msg);
       },
-      interestRate: _paymentMethod == PaymentMethod.utang
-          ? (double.tryParse(_interestCtrl.text.trim()) ?? 0)
+      interestRateBasisPoints: _paymentMethod == PaymentMethod.utang
+          ? (Money.tryParse(_interestCtrl.text.trim()) ?? Money.zero).centavos
           : 0,
-      interestType: _paymentMethod == PaymentMethod.utang ? _interestType : 'none',
+      interestType: _paymentMethod == PaymentMethod.utang
+          ? _interestType
+          : 'none',
     );
     if (success && mounted) {
       Navigator.pop(context);
@@ -246,7 +271,6 @@ class _OrderDialogState extends State<OrderDialog> {
       _pickedProduct = products.first;
       // Deduction field starts empty — SRP is shown as a locked display
     }
-    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     return Dialog(
       backgroundColor: AppColors.surface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -261,9 +285,10 @@ class _OrderDialogState extends State<OrderDialog> {
             const Text(
               '📦 New Order',
               style: TextStyle(
-                  color: AppColors.gold,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700),
+                color: AppColors.gold,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 20),
 
@@ -286,168 +311,193 @@ class _OrderDialogState extends State<OrderDialog> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('ADD PRODUCT TO ORDER',
-                      style: AppTextStyles.labelSmall),
+                  const Text(
+                    'ADD PRODUCT TO ORDER',
+                    style: AppTextStyles.labelSmall,
+                  ),
                   const SizedBox(height: 10),
                   // ── Product Search Bar ──────────────────────────────
-                  Builder(builder: (context) {
-                    final allProducts = AppState().products;
-                    final filtered = _searchQuery.isEmpty
-                        ? allProducts
-                        : allProducts
-                            .where((p) => p.name
-                                .toLowerCase()
-                                .contains(_searchQuery.toLowerCase()))
-                            .toList();
+                  Builder(
+                    builder: (context) {
+                      final allProducts = AppState().products;
+                      final filtered = _searchQuery.isEmpty
+                          ? allProducts
+                          : allProducts
+                                .where(
+                                  (p) => p.name.toLowerCase().contains(
+                                    _searchQuery.toLowerCase(),
+                                  ),
+                                )
+                                .toList();
 
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Search text field
-                        TextField(
-                          controller: _searchCtrl,
-                          focusNode: _searchFocusNode,
-                          style: const TextStyle(
-                              color: AppColors.white, fontSize: 14),
-                          onChanged: (v) => setState(() {
-                            _searchQuery = v;
-                            _showSearchResults = v.isNotEmpty || _searchFocusNode.hasFocus;
-                          }),
-                          onTap: () => setState(
-                              () => _showSearchResults = true),
-                          decoration: InputDecoration(
-                            hintText: _pickedProduct != null
-                                ? '${_pickedProduct!.name} (${_pickedProduct!.stockQty} left)'
-                                : 'Search product...',
-                            hintStyle: TextStyle(
-                              color: _pickedProduct != null
-                                  ? AppColors.white
-                                  : AppColors.whiteTertiary,
-                              fontSize: 13,
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Search text field
+                          TextField(
+                            controller: _searchCtrl,
+                            focusNode: _searchFocusNode,
+                            style: const TextStyle(
+                              color: AppColors.white,
+                              fontSize: 14,
                             ),
-                            prefixIcon: const Icon(Icons.search,
-                                color: AppColors.whiteTertiary, size: 18),
-                            suffixIcon: _searchQuery.isNotEmpty
-                                ? GestureDetector(
-                                    onTap: () => setState(() {
-                                      _searchCtrl.clear();
-                                      _searchQuery = '';
-                                      _showSearchResults = false;
-                                      _searchFocusNode.unfocus();
-                                    }),
-                                    child: const Icon(Icons.close,
+                            onChanged: (v) => setState(() {
+                              _searchQuery = v;
+                              _showSearchResults =
+                                  v.isNotEmpty || _searchFocusNode.hasFocus;
+                            }),
+                            onTap: () =>
+                                setState(() => _showSearchResults = true),
+                            decoration: InputDecoration(
+                              hintText: _pickedProduct != null
+                                  ? '${_pickedProduct!.name} (${_pickedProduct!.stockQty} left)'
+                                  : 'Search product...',
+                              hintStyle: TextStyle(
+                                color: _pickedProduct != null
+                                    ? AppColors.white
+                                    : AppColors.whiteTertiary,
+                                fontSize: 13,
+                              ),
+                              prefixIcon: const Icon(
+                                Icons.search,
+                                color: AppColors.whiteTertiary,
+                                size: 18,
+                              ),
+                              suffixIcon: _searchQuery.isNotEmpty
+                                  ? GestureDetector(
+                                      onTap: () => setState(() {
+                                        _searchCtrl.clear();
+                                        _searchQuery = '';
+                                        _showSearchResults = false;
+                                        _searchFocusNode.unfocus();
+                                      }),
+                                      child: const Icon(
+                                        Icons.close,
                                         color: AppColors.whiteTertiary,
-                                        size: 16),
-                                  )
-                                : null,
-                            filled: true,
-                            fillColor: AppColors.surface,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                  color: AppColors.cardBorder),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                  color: AppColors.cardBorder),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide:
-                                  const BorderSide(color: AppColors.gold),
+                                        size: 16,
+                                      ),
+                                    )
+                                  : null,
+                              filled: true,
+                              fillColor: AppColors.surface,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: AppColors.cardBorder,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: AppColors.cardBorder,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: AppColors.gold,
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                        // Search Results Dropdown
-                        if (_showSearchResults) ...[
-                          const SizedBox(height: 4),
-                          Container(
-                            constraints:
-                                const BoxConstraints(maxHeight: 200),
-                            decoration: BoxDecoration(
-                              color: AppColors.surfaceElevated,
-                              borderRadius: BorderRadius.circular(8),
-                              border:
-                                  Border.all(color: AppColors.cardBorder),
-                            ),
-                            child: filtered.isEmpty
-                                ? const Padding(
-                                    padding: EdgeInsets.all(12),
-                                    child: Text('No products found',
+                          // Search Results Dropdown
+                          if (_showSearchResults) ...[
+                            const SizedBox(height: 4),
+                            Container(
+                              constraints: const BoxConstraints(maxHeight: 200),
+                              decoration: BoxDecoration(
+                                color: AppColors.surfaceElevated,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppColors.cardBorder),
+                              ),
+                              child: filtered.isEmpty
+                                  ? const Padding(
+                                      padding: EdgeInsets.all(12),
+                                      child: Text(
+                                        'No products found',
                                         style: TextStyle(
-                                            color:
-                                                AppColors.whiteTertiary,
-                                            fontSize: 13)),
-                                  )
-                                : ListView.separated(
-                                    shrinkWrap: true,
-                                    itemCount: filtered.length,
-                                    separatorBuilder: (_, __) =>
-                                        const Divider(
+                                          color: AppColors.whiteTertiary,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    )
+                                  : ListView.separated(
+                                      shrinkWrap: true,
+                                      itemCount: filtered.length,
+                                      separatorBuilder: (_, __) =>
+                                          const Divider(
                                             color: AppColors.divider,
-                                            height: 1),
-                                    itemBuilder: (ctx, idx) {
-                                      final p = filtered[idx];
-                                      final isSelected =
-                                          _pickedProduct?.id == p.id;
-                                      return GestureDetector(
-                                        onTap: () => setState(() {
-                                          _pickedProduct = p;
-                                          // Clear deduction when switching products
-                                          _pickedPriceCtrl.clear();
-                                          _searchCtrl.clear();
-                                          _searchQuery = '';
-                                          _showSearchResults = false;
-                                          _searchFocusNode.unfocus();
-                                        }),
-                                        child: Container(
-                                          padding:
-                                              const EdgeInsets.symmetric(
-                                                  horizontal: 12,
-                                                  vertical: 10),
-                                          color: isSelected
-                                              ? AppColors.gold
-                                                  .withValues(alpha: 0.1)
-                                              : Colors.transparent,
-                                          child: Row(
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  '${p.name} (${p.stockQty} left)',
-                                                  style: TextStyle(
-                                                    color: isSelected
-                                                        ? AppColors.gold
-                                                        : AppColors.white,
-                                                    fontSize: 13,
-                                                    fontWeight: isSelected
-                                                        ? FontWeight.w600
-                                                        : FontWeight
-                                                            .normal,
+                                            height: 1,
+                                          ),
+                                      itemBuilder: (ctx, idx) {
+                                        final p = filtered[idx];
+                                        final isSelected =
+                                            _pickedProduct?.id == p.id;
+                                        return GestureDetector(
+                                          onTap: () => setState(() {
+                                            _pickedProduct = p;
+                                            // Clear deduction when switching products
+                                            _pickedPriceCtrl.clear();
+                                            _searchCtrl.clear();
+                                            _searchQuery = '';
+                                            _showSearchResults = false;
+                                            _searchFocusNode.unfocus();
+                                          }),
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 10,
+                                            ),
+                                            color: isSelected
+                                                ? AppColors.gold.withValues(
+                                                    alpha: 0.1,
+                                                  )
+                                                : Colors.transparent,
+                                            child: Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Text(
+                                                    '${p.name} (${p.stockQty} left)',
+                                                    style: TextStyle(
+                                                      color: isSelected
+                                                          ? AppColors.gold
+                                                          : AppColors.white,
+                                                      fontSize: 13,
+                                                      fontWeight: isSelected
+                                                          ? FontWeight.w600
+                                                          : FontWeight.normal,
+                                                    ),
                                                   ),
                                                 ),
-                                              ),
-                                              if (isSelected)
-                                                const Icon(Icons.check,
+                                                if (isSelected)
+                                                  const Icon(
+                                                    Icons.check,
                                                     color: AppColors.gold,
-                                                    size: 16),
-                                            ],
+                                                    size: 16,
+                                                  ),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ],
                         ],
-                      ],
-                    );
-                  }),
+                      );
+                    },
+                  ),
                   const SizedBox(height: 10),
                   // ── SRP (read-only) ────────────────────────────────────────
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
                       borderRadius: BorderRadius.circular(8),
@@ -455,30 +505,40 @@ class _OrderDialogState extends State<OrderDialog> {
                     ),
                     child: Row(
                       children: [
-                        const Text('SRP',
-                            style: TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 11,
-                                letterSpacing: 1,
-                                fontWeight: FontWeight.w600)),
+                        const Text(
+                          'SRP',
+                          style: TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 11,
+                            letterSpacing: 1,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                         const SizedBox(width: 10),
                         Text(
                           _pickedProduct != null
                               ? '₱${_pickedProduct!.price.toStringAsFixed(2)}'
                               : '₱0.00',
                           style: const TextStyle(
-                              color: AppColors.gold,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 16),
+                            color: AppColors.gold,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                          ),
                         ),
                         const Spacer(),
-                        const Icon(Icons.lock_outline,
-                            color: AppColors.whiteTertiary, size: 14),
+                        const Icon(
+                          Icons.lock_outline,
+                          color: AppColors.whiteTertiary,
+                          size: 14,
+                        ),
                         const SizedBox(width: 4),
-                        const Text('Fixed',
-                            style: TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 11)),
+                        const Text(
+                          'Fixed',
+                          style: TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 11,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -487,100 +547,141 @@ class _OrderDialogState extends State<OrderDialog> {
                   // Resellers get a fixed peso deduction applied at cart level;
                   // showing a manual discount field at the same time causes
                   // confusion and potential double-discount data entry.
-                  if (_selectedReseller == null) Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      const Text('−',
+                  if (_selectedReseller == null)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Text(
+                          '−',
                           style: TextStyle(
-                              color: AppColors.gold,
-                              fontSize: 22,
-                              fontWeight: FontWeight.w700)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: _pickedPriceCtrl,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
-                          ],
-                          style: const TextStyle(color: AppColors.white, fontSize: 14),
-                          onChanged: (_) => setState(() {}),
-                          decoration: InputDecoration(
-                            labelText: 'DISCOUNT (OPTIONAL)',
-                            labelStyle: const TextStyle(
-                                color: AppColors.whiteTertiary, fontSize: 12),
-                            hintText: '0',
-                            hintStyle: const TextStyle(
-                                color: AppColors.whiteTertiary, fontSize: 13),
-                            prefixText: '₱ ',
-                            prefixStyle: const TextStyle(
-                                color: AppColors.error, fontWeight: FontWeight.w600),
-                            filled: true,
-                            fillColor: AppColors.surface,
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(color: AppColors.cardBorder),
+                            color: AppColors.gold,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _pickedPriceCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
                             ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(color: AppColors.cardBorder),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d*\.?\d*'),
+                              ),
+                            ],
+                            style: const TextStyle(
+                              color: AppColors.white,
+                              fontSize: 14,
                             ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(color: AppColors.gold),
+                            onChanged: (_) => setState(() {}),
+                            decoration: InputDecoration(
+                              labelText: 'DISCOUNT (OPTIONAL)',
+                              labelStyle: const TextStyle(
+                                color: AppColors.whiteTertiary,
+                                fontSize: 12,
+                              ),
+                              hintText: '0',
+                              hintStyle: const TextStyle(
+                                color: AppColors.whiteTertiary,
+                                fontSize: 13,
+                              ),
+                              prefixText: '₱ ',
+                              prefixStyle: const TextStyle(
+                                color: AppColors.error,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              filled: true,
+                              fillColor: AppColors.surface,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: AppColors.cardBorder,
+                                ),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: AppColors.cardBorder,
+                                ),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide: const BorderSide(
+                                  color: AppColors.gold,
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      // Live final price preview
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Builder(builder: (_) {
-                            final srp    = _pickedProduct?.price ?? 0;
-                            final deduct = double.tryParse(_pickedPriceCtrl.text) ?? 0;
-                            final sell   = (srp - deduct).clamp(0.0, srp);
-                            final hasDeduct = deduct > 0 && _pickedProduct != null;
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                if (hasDeduct) ...[
-                                  Text(
-                                    '₱${srp.toStringAsFixed(2)} − ₱${deduct.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                        color: AppColors.whiteTertiary,
-                                        fontSize: 10),
-                                  ),
-                                  const Text('=',
-                                      style: TextStyle(
+                        const SizedBox(width: 10),
+                        // Live final price preview
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Builder(
+                              builder: (_) {
+                                final srp = _pickedProduct?.price ?? Money.zero;
+                                final deduct =
+                                    Money.tryParse(_pickedPriceCtrl.text) ??
+                                    Money.zero;
+                                final sell = (srp - deduct)
+                                    .max(Money.zero)
+                                    .min(srp);
+                                final hasDeduct =
+                                    deduct > 0 && _pickedProduct != null;
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    if (hasDeduct) ...[
+                                      Text(
+                                        '₱${srp.toStringAsFixed(2)} − ₱${deduct.toStringAsFixed(2)}',
+                                        style: const TextStyle(
                                           color: AppColors.whiteTertiary,
-                                          fontSize: 10)),
-                                ],
-                                const Text('SELLING PRICE',
-                                    style: TextStyle(
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                      const Text(
+                                        '=',
+                                        style: TextStyle(
+                                          color: AppColors.whiteTertiary,
+                                          fontSize: 10,
+                                        ),
+                                      ),
+                                    ],
+                                    const Text(
+                                      'SELLING PRICE',
+                                      style: TextStyle(
                                         color: AppColors.whiteTertiary,
                                         fontSize: 10,
-                                        letterSpacing: 1)),
-                                Text(
-                                  _pickedProduct == null
-                                      ? '₱0.00'
-                                      : '₱${sell.toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                      color: hasDeduct
-                                          ? AppColors.success
-                                          : AppColors.gold,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 15),
-                                ),
-                              ],
-                            );
-                          }),
-                        ],                      ),
-                    ],
-                  ),  // end of discount Row
+                                        letterSpacing: 1,
+                                      ),
+                                    ),
+                                    Text(
+                                      _pickedProduct == null
+                                          ? '₱0.00'
+                                          : '₱${sell.toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        color: hasDeduct
+                                            ? AppColors.success
+                                            : AppColors.gold,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 15,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ],
+                    ), // end of discount Row
                   const SizedBox(height: 10),
                   // Qty + Add button
                   Row(
@@ -591,33 +692,41 @@ class _OrderDialogState extends State<OrderDialog> {
                           controller: _pickedQtyCtrl,
                           keyboardType: TextInputType.number,
                           inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly
+                            FilteringTextInputFormatter.digitsOnly,
                           ],
                           style: const TextStyle(
-                              color: AppColors.white, fontSize: 14),
+                            color: AppColors.white,
+                            fontSize: 14,
+                          ),
                           decoration: InputDecoration(
                             labelText: 'Qty',
                             labelStyle: const TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 12),
+                              color: AppColors.whiteTertiary,
+                              fontSize: 12,
+                            ),
                             filled: true,
                             fillColor: AppColors.surface,
                             contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
                               borderSide: const BorderSide(
-                                  color: AppColors.cardBorder),
+                                color: AppColors.cardBorder,
+                              ),
                             ),
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
                               borderSide: const BorderSide(
-                                  color: AppColors.cardBorder),
+                                color: AppColors.cardBorder,
+                              ),
                             ),
                             focusedBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(8),
-                              borderSide:
-                                  const BorderSide(color: AppColors.gold),
+                              borderSide: const BorderSide(
+                                color: AppColors.gold,
+                              ),
                             ),
                           ),
                         ),
@@ -632,21 +741,27 @@ class _OrderDialogState extends State<OrderDialog> {
                               color: AppColors.gold.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(8),
                               border: Border.all(
-                                  color:
-                                      AppColors.gold.withValues(alpha: 0.4)),
+                                color: AppColors.gold.withValues(alpha: 0.4),
+                              ),
                             ),
                             alignment: Alignment.center,
                             child: const Row(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.add,
-                                    color: AppColors.gold, size: 18),
+                                Icon(
+                                  Icons.add,
+                                  color: AppColors.gold,
+                                  size: 18,
+                                ),
                                 SizedBox(width: 6),
-                                Text('Add to Order',
-                                    style: TextStyle(
-                                        color: AppColors.gold,
-                                        fontWeight: FontWeight.w600,
-                                        fontSize: 13)),
+                                Text(
+                                  'Add to Order',
+                                  style: TextStyle(
+                                    color: AppColors.gold,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 13,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
@@ -672,17 +787,25 @@ class _OrderDialogState extends State<OrderDialog> {
                     // Header
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                       child: Row(
                         children: [
-                          const Icon(Icons.shopping_cart_outlined,
-                              color: AppColors.gold, size: 16),
+                          const Icon(
+                            Icons.shopping_cart_outlined,
+                            color: AppColors.gold,
+                            size: 16,
+                          ),
                           const SizedBox(width: 6),
-                          Text('${_cart.length} item${_cart.length > 1 ? 's' : ''}',
-                              style: const TextStyle(
-                                  color: AppColors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13)),
+                          Text(
+                            '${_cart.length} item${_cart.length > 1 ? 's' : ''}',
+                            style: const TextStyle(
+                              color: AppColors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -695,7 +818,9 @@ class _OrderDialogState extends State<OrderDialog> {
                         children: [
                           Padding(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 10),
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
                             child: Row(
                               children: [
                                 Expanded(
@@ -703,40 +828,51 @@ class _OrderDialogState extends State<OrderDialog> {
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Text(e.product.name,
-                                          style: const TextStyle(
-                                              color: AppColors.white,
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 13)),
+                                      Text(
+                                        e.product.name,
+                                        style: const TextStyle(
+                                          color: AppColors.white,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 13,
+                                        ),
+                                      ),
                                       if (e.srp != e.customPrice) ...[
                                         // Show SRP and deduction when discounted
                                         Row(
                                           children: [
                                             Text(
-                                              'SRP ${currency.format(e.srp)}',
+                                              'SRP ${e.srp.format()}',
                                               style: const TextStyle(
-                                                  color: AppColors.whiteTertiary,
-                                                  fontSize: 10,
-                                                  decoration: TextDecoration.lineThrough),
+                                                color: AppColors.whiteTertiary,
+                                                fontSize: 10,
+                                                decoration:
+                                                    TextDecoration.lineThrough,
+                                              ),
                                             ),
-                                            const Text(' − ',
-                                                style: TextStyle(
-                                                    color: AppColors.error,
-                                                    fontSize: 10)),
+                                            const Text(
+                                              ' − ',
+                                              style: TextStyle(
+                                                color: AppColors.error,
+                                                fontSize: 10,
+                                              ),
+                                            ),
                                             Text(
-                                              currency.format(e.srp - e.customPrice),
+                                              (e.srp - e.customPrice).format(),
                                               style: const TextStyle(
-                                                  color: AppColors.error,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.w600)),
+                                                color: AppColors.error,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
                                           ],
                                         ),
                                       ],
                                       Text(
-                                        '${currency.format(e.customPrice)} × ${e.qty} = ${currency.format(e.customPrice * e.qty)}',
+                                        '${e.customPrice.format()} × ${e.qty} = ${(e.customPrice * e.qty).format()}',
                                         style: const TextStyle(
-                                            color: AppColors.whiteTertiary,
-                                            fontSize: 11),
+                                          color: AppColors.whiteTertiary,
+                                          fontSize: 11,
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -750,7 +886,11 @@ class _OrderDialogState extends State<OrderDialog> {
                                         setState(() {
                                           if (e.qty > 1) {
                                             _cart[i] = _CartEntry(
-                                                e.product, e.qty - 1, e.srp, e.customPrice);
+                                              e.product,
+                                              e.qty - 1,
+                                              e.srp,
+                                              e.customPrice,
+                                            );
                                           } else {
                                             _cart.removeAt(i);
                                           }
@@ -759,23 +899,35 @@ class _OrderDialogState extends State<OrderDialog> {
                                     ),
                                     Padding(
                                       padding: const EdgeInsets.symmetric(
-                                          horizontal: 8),
-                                      child: Text(e.qty.toString(),
-                                          style: const TextStyle(
-                                              color: AppColors.white,
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 14)),
+                                        horizontal: 8,
+                                      ),
+                                      child: Text(
+                                        e.qty.toString(),
+                                        style: const TextStyle(
+                                          color: AppColors.white,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 14,
+                                        ),
+                                      ),
                                     ),
                                     _QtyButton(
                                       icon: Icons.add,
                                       onTap: () {
                                         if (e.qty >= e.product.stockQty) {
-                                          KnzToast.warning(context,
-                                            'Max stock reached! Only ${e.product.stockQty} available.');
+                                          KnzToast.warning(
+                                            context,
+                                            'Max stock reached! Only ${e.product.stockQty} available.',
+                                          );
                                           return;
                                         }
-                                        setState(() => _cart[i] =
-                                            _CartEntry(e.product, e.qty + 1, e.srp, e.customPrice));
+                                        setState(
+                                          () => _cart[i] = _CartEntry(
+                                            e.product,
+                                            e.qty + 1,
+                                            e.srp,
+                                            e.customPrice,
+                                          ),
+                                        );
                                       },
                                     ),
                                   ],
@@ -783,15 +935,17 @@ class _OrderDialogState extends State<OrderDialog> {
                                 const SizedBox(width: 8),
                                 GestureDetector(
                                   onTap: () => _removeFromCart(i),
-                                  child: const Icon(Icons.close,
-                                      color: AppColors.error, size: 18),
+                                  child: const Icon(
+                                    Icons.close,
+                                    color: AppColors.error,
+                                    size: 18,
+                                  ),
                                 ),
                               ],
                             ),
                           ),
                           if (i < _cart.length - 1)
-                            const Divider(
-                                color: AppColors.divider, height: 1),
+                            const Divider(color: AppColors.divider, height: 1),
                         ],
                       );
                     }),
@@ -799,21 +953,29 @@ class _OrderDialogState extends State<OrderDialog> {
                     // Total
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 12),
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text('TOTAL',
-                              style: TextStyle(
-                                  color: AppColors.whiteTertiary,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 1)),
-                          Text(currency.format(_cartTotal),
-                              style: const TextStyle(
-                                  color: AppColors.gold,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 18)),
+                          const Text(
+                            'TOTAL',
+                            style: TextStyle(
+                              color: AppColors.whiteTertiary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          Text(
+                            _cartTotal.format(),
+                            style: const TextStyle(
+                              color: AppColors.gold,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 18,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -827,11 +989,11 @@ class _OrderDialogState extends State<OrderDialog> {
             DarkDropdown<OrderStatus>(
               label: 'STATUS',
               value: _status,
-              items: OrderStatus.values
-                  .map((s) => DropdownMenuItem(
-                        value: s,
-                        child: Text(s.displayName),
-                      ))
+              items: const [OrderStatus.pending]
+                  .map(
+                    (s) =>
+                        DropdownMenuItem(value: s, child: Text(s.displayName)),
+                  )
                   .toList(),
               onChanged: (v) {
                 if (v != null) setState(() => _status = v);
@@ -848,12 +1010,15 @@ class _OrderDialogState extends State<OrderDialog> {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('RESELLER DISCOUNT',
-                        style: TextStyle(
-                            color: AppColors.whiteTertiary,
-                            fontSize: 11,
-                            letterSpacing: 1.2,
-                            fontWeight: FontWeight.w600)),
+                    const Text(
+                      'RESELLER DISCOUNT',
+                      style: TextStyle(
+                        color: AppColors.whiteTertiary,
+                        fontSize: 11,
+                        letterSpacing: 1.2,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 6),
                     Container(
                       decoration: BoxDecoration(
@@ -868,31 +1033,37 @@ class _OrderDialogState extends State<OrderDialog> {
                           value: _selectedReseller,
                           dropdownColor: AppColors.surfaceElevated,
                           style: const TextStyle(color: AppColors.white),
-                          hint: const Text('No discount (regular order)',
-                              style: TextStyle(
-                                  color: AppColors.whiteTertiary)),
+                          hint: const Text(
+                            'No discount (regular order)',
+                            style: TextStyle(color: AppColors.whiteTertiary),
+                          ),
                           items: [
                             const DropdownMenuItem<Reseller?>(
                               value: null,
-                              child: Text('No discount (regular order)',
-                                  style: TextStyle(
-                                      color: AppColors.whiteSecondary)),
+                              child: Text(
+                                'No discount (regular order)',
+                                style: TextStyle(
+                                  color: AppColors.whiteSecondary,
+                                ),
+                              ),
                             ),
-                            ...resellers.map((r) => DropdownMenuItem<Reseller?>(
-                              value: r,
-                              child: Text(r.label,
-                                  style: const TextStyle(
-                                      color: AppColors.gold)),
-                            )),
+                            ...resellers.map(
+                              (r) => DropdownMenuItem<Reseller?>(
+                                value: r,
+                                child: Text(
+                                  r.label,
+                                  style: const TextStyle(color: AppColors.gold),
+                                ),
+                              ),
+                            ),
                           ],
-                          onChanged: (r) =>
-                              setState(() {
-                                _selectedReseller = r;
-                                // Clear any manual discount when a reseller is
-                                // selected — the field is now hidden and its
-                                // value would otherwise silently affect pricing.
-                                _pickedPriceCtrl.clear();
-                              }),
+                          onChanged: (r) => setState(() {
+                            _selectedReseller = r;
+                            // Clear any manual discount when a reseller is
+                            // selected — the field is now hidden and its
+                            // value would otherwise silently affect pricing.
+                            _pickedPriceCtrl.clear();
+                          }),
                         ),
                       ),
                     ),
@@ -900,30 +1071,33 @@ class _OrderDialogState extends State<OrderDialog> {
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         decoration: BoxDecoration(
                           color: AppColors.gold.withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
-                              color:
-                                  AppColors.gold.withValues(alpha: 0.3)),
+                            color: AppColors.gold.withValues(alpha: 0.3),
+                          ),
                         ),
                         child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceBetween,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Text(
-                              'SRP:  ${NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(_cartTotal)}',
+                              'SRP:  ${_cartTotal.format()}',
                               style: const TextStyle(
-                                  color: AppColors.whiteSecondary,
-                                  fontSize: 13),
+                                color: AppColors.whiteSecondary,
+                                fontSize: 13,
+                              ),
                             ),
                             Text(
-                              'NET: ${NumberFormat.currency(symbol: '₱', decimalDigits: 2).format(_discountedCartTotal)}',
+                              'NET: ${_discountedCartTotal.format()}',
                               style: const TextStyle(
-                                  color: AppColors.gold,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 15),
+                                color: AppColors.gold,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 15,
+                              ),
                             ),
                           ],
                         ),
@@ -936,12 +1110,15 @@ class _OrderDialogState extends State<OrderDialog> {
             ),
 
             // ── v6: Payment method ─────────────────────────────────────────
-            const Text('PAYMENT METHOD',
-                style: TextStyle(
-                    color: AppColors.whiteTertiary,
-                    fontSize: 11,
-                    letterSpacing: 1.2,
-                    fontWeight: FontWeight.w600)),
+            const Text(
+              'PAYMENT METHOD',
+              style: TextStyle(
+                color: AppColors.whiteTertiary,
+                fontSize: 11,
+                letterSpacing: 1.2,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
             const SizedBox(height: 6),
             Container(
               decoration: BoxDecoration(
@@ -957,17 +1134,18 @@ class _OrderDialogState extends State<OrderDialog> {
                   dropdownColor: AppColors.surfaceElevated,
                   style: const TextStyle(color: AppColors.white),
                   items: PaymentMethod.values
-                      .map((m) => DropdownMenuItem(
-                            value: m,
-                            child: Row(
-                              children: [
-                                Icon(m.icon,
-                                    color: AppColors.gold, size: 18),
-                                const SizedBox(width: 8),
-                                Text(m.displayName),
-                              ],
-                            ),
-                          ))
+                      .map(
+                        (m) => DropdownMenuItem(
+                          value: m,
+                          child: Row(
+                            children: [
+                              Icon(m.icon, color: AppColors.gold, size: 18),
+                              const SizedBox(width: 8),
+                              Text(m.displayName),
+                            ],
+                          ),
+                        ),
+                      )
                       .toList(),
                   onChanged: (v) {
                     if (v != null) {
@@ -1000,87 +1178,100 @@ class _OrderDialogState extends State<OrderDialog> {
               const SizedBox(height: 14),
               const Divider(color: AppColors.cardBorder),
               const SizedBox(height: 10),
-              const Text('INTEREST (OPTIONAL)',
-                  style: TextStyle(
-                      color: AppColors.whiteTertiary,
-                      fontSize: 11,
-                      letterSpacing: 1.2,
-                      fontWeight: FontWeight.w600)),
+              const Text(
+                'INTEREST (OPTIONAL)',
+                style: TextStyle(
+                  color: AppColors.whiteTertiary,
+                  fontSize: 11,
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               const SizedBox(height: 10),
-              Row(children: [
-                for (final type in ['none', 'daily', 'monthly'])
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => setState(() => _interestType = type),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        margin: const EdgeInsets.only(right: 6),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: _interestType == type
-                              ? AppColors.warning.withValues(alpha: 0.15)
-                              : AppColors.inputFill,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
+              Row(
+                children: [
+                  for (final type in ['none', 'daily', 'monthly'])
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _interestType = type),
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 150),
+                          margin: const EdgeInsets.only(right: 6),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          decoration: BoxDecoration(
                             color: _interestType == type
-                                ? AppColors.warning
-                                : AppColors.cardBorder,
+                                ? AppColors.warning.withValues(alpha: 0.15)
+                                : AppColors.inputFill,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: _interestType == type
+                                  ? AppColors.warning
+                                  : AppColors.cardBorder,
+                            ),
                           ),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          type == 'none'
-                              ? 'None'
-                              : type[0].toUpperCase() + type.substring(1),
-                          style: TextStyle(
-                            color: _interestType == type
-                                ? AppColors.warning
-                                : AppColors.whiteTertiary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                          alignment: Alignment.center,
+                          child: Text(
+                            type == 'none'
+                                ? 'None'
+                                : type[0].toUpperCase() + type.substring(1),
+                            style: TextStyle(
+                              color: _interestType == type
+                                  ? AppColors.warning
+                                  : AppColors.whiteTertiary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ]),
+                ],
+              ),
               if (_interestType != 'none') ...[
                 const SizedBox(height: 12),
-                const Text('RATE (%)',
-                    style: TextStyle(
-                        color: AppColors.whiteTertiary,
-                        fontSize: 11,
-                        letterSpacing: 1.2)),
+                const Text(
+                  'RATE (%)',
+                  style: TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontSize: 11,
+                    letterSpacing: 1.2,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 TextField(
                   controller: _interestCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                    FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
                   ],
                   style: const TextStyle(color: AppColors.white),
                   decoration: InputDecoration(
                     hintText: '2.0',
-                    hintStyle:
-                        const TextStyle(color: AppColors.whiteTertiary),
+                    hintStyle: const TextStyle(color: AppColors.whiteTertiary),
                     suffixText: '%  $_interestType',
                     suffixStyle: const TextStyle(
-                        color: AppColors.warning, fontSize: 12),
+                      color: AppColors.warning,
+                      fontSize: 12,
+                    ),
                     filled: true,
                     fillColor: AppColors.inputFill,
                     border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide:
-                            const BorderSide(color: AppColors.cardBorder)),
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppColors.cardBorder),
+                    ),
                     enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide:
-                            const BorderSide(color: AppColors.cardBorder)),
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(color: AppColors.cardBorder),
+                    ),
                     focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(
-                            color: AppColors.warning, width: 1.5)),
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: const BorderSide(
+                        color: AppColors.warning,
+                        width: 1.5,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -1089,7 +1280,9 @@ class _OrderDialogState extends State<OrderDialog> {
                       ? 'Accrued = balance × rate% × days unpaid'
                       : 'Accrued = balance × rate% × (days/30)',
                   style: const TextStyle(
-                      color: AppColors.whiteTertiary, fontSize: 10),
+                    color: AppColors.whiteTertiary,
+                    fontSize: 10,
+                  ),
                 ),
               ],
               const SizedBox(height: 4),
@@ -1118,24 +1311,23 @@ class _OrderDialogState extends State<OrderDialog> {
                         color: AppColors.error.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                            color: AppColors.error.withValues(alpha: 0.4)),
+                          color: AppColors.error.withValues(alpha: 0.4),
+                        ),
                       ),
                       alignment: Alignment.center,
                       child: const Text(
                         'Cancel',
                         style: TextStyle(
-                            color: AppColors.error,
-                            fontWeight: FontWeight.w600),
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: GoldButton(
-                    label: 'Create Order',
-                    onPressed: _submit,
-                  ),
+                  child: GoldButton(label: 'Create Order', onPressed: _submit),
                 ),
               ],
             ),
@@ -1150,8 +1342,8 @@ class _OrderDialogState extends State<OrderDialog> {
 class _CartEntry {
   final Product product;
   final int qty;
-  final double srp;         // Original catalog price (locked, never changes)
-  final double customPrice; // Actual selling price (srp - deduction)
+  final Money srp; // Original catalog price (locked, never changes)
+  final Money customPrice; // Actual selling price (srp - deduction)
   _CartEntry(this.product, this.qty, this.srp, this.customPrice);
 }
 

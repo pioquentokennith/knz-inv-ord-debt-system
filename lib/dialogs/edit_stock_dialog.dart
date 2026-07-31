@@ -63,6 +63,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
               children: [
                 DarkIconButton(
                   icon: Icons.remove,
+                  semanticLabel: 'Decrease stock',
                   color: AppColors.error,
                   // Decrement stock — floor at 0 to prevent negative stock values
                   onPressed: () {
@@ -82,6 +83,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
                 const SizedBox(width: 12),
                 DarkIconButton(
                   icon: Icons.add,
+                  semanticLabel: 'Increase stock',
                   color: AppColors.success,
                   // Increment stock — no upper limit enforced here
                   onPressed: () {
@@ -95,24 +97,27 @@ class _EditStockDialogState extends State<EditStockDialog> {
             Text(
               'Min stock level: ${widget.product.minStockLevel}',
               style: const TextStyle(
-                  color: AppColors.whiteTertiary, fontSize: 12),
+                color: AppColors.whiteTertiary,
+                fontSize: 12,
+              ),
             ),
             const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
-                  child: GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Container(
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: AppColors.inputFill,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.cardBorder),
+                  child: SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.whiteSecondary,
+                        backgroundColor: AppColors.inputFill,
+                        side: const BorderSide(color: AppColors.cardBorder),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
                       ),
-                      alignment: Alignment.center,
-                      child: const Text(AppStrings.cancel,
-                          style: TextStyle(color: AppColors.whiteSecondary)),
+                      child: const Text(AppStrings.cancel),
                     ),
                   ),
                 ),
@@ -120,10 +125,17 @@ class _EditStockDialogState extends State<EditStockDialog> {
                 Expanded(
                   child: GoldButton(
                     label: 'Update',
-                    height: 44,
+                    height: 48,
                     // Parse the field value, confirm with the user, then persist the update
                     onPressed: () async {
-                      final v = int.tryParse(_ctrl.text) ?? 0;
+                      final v = int.tryParse(_ctrl.text.trim());
+                      if (v == null || v < 0) {
+                        KnzToast.warning(
+                          context,
+                          'Enter a stock quantity of zero or greater.',
+                        );
+                        return;
+                      }
                       final confirmed = await showConfirmDialog(
                         context,
                         title: 'Update Stock',
@@ -133,10 +145,22 @@ class _EditStockDialogState extends State<EditStockDialog> {
                         icon: Icons.inventory_2_rounded,
                       );
                       if (!confirmed || !context.mounted) return;
-                      await AppState().updateStock(widget.product.id, v);
-                      if (context.mounted) {
-                        Navigator.pop(context);
-                        KnzToast.success(context, '📦 Stock for "${widget.product.name}" set to $v units.');
+                      try {
+                        await AppState().updateStock(widget.product.id, v);
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          KnzToast.success(
+                            context,
+                            'Stock for "${widget.product.name}" set to $v units.',
+                          );
+                        }
+                      } catch (_) {
+                        if (context.mounted) {
+                          KnzToast.error(
+                            context,
+                            'Stock could not be updated. Please try again.',
+                          );
+                        }
                       }
                     },
                   ),

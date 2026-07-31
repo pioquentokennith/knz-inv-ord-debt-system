@@ -17,6 +17,7 @@ import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
+import '../core/money.dart';
 import '../models/debt_model.dart';
 import '../widgets/receipt_shared_widgets.dart';
 
@@ -31,7 +32,6 @@ import '../widgets/receipt_shared_widgets.dart';
 class UtangReceiptPrinter {
   const UtangReceiptPrinter._();
 
-  static final _cur     = NumberFormat.currency(symbol: 'P', decimalDigits: 2);
   static final _dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
   static final _shortDt = DateFormat('MM/dd/yy');
 
@@ -43,29 +43,38 @@ class UtangReceiptPrinter {
   ///   • Consistent label prefix width (5 chars) so colons align vertically.
   ///   • Empty line before major dividers for visual breathing room.
   ///   • Payment history rows: date left, amount right — same 5/7 split.
-  static Future<List<int>> buildBytes(CustomerDebt debt, {String userName = ''}) async {
+  static Future<List<int>> buildBytes(
+    CustomerDebt debt, {
+    String userName = '',
+  }) async {
     final profile = await CapabilityProfile.load();
-    final gen     = Generator(PaperSize.mm58, profile);
-    List<int> b   = [];
+    final gen = Generator(PaperSize.mm58, profile);
+    List<int> b = [];
 
     // ── Header ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     // Store name: bold, normal size — readable without being blocky
-    b += gen.text('KNZ  SCENT',
-        styles: const PosStyles(
-            align: PosAlign.center,
-            bold: true));
-    b += gen.text('Luxury  Fragrance  House',
-        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text(
+      'KNZ  SCENT',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    );
+    b += gen.text(
+      'Luxury  Fragrance  House',
+      styles: const PosStyles(align: PosAlign.center),
+    );
     b += gen.emptyLines(1);
-    b += gen.text('- UTANG STATEMENT -',
-        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text(
+      '- UTANG STATEMENT -',
+      styles: const PosStyles(align: PosAlign.center),
+    );
     b += gen.hr(ch: '-');
 
     // ── Customer info ────────────────────────────────────────────────────────
     // Bold on customer name only — most important info stands out
-    b += gen.text('NAME : ${debt.customerName}',
-        styles: const PosStyles(bold: true));
+    b += gen.text(
+      'NAME : ${debt.customerName}',
+      styles: const PosStyles(bold: true),
+    );
     b += gen.text('ID   : ${debt.orderId}');
     b += gen.text('DATE : ${_dateFmt.format(debt.createdAt)}');
     // ── Account (who recorded this utang) ────────────────────────────────────
@@ -77,16 +86,36 @@ class UtangReceiptPrinter {
     // ── Amounts ──────────────────────────────────────────────────────────────
     // Normal weight on both columns — thin strokes print crisper on thermal
     b += gen.row([
-      PosColumn(text: 'Order Total', width: 5,
-          styles: const PosStyles()),
-      PosColumn(text: _cur.format(debt.totalAmount), width: 7,
-          styles: const PosStyles(align: PosAlign.right)),
+      PosColumn(text: 'Order Total', width: 5, styles: const PosStyles()),
+      PosColumn(
+        text: _printerMoney(debt.totalAmount),
+        width: 7,
+        styles: const PosStyles(align: PosAlign.right),
+      ),
     ]);
     b += gen.row([
-      PosColumn(text: 'Total Paid', width: 5,
-          styles: const PosStyles()),
-      PosColumn(text: _cur.format(debt.amountPaid), width: 7,
-          styles: const PosStyles(align: PosAlign.right)),
+      PosColumn(text: 'Total Paid', width: 5, styles: const PosStyles()),
+      PosColumn(
+        text: _printerMoney(debt.amountPaid),
+        width: 7,
+        styles: const PosStyles(align: PosAlign.right),
+      ),
+    ]);
+    b += gen.row([
+      PosColumn(text: 'Principal Due', width: 5, styles: const PosStyles()),
+      PosColumn(
+        text: _printerMoney(debt.principalOutstanding),
+        width: 7,
+        styles: const PosStyles(align: PosAlign.right),
+      ),
+    ]);
+    b += gen.row([
+      PosColumn(text: 'Interest Due', width: 5, styles: const PosStyles()),
+      PosColumn(
+        text: _printerMoney(debt.interestOutstanding),
+        width: 7,
+        styles: const PosStyles(align: PosAlign.right),
+      ),
     ]);
 
     // ── Balance ───────────────────────────────────────────────────────────────
@@ -95,17 +124,18 @@ class UtangReceiptPrinter {
     final balanceLabel = debt.isPaid ? 'PAID' : 'BALANCE';
     // Label: normal size so it doesn't compete with the amount
     b += gen.row([
-      PosColumn(text: balanceLabel,
-          width: 5,
-          styles: const PosStyles()),
+      PosColumn(text: balanceLabel, width: 5, styles: const PosStyles()),
       // Amount: double-size on value only — the critical number
-      PosColumn(text: _cur.format(debt.remainingBalance),
-          width: 7,
-          styles: const PosStyles(
-              bold: true,
-              align: PosAlign.right,
-              height: PosTextSize.size2,
-              width: PosTextSize.size2)),
+      PosColumn(
+        text: _printerMoney(debt.totalWithInterest),
+        width: 7,
+        styles: const PosStyles(
+          bold: true,
+          align: PosAlign.right,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      ),
     ]);
     b += gen.hr(ch: '=');
 
@@ -117,11 +147,21 @@ class UtangReceiptPrinter {
       b += gen.hr(ch: '-');
       for (final p in debt.payments) {
         b += gen.row([
-          PosColumn(text: _shortDt.format(p.paidAt), width: 5,
-              styles: const PosStyles()),
-          PosColumn(text: _cur.format(p.amount), width: 7,
-              styles: const PosStyles(align: PosAlign.right)),
+          PosColumn(
+            text: _shortDt.format(p.paidAt),
+            width: 5,
+            styles: const PosStyles(),
+          ),
+          PosColumn(
+            text: _printerMoney(p.amount),
+            width: 7,
+            styles: const PosStyles(align: PosAlign.right),
+          ),
         ]);
+        b += gen.text(
+          '  Interest ${_printerMoney(p.interestApplied)} / '
+          'Principal ${_printerMoney(p.principalApplied)}',
+        );
         if (p.note != null && p.note!.isNotEmpty) {
           b += gen.text('  ${p.note!}');
         }
@@ -131,15 +171,21 @@ class UtangReceiptPrinter {
     // ── Footer ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     b += gen.hr(ch: '-');
-    b += gen.text('Pakibayad po ang inyong balanse.',
-        styles: const PosStyles(align: PosAlign.center));
-    b += gen.text('Salamat!  -  ${AppStrings.appName}',
-        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text(
+      'Pakibayad po ang inyong balanse.',
+      styles: const PosStyles(align: PosAlign.center),
+    );
+    b += gen.text(
+      'Salamat!  -  ${AppStrings.appName}',
+      styles: const PosStyles(align: PosAlign.center),
+    );
     b += gen.hr(ch: '-');
     b += gen.emptyLines(1);
     b += gen.cut();
     return b;
   }
+
+  static String _printerMoney(Money value) => 'P${value.toStringAsFixed(2)}';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,13 +193,19 @@ class UtangReceiptPrinter {
 // ─────────────────────────────────────────────────────────────────────────────
 class UtangReceiptScreen extends StatelessWidget {
   final CustomerDebt debt;
-  final String       userName;
+  final String userName;
 
   const UtangReceiptScreen({super.key, required this.debt, this.userName = ''});
 
-  static void show(BuildContext context, CustomerDebt debt, {String userName = ''}) {
+  static void show(
+    BuildContext context,
+    CustomerDebt debt, {
+    String userName = '',
+  }) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => UtangReceiptScreen(debt: debt, userName: userName)),
+      MaterialPageRoute(
+        builder: (_) => UtangReceiptScreen(debt: debt, userName: userName),
+      ),
     );
   }
 
@@ -163,11 +215,14 @@ class UtangReceiptScreen extends StatelessWidget {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         backgroundColor: AppColors.sidebar,
-        title: const Text('Utang Receipt',
-            style: TextStyle(
-                color: AppColors.gold,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.5)),
+        title: const Text(
+          'Utang Receipt',
+          style: TextStyle(
+            color: AppColors.gold,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.5,
+          ),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: AppColors.gold),
           onPressed: () => Navigator.pop(context),
@@ -178,10 +233,14 @@ class UtangReceiptScreen extends StatelessWidget {
           child: Container(height: 1, color: AppColors.cardBorder),
         ),
       ),
-      body: Column(children: [
-        Expanded(child: _UtangReceiptPreview(debt: debt, userName: userName)),
-        _UtangPrintPanel(debt: debt, userName: userName),
-      ]),
+      body: Column(
+        children: [
+          Expanded(
+            child: _UtangReceiptPreview(debt: debt, userName: userName),
+          ),
+          _UtangPrintPanel(debt: debt, userName: userName),
+        ],
+      ),
     );
   }
 }
@@ -191,164 +250,220 @@ class UtangReceiptScreen extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 class _UtangReceiptPreview extends StatelessWidget {
   final CustomerDebt debt;
-  final String       userName;
+  final String userName;
 
   const _UtangReceiptPreview({required this.debt, this.userName = ''});
 
   @override
   Widget build(BuildContext context) {
-    final cur      = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-    final dateFmt  = DateFormat('MMM dd, yyyy  hh:mm a');
+    final dateFmt = DateFormat('MMM dd, yyyy  hh:mm a');
     final balanceColor = debt.isPaid ? AppColors.success : AppColors.error;
 
-    return ReceiptCard(children: [
-      // ── Header ────────────────────────────────────────────────────
-      ReceiptHeader(
-        badgeLabel: 'UTANG STATEMENT',
-        badgeColor: AppColors.warning,
-      ),
-      const ReceiptDivider(),
+    return ReceiptCard(
+      children: [
+        // ── Header ────────────────────────────────────────────────────
+        ReceiptHeader(
+          badgeLabel: 'UTANG STATEMENT',
+          badgeColor: AppColors.warning,
+        ),
+        const ReceiptDivider(),
 
-      // ── Customer Info ─────────────────────────────────────────────
-      ReceiptSection(
-        child: Column(children: [
-          ReceiptInfoRow(
-            label: 'Customer',
-            value: debt.customerName,
-            valueStyle: const TextStyle(
-                color: AppColors.gold,
-                fontWeight: FontWeight.w800,
-                fontSize: 14),
-          ),
-          const SizedBox(height: 8),
-          ReceiptInfoRow(label: 'Order ID', value: debt.orderId),
-          const SizedBox(height: 8),
-          ReceiptInfoRow(
-              label: 'Date', value: dateFmt.format(debt.createdAt)),
-          // ── Account row (only shown when userName is provided) ─────
-          if (userName.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            ReceiptInfoRow(
-              label: 'Account',
-              value: userName,
-              valueStyle: const TextStyle(
-                  color: AppColors.whiteTertiary,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 13),
-            ),
-          ],
-        ]),
-      ),
-      const ReceiptDivider(),
-
-      // ── Amounts ───────────────────────────────────────────────────
-      ReceiptSection(
-        child: Column(children: [
-          ReceiptInfoRow(
-              label: 'Order Total',
-              value: cur.format(debt.totalAmount)),
-          const SizedBox(height: 8),
-          ReceiptInfoRow(
-            label: 'Total Paid',
-            value: cur.format(debt.amountPaid),
-            valueStyle: const TextStyle(
-                color: AppColors.success,
-                fontWeight: FontWeight.w600,
-                fontSize: 13),
-          ),
-          const SizedBox(height: 12),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            decoration: BoxDecoration(
-              color: balanceColor.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: balanceColor.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  debt.isPaid ? 'FULLY PAID' : 'BALANCE DUE',
-                  style: TextStyle(
-                      color: balanceColor,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
-                      letterSpacing: 1.2),
+        // ── Customer Info ─────────────────────────────────────────────
+        ReceiptSection(
+          child: Column(
+            children: [
+              ReceiptInfoRow(
+                label: 'Customer',
+                value: debt.customerName,
+                valueStyle: const TextStyle(
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
                 ),
-                Text(
-                  cur.format(debt.remainingBalance),
+              ),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(label: 'Order ID', value: debt.orderId),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(
+                label: 'Date',
+                value: dateFmt.format(debt.createdAt),
+              ),
+              // ── Account row (only shown when userName is provided) ─────
+              if (userName.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ReceiptInfoRow(
+                  label: 'Account',
+                  value: userName,
+                  valueStyle: const TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const ReceiptDivider(),
+
+        // ── Amounts ───────────────────────────────────────────────────
+        ReceiptSection(
+          child: Column(
+            children: [
+              ReceiptInfoRow(
+                label: 'Order Total',
+                value: debt.totalAmount.format(),
+              ),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(
+                label: 'Total Paid',
+                value: debt.amountPaid.format(),
+                valueStyle: const TextStyle(
+                  color: AppColors.success,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(
+                label: 'Principal Outstanding',
+                value: debt.principalOutstanding.format(),
+              ),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(
+                label: 'Accrued Interest',
+                value: debt.interestOutstanding.format(),
+                valueStyle: const TextStyle(
+                  color: AppColors.warning,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: balanceColor.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: balanceColor.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      debt.isPaid ? 'FULLY PAID' : 'BALANCE DUE',
+                      style: TextStyle(
+                        color: balanceColor,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    Text(
+                      debt.totalWithInterest.format(),
+                      style: TextStyle(
+                        color: balanceColor,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 17,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // ── Payment History ───────────────────────────────────────────
+        if (debt.payments.isNotEmpty) ...[
+          const ReceiptDivider(),
+          ReceiptSection(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'PAYMENT HISTORY',
                   style: TextStyle(
-                      color: balanceColor,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 17),
+                    color: AppColors.whiteTertiary,
+                    fontSize: 9,
+                    letterSpacing: 1.8,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ...debt.payments.reversed.map(
+                  (p) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.check_circle_outline,
+                          color: AppColors.success,
+                          size: 14,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                DateFormat('MMM dd, yyyy').format(p.paidAt),
+                                style: const TextStyle(
+                                  color: AppColors.whiteSecondary,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              if (p.note != null && p.note!.isNotEmpty)
+                                Text(
+                                  p.note!,
+                                  style: const TextStyle(
+                                    color: AppColors.whiteTertiary,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          p.amount.format(),
+                          style: const TextStyle(
+                            color: AppColors.success,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'I ${p.interestApplied.format()} / '
+                          'P ${p.principalApplied.format()}',
+                          style: const TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
-        ]),
-      ),
-
-      // ── Payment History ───────────────────────────────────────────
-      if (debt.payments.isNotEmpty) ...[
+        ],
         const ReceiptDivider(),
-        ReceiptSection(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('PAYMENT HISTORY',
-                  style: TextStyle(
-                      color: AppColors.whiteTertiary,
-                      fontSize: 9,
-                      letterSpacing: 1.8,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(height: 10),
-              ...debt.payments.reversed.map((p) => Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Row(children: [
-                      const Icon(Icons.check_circle_outline,
-                          color: AppColors.success, size: 14),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                                DateFormat('MMM dd, yyyy')
-                                    .format(p.paidAt),
-                                style: const TextStyle(
-                                    color: AppColors.whiteSecondary,
-                                    fontSize: 12)),
-                            if (p.note != null && p.note!.isNotEmpty)
-                              Text(p.note!,
-                                  style: const TextStyle(
-                                      color: AppColors.whiteTertiary,
-                                      fontSize: 11)),
-                          ],
-                        ),
-                      ),
-                      Text(cur.format(p.amount),
-                          style: const TextStyle(
-                              color: AppColors.success,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 13)),
-                    ]),
-                  )),
-            ],
-          ),
+
+        // ── Footer ────────────────────────────────────────────────────
+        ReceiptFooter(
+          line1: 'Pakibayad po ang inyong balanse.',
+          line2: 'Salamat sa inyong tiwala! — ${AppStrings.appName}',
         ),
       ],
-      const ReceiptDivider(),
-
-      // ── Footer ────────────────────────────────────────────────────
-      ReceiptFooter(
-        line1: 'Pakibayad po ang inyong balanse.',
-        line2: 'Salamat sa inyong tiwala! — ${AppStrings.appName}',
-      ),
-    ]);
+    );
   }
 }
 
@@ -358,7 +473,7 @@ class _UtangReceiptPreview extends StatelessWidget {
 // ─────────────────────────────────────────────────────────────────────────────
 class _UtangPrintPanel extends StatefulWidget {
   final CustomerDebt debt;
-  final String       userName;
+  final String userName;
 
   const _UtangPrintPanel({required this.debt, this.userName = ''});
 
@@ -367,7 +482,7 @@ class _UtangPrintPanel extends StatefulWidget {
 }
 
 class _UtangPrintPanelState extends State<_UtangPrintPanel> {
-  BtPrintState        _state  = const BtIdle();
+  BtPrintState _state = const BtIdle();
   StreamSubscription? _scanSub;
 
   @override
@@ -392,12 +507,14 @@ class _UtangPrintPanelState extends State<_UtangPrintPanel> {
 
   Future<void> _startScan() async {
     if (!await _requestPermissions()) {
-      _set(const BtError(
-          'Bluetooth permission denied.\nPlease allow in Settings.'));
+      _set(
+        const BtError(
+          'Bluetooth permission denied.\nPlease allow in Settings.',
+        ),
+      );
       return;
     }
-    if (await FlutterBluePlus.adapterState.first !=
-        BluetoothAdapterState.on) {
+    if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
       _set(const BtError('Please turn on Bluetooth first.'));
       return;
     }
@@ -417,9 +534,11 @@ class _UtangPrintPanelState extends State<_UtangPrintPanel> {
     _scanSub?.cancel();
 
     if (mounted) {
-      _set(found.isEmpty
-          ? const BtError('No printers found. Make sure printer is on.')
-          : BtScanned(found));
+      _set(
+        found.isEmpty
+            ? const BtError('No printers found. Make sure printer is on.')
+            : BtScanned(found),
+      );
     }
   }
 
@@ -446,7 +565,10 @@ class _UtangPrintPanelState extends State<_UtangPrintPanel> {
 
     _set(const BtPrinting());
     try {
-      final bytes    = await UtangReceiptPrinter.buildBytes(widget.debt, userName: widget.userName);
+      final bytes = await UtangReceiptPrinter.buildBytes(
+        widget.debt,
+        userName: widget.userName,
+      );
       final services = await current.device.discoverServices();
 
       BluetoothCharacteristic? ch;
@@ -486,11 +608,11 @@ class _UtangPrintPanelState extends State<_UtangPrintPanel> {
 
   @override
   Widget build(BuildContext context) => BtPrintPanelShell(
-        state:         _state,
-        statusMessage: _state.defaultMessage,
-        onSelect:      _connectTo,
-        onScan:        _startScan,
-        onPrint:       _print,
-        onDisconnect:  _disconnect,
-      );
+    state: _state,
+    statusMessage: _state.defaultMessage,
+    onSelect: _connectTo,
+    onScan: _startScan,
+    onPrint: _print,
+    onDisconnect: _disconnect,
+  );
 }

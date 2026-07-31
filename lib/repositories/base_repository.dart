@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // base_repository.dart — Abstract base for all local repositories
-// Purpose : Provides shared database access and a generic error-handling wrapper
-//           (safeCall / safeVoidCall) so every subclass gets consistent error
-//           logging and Crashlytics reporting for free.
+// Purpose : Provides shared database access and consistent error reporting.
+//           Critical writes are always rethrown after reporting so callers never
+//           mistake a failed persistence operation for success.
 // OOP Pillars demonstrated:
 //   • Abstraction  — abstract class; subclasses must define their own queries
 //   • Encapsulation— shared db access is a protected member (not public)
@@ -12,6 +12,7 @@
 
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
+import '../core/domain_exceptions.dart';
 import '../database/database_helper.dart';
 
 abstract class BaseRepository {
@@ -19,27 +20,52 @@ abstract class BaseRepository {
   // db is protected: accessible by subclasses but not exposed publicly
   final db = DatabaseHelper.instance;
 
-  /// Generic safe-call wrapper — handles errors gracefully (Polymorphism via generics).
+  /// Reports read failures and propagates them so callers can preserve their
+  /// last-known-good state instead of replacing it with a false empty result.
   /// [action]   — the async operation to execute
-  /// [fallback] — the default value returned on failure
-  // Returns fallback instead of throwing, so UI never crashes on DB errors
-  Future<T> safeCall<T>(Future<T> Function() action, T fallback) async {
+  Future<T> safeCall<T>(Future<T> Function() action) async {
     try {
       return await action();
     } catch (e, stackTrace) {
       _onError(e, stackTrace);
-      return fallback; // Caller gets an empty list / null / false instead of a crash
+      if (e is DomainException) rethrow;
+      throw DataReadException('Local data could not be loaded: $e');
     }
   }
 
-  /// Wraps a void async action and swallows errors gracefully.
-  /// Use only for non-critical side effects (e.g. logging, sync).
-  // Void variant — used when there is no meaningful return value to fall back to
+  /// Runs a critical write and propagates any failure after reporting it.
+  ///
+  /// Repositories must use this for user-visible mutations. Swallowing a failed
+  /// insert/update/delete lets upper layers update memory and show a false success
+  /// message even though SQLite did not commit the change.
   Future<void> safeVoidCall(Future<void> Function() action) async {
     try {
       await action();
     } catch (e, stackTrace) {
       _onError(e, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Value-returning counterpart of [safeVoidCall] for critical mutations that
+  /// must return their committed result (for example, an allocated order id).
+  Future<T> safeWriteCall<T>(Future<T> Function() action) async {
+    try {
+      return await action();
+    } catch (e, stackTrace) {
+      _onError(e, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Reports an auxiliary write but still propagates failure. Callers may show a
+  /// separate diagnostics message after their primary local commit succeeds.
+  Future<void> bestEffortCall(Future<void> Function() action) async {
+    try {
+      await action();
+    } catch (e, stackTrace) {
+      _onError(e, stackTrace);
+      rethrow;
     }
   }
 

@@ -3,20 +3,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import '../models/debt_model.dart';
+import '../core/money.dart';
 import '../repositories/debt_repository.dart';
 
 abstract class IDebtService {
   Future<List<CustomerDebt>> getAll(String userId);
-  Future<void>    addDebt(CustomerDebt debt, String userId);
-  Future<String?> addPayment(String debtId, PaymentRecord payment, double remainingBalance);
-  Future<void>    deleteDebt(String debtId);
+  Future<void> addDebt(CustomerDebt debt, String userId);
+  Future<String?> addPayment(
+    String debtId,
+    PaymentRecord payment,
+    Money remainingBalance,
+  );
+  Future<void> deleteDebt(String debtId);
   Future<List<CustomerDebt>> getDeleted(String userId);
-  Future<void>               restoreDebt(String debtId);
-  Future<void>               hardDeleteDebt(String debtId);
+  Future<void> restoreDebt(String debtId);
+  Future<void> hardDeleteDebt(String debtId);
 
   // v6 — Feature 4
   /// Returns principal remaining + accrued interest.
-  double computeTotalWithInterest(CustomerDebt debt);
+  Money computeTotalWithInterest(CustomerDebt debt);
 }
 
 class DebtService implements IDebtService {
@@ -33,7 +38,10 @@ class DebtService implements IDebtService {
 
   @override
   Future<String?> addPayment(
-      String debtId, PaymentRecord payment, double remainingBalance) async {
+    String debtId,
+    PaymentRecord payment,
+    Money remainingBalance,
+  ) async {
     if (payment.amount <= 0) return 'Payment amount must be greater than zero';
     // NOTE: 'remainingBalance' here receives debt.totalWithInterest from app_state.addPayment,
     // so this ceiling correctly allows interest-inclusive payments.
@@ -48,7 +56,8 @@ class DebtService implements IDebtService {
   Future<void> deleteDebt(String debtId) => _repo.delete(debtId);
 
   @override
-  Future<List<CustomerDebt>> getDeleted(String userId) => _repo.getDeleted(userId);
+  Future<List<CustomerDebt>> getDeleted(String userId) =>
+      _repo.getDeleted(userId);
 
   @override
   Future<void> restoreDebt(String debtId) => _repo.restore(debtId);
@@ -61,5 +70,5 @@ class DebtService implements IDebtService {
   /// Pure computation — delegates to the model's accruedInterest getter.
   /// Kept in the service so callers never depend on model internals directly.
   @override
-  double computeTotalWithInterest(CustomerDebt debt) => debt.totalWithInterest;
+  Money computeTotalWithInterest(CustomerDebt debt) => debt.totalWithInterest;
 }

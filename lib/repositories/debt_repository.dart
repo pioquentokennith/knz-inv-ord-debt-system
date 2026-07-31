@@ -13,7 +13,7 @@ abstract class DebtRepository {
   // Persists a new debt record to storage
   Future<void> add(CustomerDebt debt, String userId);
 
-  // Appends a payment installment to an existing debt and updates amount_paid
+  // Appends an immutable payment allocation and updates outstanding balances.
   Future<void> addPayment(String debtId, PaymentRecord payment);
 
   // Soft-deletes a debt (moves to Recycle Bin)

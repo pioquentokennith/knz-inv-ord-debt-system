@@ -54,7 +54,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyC08jcq1YiTcc9lSl-upsllh_RLcUkumqc',
-    appId: '1:120139747390:android:fd162e9194e69cc5f6816f',
+    appId: '1:120139747390:android:823a15d9a89f4cfaf6816f',
     messagingSenderId: '120139747390',
     projectId: 'knz-scent',
     storageBucket: 'knz-scent.firebasestorage.app',

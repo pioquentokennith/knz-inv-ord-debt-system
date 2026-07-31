@@ -6,119 +6,100 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import '../models/order_model.dart';
-import '../models/product_model.dart';
+import '../models/debt_model.dart';
 import '../repositories/order_repository.dart';
-import '../repositories/product_repository.dart';
 
 /// Abstract contract for order business logic (Abstraction).
 /// AppState depends on this interface so tests can inject a stub.
 abstract class IOrderService {
   // Returns all active orders for the given user, newest first.
   // PRIORITY 3: Pass fromDate/toDate to filter by order_date range (optional).
-  Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate});
-
-  // Generates the next sequential human-readable order ID (e.g. "KNZ-042")
-  Future<String>      generateOrderId(String userId);
+  Future<List<Order>> getAll(
+    String userId, {
+    DateTime? fromDate,
+    DateTime? toDate,
+  });
 
   // Persists the order and automatically deducts stock for each item
-  Future<void>        createOrder(Order order, String userId, List<Product> products);
+  Future<Order> createOrder(Order order, String userId, {CustomerDebt? debt});
 
   // Updates only the status field of an existing order
-  Future<void>        updateStatus(String orderId, OrderStatus status);
+  Future<void> updateStatus(String orderId, OrderStatus status);
+
+  // Atomically changes an existing active order to utang and creates its debt.
+  Future<void> markAsUtang(String orderId, CustomerDebt debt);
 
   // Soft-deletes an order (moves it to the Recycle Bin)
-  Future<void>        deleteOrder(String orderId);
+  Future<void> deleteOrder(String orderId);
 
   // ── Recycle Bin operations ────────────────────────────────────────────────
-  Future<List<Order>> getDeleted(String userId);        // Returns soft-deleted orders
-  Future<void>        restoreOrder(String orderId);     // Un-deletes an order
-  Future<void>        hardDeleteOrder(String orderId);  // Permanent purge
+  Future<List<Order>> getDeleted(String userId); // Returns soft-deleted orders
+  Future<void> restoreOrder(String orderId); // Un-deletes an order
+  Future<void> hardDeleteOrder(String orderId); // Permanent purge
 }
 
 /// Concrete implementation — all business logic for orders.
 class OrderService implements IOrderService {
-  final OrderRepository   _orderRepo;   // Handles order persistence
-  final ProductRepository _productRepo; // Needed for stock deduction
+  final OrderRepository _orderRepo;
 
-  OrderService(this._orderRepo, this._productRepo);
+  OrderService(this._orderRepo);
 
   // Delegates directly to repo — date params forwarded for optional range filtering
   @override
-  Future<List<Order>> getAll(String userId, {DateTime? fromDate, DateTime? toDate}) =>
-      _orderRepo.getAll(userId, fromDate: fromDate, toDate: toDate);
+  Future<List<Order>> getAll(
+    String userId, {
+    DateTime? fromDate,
+    DateTime? toDate,
+  }) => _orderRepo.getAll(userId, fromDate: fromDate, toDate: toDate);
 
-  // Reads the next sequential number from the DB and formats it as "KNZ-XXX".
-  // The underlying repo call is now wrapped in a SQLite transaction so that
-  // concurrent callers cannot read the same MAX and produce the same ID.
+  /// Atomically allocates the final order number, saves the order/items,
+  /// deducts current database stock, and optionally creates its debt record.
   @override
-  Future<String> generateOrderId(String userId) async {
-    final num = await _orderRepo.getNextOrderNumber(userId);
-    return 'KNZ-${num.toString().padLeft(3, '0')}'; // e.g. 1 → "KNZ-001"
-  }
-
-  /// Creates an order and auto-deducts stock for each item (Encapsulation of business rule).
-  /// BUG FIX (Race condition): On UNIQUE constraint violation for order_id (two tabs
-  /// racing), we regenerate the order ID and retry once before giving up.
-  @override
-  Future<void> createOrder(Order order, String userId, List<Product> products) async {
-    // Pre-validate stock for every item BEFORE saving anything.
-    // This prevents overselling and partial saves where some items succeed but others fail.
-    for (final item in order.items) {
-      try {
-        final product = products.firstWhere(
-          (p) => p.id == item.productId ||
-                 p.name.toLowerCase() == item.productName.toLowerCase(),
-        );
-        if (item.quantity > product.stockQty) {
-          throw Exception(
-            'Not enough stock for "${product.name}". '
-            'Available: ${product.stockQty}, requested: ${item.quantity}.',
-          );
-        }
-      } on Exception {
-        rethrow; // Propagate stock validation errors to the caller (screen shows error)
-      } catch (_) {
-        // Product not found in list — skip pre-check; handled at deduction step below
-      }
-    }
-
-    // Save the order first; items are saved atomically within the repository
-    await _orderRepo.add(order, userId);
-
-    // Deduct stock for each ordered item from the product catalog
-    for (final item in order.items) {
-      try {
-        // Match by product ID first; fall back to name matching for legacy orders
-        final product = products.firstWhere(
-          (p) => p.id == item.productId ||
-                 p.name.toLowerCase() == item.productName.toLowerCase(),
-        );
-        // Pre-validation guarantees qty >= 0; clamp is a last-resort safety net
-        final newQty = (product.stockQty - item.quantity).clamp(0, 999999);
-        await _productRepo.updateStock(product.id, newQty);
-      } catch (_) {
-        // Product not found in the passed list — skip deduction silently
-        // (can happen if the product was deleted before the order was confirmed)
-      }
-    }
+  Future<Order> createOrder(Order order, String userId, {CustomerDebt? debt}) {
+    _requireNonBlank(userId, 'userId');
+    return _orderRepo.addWithInventory(order, userId.trim(), debt: debt);
   }
 
   // Delegates status update to the repository
   @override
-  Future<void> updateStatus(String orderId, OrderStatus status) =>
-      _orderRepo.updateStatus(orderId, status);
+  Future<void> updateStatus(String orderId, OrderStatus status) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.updateStatus(orderId, status);
+  }
+
+  @override
+  Future<void> markAsUtang(String orderId, CustomerDebt debt) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.markAsUtang(orderId, debt);
+  }
 
   // Delegates soft-delete to the repository
   @override
-  Future<void> deleteOrder(String orderId) => _orderRepo.delete(orderId);
+  Future<void> deleteOrder(String orderId) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.deleteWithInventory(orderId);
+  }
 
   // Delegates Recycle Bin operations to the repository
   @override
-  Future<List<Order>> getDeleted(String userId) => _orderRepo.getDeleted(userId);
+  Future<List<Order>> getDeleted(String userId) =>
+      _orderRepo.getDeleted(userId);
 
   @override
-  Future<void> restoreOrder(String orderId) => _orderRepo.restore(orderId);
+  Future<void> restoreOrder(String orderId) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.restoreWithInventory(orderId);
+  }
 
   @override
-  Future<void> hardDeleteOrder(String orderId) => _orderRepo.hardDelete(orderId);
+  Future<void> hardDeleteOrder(String orderId) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.hardDelete(orderId);
+  }
+
+  void _requireNonBlank(String value, String name) {
+    if (value.trim().isEmpty) {
+      throw ArgumentError.value(value, name, '$name cannot be blank.');
+    }
+  }
 }

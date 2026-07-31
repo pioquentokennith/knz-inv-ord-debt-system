@@ -12,32 +12,48 @@ class AppColors {
   AppColors._();
 
   // ── Background layers (darkest → lightest) ────────────────────────────────
-  static const Color background       = Color(0xFF0D0D0D); // Main scaffold background
-  static const Color surface          = Color(0xFF1A1A1A); // Card / dialog surface
-  static const Color surfaceElevated  = Color(0xFF222222); // Elevated card / snackbar
-  static const Color sidebar          = Color(0xFF111111); // Navigation rail / drawer
+  static const Color background = Color(0xFF0D0D0D); // Main scaffold background
+  static const Color surface = Color(0xFF1A1A1A); // Card / dialog surface
+  static const Color surfaceElevated = Color(
+    0xFF222222,
+  ); // Elevated card / snackbar
+  static const Color sidebar = Color(0xFF111111); // Navigation rail / drawer
 
   // ── Brand accent colors ───────────────────────────────────────────────────
-  static const Color gold             = Color(0xFFD4AF37); // Primary brand color
-  static const Color goldLight        = Color(0xFFE8C547); // Lighter gold for hover states
-  static const Color goldDark         = Color(0xFFB8960C); // Darker gold — used inside goldGradient
+  static const Color gold = Color(0xFFD4AF37); // Primary brand color
+  static const Color goldLight = Color(
+    0xFFE8C547,
+  ); // Lighter gold for hover states
+  static const Color goldDark = Color(
+    0xFFB8960C,
+  ); // Darker gold — used inside goldGradient
 
   // ── Text colors (brightest → dimmest) ────────────────────────────────────
-  static const Color white            = Color(0xFFFFFFFF); // Primary text
-  static const Color whiteSecondary   = Color(0xFFCCCCCC); // Secondary / body text
-  static const Color whiteTertiary    = Color(0xFF888888); // Placeholder / label text
+  static const Color white = Color(0xFFFFFFFF); // Primary text
+  static const Color whiteSecondary = Color(
+    0xFFCCCCCC,
+  ); // Secondary / body text
+  static const Color whiteTertiary = Color(
+    0xFF888888,
+  ); // Placeholder / label text
 
   // ── Semantic status colors ────────────────────────────────────────────────
-  static const Color error            = Color(0xFFE53935); // Errors, destructive actions
-  static const Color success          = Color(0xFF43A047); // Success, in-stock indicators
-  static const Color warning          = Color(0xFFFFA726); // Warnings, low-stock alerts
-  static const Color info             = Color(0xFF29B6F6); // Info badges / processing status
+  static const Color error = Color(0xFFE53935); // Errors, destructive actions
+  static const Color success = Color(
+    0xFF43A047,
+  ); // Success, in-stock indicators
+  static const Color warning = Color(0xFFFFA726); // Warnings, low-stock alerts
+  static const Color info = Color(
+    0xFF29B6F6,
+  ); // Info badges / processing status
 
   // ── Border and input colors ───────────────────────────────────────────────
   // removed: lowStock (duplicate of gold), inStock (duplicate of success)
-  static const Color cardBorder       = Color(0xFF2A2A2A); // Thin card border stroke
-  static const Color inputFill        = Color(0xFF1E1E1E); // Text field background fill
-  static const Color divider          = Color(0xFF2A2A2A); // List/section divider lines
+  static const Color cardBorder = Color(0xFF2A2A2A); // Thin card border stroke
+  static const Color inputFill = Color(
+    0xFF1E1E1E,
+  ); // Text field background fill
+  static const Color divider = Color(0xFF2A2A2A); // List/section divider lines
 
   // ── Gradients ─────────────────────────────────────────────────────────────
   // Horizontal gold sweep — used for premium headings and primary buttons
@@ -61,44 +77,48 @@ class AppStrings {
   AppStrings._(); // Private constructor — static-only class
 
   // ── Brand identity ────────────────────────────────────────────────────────
-  static const String appName              = 'KNZ Scent';        // App / brand name
-  static const String appSubtitle         = 'TRUSTED BY SCENT LOVERS'; // Spaced tagline on login screen
-  static const String adminPortal         = 'Admin Portal';      // Shown in app header
-  static const String luxuryFragranceHouse = 'Luxury Fragrance House'; // Sub-branding
+  static const String appName = 'KNZ Scent'; // App / brand name
+  static const String appSubtitle =
+      'TRUSTED BY SCENT LOVERS'; // Spaced tagline on login screen
+  static const String adminPortal = 'Admin Portal'; // Shown in app header
+  static const String luxuryFragranceHouse =
+      'Luxury Fragrance House'; // Sub-branding
 
   // ── Login / auth screen labels ────────────────────────────────────────────
   // removed: signIn, register (inline strings used in login/register screens)
-  static const String username            = 'USERNAME';          // Login field label
-  static const String password            = 'PASSWORD';          // Password field label
-  static const String enterPortal         = 'ENTER PORTAL';      // Submit button text
-  static const String defaultLogin        = 'HUSTLE GRIND';      // Placeholder / motivational
+  static const String username = 'USERNAME'; // Login field label
+  static const String password = 'PASSWORD'; // Password field label
+  static const String enterPortal = 'ENTER PORTAL'; // Submit button text
+  static const String defaultLogin =
+      'HUSTLE GRIND'; // Placeholder / motivational
 
   // ── Navigation labels ─────────────────────────────────────────────────────
-  static const String overview            = 'Overview';          // Dashboard tab
-  static const String inventory           = 'Inventory';         // Stock management tab
-  static const String orders              = 'Orders';            // Order list tab
-  static const String products            = 'Products';          // Product catalogue tab
-  static const String analytics           = 'Analytics';         // Reports tab
-  static const String signOut             = 'SIGN OUT';          // Logout button
+  static const String overview = 'Overview'; // Dashboard tab
+  static const String inventory = 'Inventory'; // Stock management tab
+  static const String orders = 'Orders'; // Order list tab
+  static const String products = 'Products'; // Product catalogue tab
+  static const String analytics = 'Analytics'; // Reports tab
+  static const String signOut = 'SIGN OUT'; // Logout button
 
   // ── Dashboard summary card labels ─────────────────────────────────────────
-  static const String totalProducts       = 'TOTAL PRODUCTS';    // Metric card header
-  static const String totalOrders         = 'TOTAL ORDERS';      // Metric card header
-  static const String lowStockItems       = 'LOW STOCK ITEMS';   // Alert card header
-  static const String lowStockAlerts      = 'Low Stock Alerts';  // Section title
+  static const String totalProducts = 'TOTAL PRODUCTS'; // Metric card header
+  static const String totalOrders = 'TOTAL ORDERS'; // Metric card header
+  static const String lowStockItems = 'LOW STOCK ITEMS'; // Alert card header
+  static const String lowStockAlerts = 'Low Stock Alerts'; // Section title
 
   // ── Product dialog labels ─────────────────────────────────────────────────
   // removed: recentActivity, orderTracker, productCatalogue, analyticsReports,
   //          editStock, update, createOrder, newOrder (all inline in screens)
-  static const String addProduct          = 'Add Product';       // FAB tooltip
-  static const String addNewProduct       = 'Add New Product';   // Dialog title
-  static const String productName         = 'PRODUCT NAME';      // Form field label
-  static const String category            = 'CATEGORY';          // Dropdown label
-  static const String price               = 'PRICE (₱)';         // Price field label
-  static const String stockQty            = 'STOCK QTY';         // Quantity field label
-  static const String minStockLevel       = 'MIN STOCK LEVEL';   // Minimum stock field label
-  static const String description         = 'DESCRIPTION';       // Description field label
-  static const String cancel              = 'Cancel';            // Cancel button text
+  static const String addProduct = 'Add Product'; // FAB tooltip
+  static const String addNewProduct = 'Add New Product'; // Dialog title
+  static const String productName = 'PRODUCT NAME'; // Form field label
+  static const String category = 'CATEGORY'; // Dropdown label
+  static const String price = 'PRICE (₱)'; // Price field label
+  static const String stockQty = 'STOCK QTY'; // Quantity field label
+  static const String minStockLevel =
+      'MIN STOCK LEVEL'; // Minimum stock field label
+  static const String description = 'DESCRIPTION'; // Description field label
+  static const String cancel = 'Cancel'; // Cancel button text
 }
 
 // Reusable TextStyle presets — apply via .copyWith() if local tweaks are needed

@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
+import '../core/money.dart';
 import '../models/reseller_model.dart';
 import '../widgets/shared_widgets.dart';
 
@@ -23,8 +24,8 @@ class ResellerDialog extends StatefulWidget {
 }
 
 class _ResellerDialogState extends State<ResellerDialog> {
-  final _formKey     = GlobalKey<FormState>();
-  final _nameCtrl    = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
   final _contactCtrl = TextEditingController();
   final _discountCtrl = TextEditingController();
 
@@ -36,8 +37,8 @@ class _ResellerDialogState extends State<ResellerDialog> {
   void initState() {
     super.initState();
     if (_isEdit) {
-      _nameCtrl.text     = widget.existing!.name;
-      _contactCtrl.text  = widget.existing!.contact ?? '';
+      _nameCtrl.text = widget.existing!.name;
+      _contactCtrl.text = widget.existing!.contact ?? '';
       _discountCtrl.text = widget.existing!.deductionPerItem.toStringAsFixed(0);
     }
   }
@@ -51,39 +52,55 @@ class _ResellerDialogState extends State<ResellerDialog> {
   }
 
   Future<void> _save() async {
+    if (_isSaving) return;
     if (!_formKey.currentState!.validate()) return;
+
+    final state = AppState();
+    final discount = Money.tryParse(_discountCtrl.text.trim());
+    if (discount == null || discount.isNegative) {
+      KnzToast.warning(context, 'Enter a valid non-negative deduction.');
+      return;
+    }
+    final name = _nameCtrl.text.trim();
+    final contact = _contactCtrl.text.trim();
     setState(() => _isSaving = true);
 
-    final state    = AppState();
-    final discount = double.parse(_discountCtrl.text);
-    final name    = _nameCtrl.text.trim();
-    final contact = _contactCtrl.text.trim();
-
-    if (_isEdit) {
-      final updated = widget.existing!.copyWith(
-        name:            name,
-        contact:         contact.isEmpty ? null : contact,
-        deductionPerItem: discount,
-      );
-      await state.updateReseller(updated);
-      if (mounted) {
-        Navigator.of(context).pop();
-        KnzToast.success(context, '✏️ Reseller "$name" updated.');
+    try {
+      if (_isEdit) {
+        final updated = widget.existing!.copyWith(
+          name: name,
+          contact: contact.isEmpty ? null : contact,
+          deductionPerItem: discount,
+        );
+        await state.updateReseller(updated);
+        if (mounted) {
+          Navigator.of(context).pop();
+          KnzToast.success(context, '✏️ Reseller "$name" updated.');
+        }
+      } else {
+        final reseller = Reseller(
+          id: const Uuid().v4(),
+          name: name,
+          contact: contact.isEmpty ? null : contact,
+          deductionPerItem: discount,
+          userId: state.activeUser,
+          createdAt: DateTime.now(),
+        );
+        await state.addReseller(reseller);
+        if (mounted) {
+          Navigator.of(context).pop();
+          KnzToast.success(context, '✅ Reseller "$name" added.');
+        }
       }
-    } else {
-      final reseller = Reseller(
-        id:              const Uuid().v4(),
-        name:            name,
-        contact:         contact.isEmpty ? null : contact,
-        deductionPerItem: discount,
-        userId:          state.activeUser,
-        createdAt:       DateTime.now(),
-      );
-      await state.addReseller(reseller);
+    } catch (_) {
       if (mounted) {
-        Navigator.of(context).pop();
-        KnzToast.success(context, '✅ Reseller "$name" added.');
+        KnzToast.error(
+          context,
+          'The reseller could not be saved. Please try again.',
+        );
       }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -104,8 +121,11 @@ class _ResellerDialogState extends State<ResellerDialog> {
               // ── Header ──────────────────────────────────────────────────
               Row(
                 children: [
-                  const Icon(Icons.people_outline,
-                      color: AppColors.gold, size: 22),
+                  const Icon(
+                    Icons.people_outline,
+                    color: AppColors.gold,
+                    size: 22,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     _isEdit ? 'Edit Reseller' : 'Add Reseller',
@@ -142,17 +162,20 @@ class _ResellerDialogState extends State<ResellerDialog> {
                 controller: _discountCtrl,
                 label: 'Discount per Product (₱)',
                 hint: 'e.g. 20',
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
                 ],
-                prefix: const Text('−₱',
-                    style: TextStyle(color: AppColors.gold, fontSize: 16)),
+                prefix: const Text(
+                  '−₱',
+                  style: TextStyle(color: AppColors.gold, fontSize: 16),
+                ),
                 validator: (v) {
-                  final val = double.tryParse(v ?? '');
+                  final val = Money.tryParse(v ?? '');
                   if (val == null) return 'Enter a valid amount';
-                  if (val < 0) return 'Cannot be negative';
+                  if (val.isNegative) return 'Cannot be negative';
                   return null;
                 },
               ),
@@ -164,8 +187,10 @@ class _ResellerDialogState extends State<ResellerDialog> {
                 children: [
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel',
-                        style: TextStyle(color: AppColors.whiteTertiary)),
+                    child: const Text(
+                      'Cancel',
+                      style: TextStyle(color: AppColors.whiteTertiary),
+                    ),
                   ),
                   const SizedBox(width: 12),
                   ElevatedButton(
@@ -173,9 +198,12 @@ class _ResellerDialogState extends State<ResellerDialog> {
                       backgroundColor: AppColors.gold,
                       foregroundColor: Colors.black,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 12),
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                     onPressed: _isSaving ? null : _save,
                     child: _isSaving
@@ -183,7 +211,10 @@ class _ResellerDialogState extends State<ResellerDialog> {
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.black))
+                              strokeWidth: 2,
+                              color: Colors.black,
+                            ),
+                          )
                         : Text(_isEdit ? 'Save Changes' : 'Add Reseller'),
                   ),
                 ],
@@ -208,9 +239,10 @@ class _ResellerDialogState extends State<ResellerDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(
-                color: AppColors.whiteSecondary, fontSize: 12)),
+        Text(
+          label,
+          style: const TextStyle(color: AppColors.whiteSecondary, fontSize: 12),
+        ),
         const SizedBox(height: 4),
         TextFormField(
           controller: controller,
@@ -224,13 +256,15 @@ class _ResellerDialogState extends State<ResellerDialog> {
             prefixIcon: prefix != null
                 ? Padding(
                     padding: const EdgeInsets.only(left: 12),
-                    child: prefix)
+                    child: prefix,
+                  )
                 : null,
             prefixIconConstraints: const BoxConstraints(minWidth: 0),
             suffixIcon: suffix != null
                 ? Padding(
                     padding: const EdgeInsets.only(right: 12),
-                    child: suffix)
+                    child: suffix,
+                  )
                 : null,
             suffixIconConstraints: const BoxConstraints(minWidth: 0),
             filled: true,
@@ -245,15 +279,16 @@ class _ResellerDialogState extends State<ResellerDialog> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide:
-                  const BorderSide(color: AppColors.gold, width: 1.5),
+              borderSide: const BorderSide(color: AppColors.gold, width: 1.5),
             ),
             errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: AppColors.error),
             ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 10,
+            ),
           ),
         ),
       ],

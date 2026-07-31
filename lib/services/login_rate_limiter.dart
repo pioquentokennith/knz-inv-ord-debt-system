@@ -47,6 +47,7 @@ class LoginRateLimiter {
 
   // ── Internal prefs instance ───────────────────────────────────────────────
   static SharedPreferences? _prefs;
+  static final Map<String, int> _memory = <String, int>{};
 
   /// Call once at app startup (in main.dart) before using [instance].
   ///   await LoginRateLimiter.init();
@@ -54,32 +55,47 @@ class LoginRateLimiter {
     _prefs ??= await SharedPreferences.getInstance();
   }
 
-  SharedPreferences get _p {
-    assert(_prefs != null,
-        'LoginRateLimiter.init() must be called before use.');
-    return _prefs!;
-  }
-
   // ── Private helpers ───────────────────────────────────────────────────────
-  String _failKey(String key)   => '$_prefixFailures$key';
-  String _lockKey(String key)   => '$_prefixLockedAt$key';
+  String _failKey(String key) => '$_prefixFailures$key';
+  String _lockKey(String key) => '$_prefixLockedAt$key';
 
-  int _getFailures(String key) => _p.getInt(_failKey(key)) ?? 0;
+  int _getFailures(String key) =>
+      _prefs?.getInt(_failKey(key)) ?? _memory[_failKey(key)] ?? 0;
 
   DateTime? _getLockedAt(String key) {
-    final ms = _p.getInt(_lockKey(key));
+    final ms = _prefs?.getInt(_lockKey(key)) ?? _memory[_lockKey(key)];
     return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
   }
 
-  Future<void> _setFailures(String key, int count) =>
-      _p.setInt(_failKey(key), count);
+  Future<void> _setFailures(String key, int count) async {
+    final prefs = _prefs;
+    if (prefs == null) {
+      _memory[_failKey(key)] = count;
+      return;
+    }
+    await prefs.setInt(_failKey(key), count);
+  }
 
-  Future<void> _setLockedAt(String key, DateTime dt) =>
-      _p.setInt(_lockKey(key), dt.millisecondsSinceEpoch);
+  Future<void> _setLockedAt(String key, DateTime dt) async {
+    final value = dt.millisecondsSinceEpoch;
+    final prefs = _prefs;
+    if (prefs == null) {
+      _memory[_lockKey(key)] = value;
+      return;
+    }
+    await prefs.setInt(_lockKey(key), value);
+  }
 
   Future<void> _clearUser(String key) async {
-    await _p.remove(_failKey(key));
-    await _p.remove(_lockKey(key));
+    final failureKey = _failKey(key);
+    final lockKey = _lockKey(key);
+    _memory.remove(failureKey);
+    _memory.remove(lockKey);
+    final prefs = _prefs;
+    if (prefs != null) {
+      await prefs.remove(failureKey);
+      await prefs.remove(lockKey);
+    }
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -119,7 +135,7 @@ class LoginRateLimiter {
   /// Call after every failed login attempt.
   /// Starts or extends the lockout when [maxAttempts] is reached.
   Future<void> recordFailure(String username) async {
-    final key   = username.toLowerCase();
+    final key = username.toLowerCase();
     final count = _getFailures(key) + 1;
     await _setFailures(key, count);
 
@@ -137,13 +153,23 @@ class LoginRateLimiter {
 
   /// Clears ALL lockout state. Useful for testing or admin override.
   Future<void> reset() async {
-    final keys = _p
-        .getKeys()
-        .where((k) =>
-            k.startsWith(_prefixFailures) || k.startsWith(_prefixLockedAt))
-        .toList();
-    for (final k in keys) {
-      await _p.remove(k);
+    _memory.removeWhere(
+      (key, _) =>
+          key.startsWith(_prefixFailures) || key.startsWith(_prefixLockedAt),
+    );
+    final prefs = _prefs;
+    if (prefs != null) {
+      final keys = prefs
+          .getKeys()
+          .where(
+            (key) =>
+                key.startsWith(_prefixFailures) ||
+                key.startsWith(_prefixLockedAt),
+          )
+          .toList();
+      for (final key in keys) {
+        await prefs.remove(key);
+      }
     }
   }
 }

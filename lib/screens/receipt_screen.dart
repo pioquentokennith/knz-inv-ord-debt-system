@@ -16,8 +16,10 @@ import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../core/app_constants.dart';
+import '../core/money.dart';
 import '../models/order_model.dart';
 import '../models/payment_method_model.dart';
+import '../services/accounting_service.dart';
 import '../widgets/receipt_shared_widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -33,7 +35,6 @@ import '../widgets/receipt_shared_widgets.dart';
 class OrderReceiptPrinter {
   const OrderReceiptPrinter._();
 
-  static final _cur     = NumberFormat.currency(symbol: 'P', decimalDigits: 2);
   static final _dateFmt = DateFormat('MM/dd/yyyy  hh:mm a');
 
   // Builds the full ESC/POS byte sequence for a 58mm thermal printer.
@@ -46,23 +47,30 @@ class OrderReceiptPrinter {
   //   • Consistent column widths across every row section (8/4 split).
   //   • Empty line before every major divider for visual breathing room.
   //   • Aligned label colons with fixed-width prefixes for easy scanning.
-  static Future<List<int>> buildBytes(Order order, {String userName = ''}) async {
+  static Future<List<int>> buildBytes(
+    Order order, {
+    String userName = '',
+  }) async {
     final profile = await CapabilityProfile.load();
-    final gen     = Generator(PaperSize.mm58, profile);
-    List<int> b   = [];
+    final gen = Generator(PaperSize.mm58, profile);
+    List<int> b = [];
 
     // ── Header ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     // Store name: bold, normal size — readable without being blocky
-    b += gen.text('KNZ  SCENT',
-        styles: const PosStyles(
-            align: PosAlign.center,
-            bold: true));
-    b += gen.text('Luxury  Fragrance  House',
-        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text(
+      'KNZ  SCENT',
+      styles: const PosStyles(align: PosAlign.center, bold: true),
+    );
+    b += gen.text(
+      'Luxury  Fragrance  House',
+      styles: const PosStyles(align: PosAlign.center),
+    );
     b += gen.emptyLines(1);
-    b += gen.text('- ORDER RECEIPT -',
-        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text(
+      '- ORDER RECEIPT -',
+      styles: const PosStyles(align: PosAlign.center),
+    );
     b += gen.hr(ch: '-');
 
     // ── Order info ───────────────────────────────────────────────────────────
@@ -78,28 +86,31 @@ class OrderReceiptPrinter {
 
     // ── Items header ─────────────────────────────────────────────────────────
     b += gen.row([
-      PosColumn(text: 'ITEM', width: 8,
-          styles: const PosStyles()),
-      PosColumn(text: 'AMOUNT', width: 4,
-          styles: const PosStyles(align: PosAlign.right)),
+      PosColumn(text: 'ITEM', width: 8, styles: const PosStyles()),
+      PosColumn(
+        text: 'AMOUNT',
+        width: 4,
+        styles: const PosStyles(align: PosAlign.right),
+      ),
     ]);
     b += gen.hr(ch: '-');
 
     // ── Item rows ────────────────────────────────────────────────────────────
     for (final item in order.items) {
       // Product name on its own line — bold for scanability
-      b += gen.text(item.productName,
-          styles: const PosStyles(bold: true));
+      b += gen.text(item.productName, styles: const PosStyles(bold: true));
       // Qty × unit price on left, subtotal on right — normal weight for clarity
       b += gen.row([
         PosColumn(
-            text: '  ${item.quantity} x ${_cur.format(item.unitPrice)}',
-            width: 7,
-            styles: const PosStyles()),
+          text: '  ${item.quantity} x ${_printerMoney(item.unitPrice)}',
+          width: 7,
+          styles: const PosStyles(),
+        ),
         PosColumn(
-            text: _cur.format(item.subtotal),
-            width: 5,
-            styles: const PosStyles(align: PosAlign.right)),
+          text: _printerMoney(item.subtotal),
+          width: 5,
+          styles: const PosStyles(align: PosAlign.right),
+        ),
       ]);
     }
 
@@ -108,19 +119,18 @@ class OrderReceiptPrinter {
     b += gen.hr(ch: '=');
     // Label: normal size, normal weight — stands out from items but not blocky
     b += gen.row([
-      PosColumn(
-          text: 'TOTAL',
-          width: 5,
-          styles: const PosStyles()),
+      PosColumn(text: 'TOTAL', width: 5, styles: const PosStyles()),
       // Amount: double-size only on the value — the one number that matters
       PosColumn(
-          text: _cur.format(order.customerPayAmount),
-          width: 7,
-          styles: const PosStyles(
-              bold: true,
-              align: PosAlign.right,
-              height: PosTextSize.size2,
-              width: PosTextSize.size2)),
+        text: _printerMoney(order.customerPayAmount),
+        width: 7,
+        styles: const PosStyles(
+          bold: true,
+          align: PosAlign.right,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      ),
     ]);
     b += gen.hr(ch: '=');
 
@@ -134,15 +144,21 @@ class OrderReceiptPrinter {
     // ── Footer ───────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     b += gen.hr(ch: '-');
-    b += gen.text('Thank you for your purchase!',
-        styles: const PosStyles(align: PosAlign.center));
-    b += gen.text(AppStrings.appName,
-        styles: const PosStyles(align: PosAlign.center));
+    b += gen.text(
+      'Thank you for your purchase!',
+      styles: const PosStyles(align: PosAlign.center),
+    );
+    b += gen.text(
+      AppStrings.appName,
+      styles: const PosStyles(align: PosAlign.center),
+    );
     b += gen.hr(ch: '-');
     b += gen.emptyLines(1);
     b += gen.cut();
     return b;
   }
+
+  static String _printerMoney(Money value) => 'P${value.toStringAsFixed(2)}';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,7 +170,7 @@ class OrderReceiptPrinter {
 //   • Abstraction   — static show() hides navigation mechanics from callers.
 // ─────────────────────────────────────────────────────────────────────────────
 class ReceiptScreen extends StatelessWidget {
-  final Order  order;
+  final Order order;
   final String userName;
 
   const ReceiptScreen({super.key, required this.order, this.userName = ''});
@@ -163,7 +179,9 @@ class ReceiptScreen extends StatelessWidget {
   // Pushes a MaterialPageRoute so the back button always returns to the calling screen.
   static void show(BuildContext context, Order order, {String userName = ''}) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ReceiptScreen(order: order, userName: userName)),
+      MaterialPageRoute(
+        builder: (_) => ReceiptScreen(order: order, userName: userName),
+      ),
     );
   }
 
@@ -174,11 +192,14 @@ class ReceiptScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: AppColors.sidebar,
         foregroundColor: AppColors.gold,
-        title: const Text('Receipt',
-            style: TextStyle(
-                color: AppColors.gold,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.5)),
+        title: const Text(
+          'Receipt',
+          style: TextStyle(
+            color: AppColors.gold,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.5,
+          ),
+        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: AppColors.gold),
           onPressed: () => Navigator.pop(context),
@@ -190,10 +211,14 @@ class ReceiptScreen extends StatelessWidget {
         ),
       ),
       body: SafeArea(
-        child: Column(children: [
-          Expanded(child: _OrderReceiptPreview(order: order, userName: userName)),
-          _OrderPrintPanel(order: order, userName: userName),
-        ]),
+        child: Column(
+          children: [
+            Expanded(
+              child: _OrderReceiptPreview(order: order, userName: userName),
+            ),
+            _OrderPrintPanel(order: order, userName: userName),
+          ],
+        ),
       ),
     );
   }
@@ -204,110 +229,130 @@ class ReceiptScreen extends StatelessWidget {
 // Private — only ReceiptScreen can create this.
 // ─────────────────────────────────────────────────────────────────────────────
 class _OrderReceiptPreview extends StatelessWidget {
-  final Order  order;
+  final Order order;
   final String userName;
 
   const _OrderReceiptPreview({required this.order, this.userName = ''});
 
   @override
   Widget build(BuildContext context) {
-    final cur     = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
     final dateFmt = DateFormat('MMM dd, yyyy  hh:mm a');
-    final total   = order.items.fold(0.0, (s, i) => s + i.subtotal);
+    final breakdown = AccountingService.instance.orderBreakdown(order);
+    final total = breakdown.customerPayTotal;
 
     final statusColor = switch (order.status) {
-      OrderStatus.delivered  => AppColors.success,
-      OrderStatus.shipped    => Colors.purple,
+      OrderStatus.delivered => AppColors.success,
+      OrderStatus.shipped => Colors.purple,
       OrderStatus.processing => AppColors.info,
-      OrderStatus.pending    => AppColors.warning,
-      OrderStatus.cancelled  => AppColors.error,
-      OrderStatus.utang      => AppColors.warning,
+      OrderStatus.pending => AppColors.warning,
+      OrderStatus.cancelled => AppColors.error,
+      OrderStatus.utang => AppColors.warning,
     };
 
-    return ReceiptCard(children: [
-      // ── Header ────────────────────────────────────────────────────
-      ReceiptHeader(badgeLabel: 'ORDER RECEIPT', badgeColor: AppColors.gold),
-      const ReceiptDivider(),
+    return ReceiptCard(
+      children: [
+        // ── Header ────────────────────────────────────────────────────
+        ReceiptHeader(badgeLabel: 'ORDER RECEIPT', badgeColor: AppColors.gold),
+        const ReceiptDivider(),
 
-      // ── Order Info ────────────────────────────────────────────────
-      ReceiptSection(
-        child: Column(children: [
-          ReceiptInfoRow(
-            label: 'Order ID',
-            value: order.orderId,
-            valueStyle: const TextStyle(
-                color: AppColors.gold,
-                fontWeight: FontWeight.w700,
-                fontSize: 14),
-          ),
-          const SizedBox(height: 8),
-          ReceiptInfoRow(label: 'Customer', value: order.customerName),
-          const SizedBox(height: 8),
-          ReceiptInfoRow(label: 'Date', value: dateFmt.format(order.orderDate)),
-          // ── Payment method row ─────────────────────────────────────
-          if (order.paymentMethod != null) ...[
-            const SizedBox(height: 8),
-            ReceiptInfoRow(
-              label: 'Payment',
-              value: order.paymentMethod!.displayName +
-                  (order.paymentReference != null
-                      ? '  ···${order.paymentReference}'
-                      : ''),
-            ),
-          ],
-          // ── Reseller discount row ──────────────────────────────────
-          if (order.isReseller) ...[
-            const SizedBox(height: 8),
-            ReceiptInfoRow(
-              label: 'Discount',
-              value: '−₱${order.deductionPerItem.toStringAsFixed(0)}/item Reseller',
-              valueStyle: const TextStyle(
+        // ── Order Info ────────────────────────────────────────────────
+        ReceiptSection(
+          child: Column(
+            children: [
+              ReceiptInfoRow(
+                label: 'Order ID',
+                value: order.orderId,
+                valueStyle: const TextStyle(
                   color: AppColors.gold,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13),
-            ),
-          ],
-          // ── Account row (only shown when userName is provided) ─────
-          if (userName.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            ReceiptInfoRow(
-              label: 'Account',
-              value: userName,
-              valueStyle: const TextStyle(
-                  color: AppColors.whiteTertiary,
-                  fontWeight: FontWeight.w500,
-                  fontSize: 13),
-            ),
-          ],
-        ]),
-      ),
-      const ReceiptDivider(),
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(label: 'Customer', value: order.customerName),
+              const SizedBox(height: 8),
+              ReceiptInfoRow(
+                label: 'Date',
+                value: dateFmt.format(order.orderDate),
+              ),
+              // ── Payment method row ─────────────────────────────────────
+              if (order.paymentMethod != null) ...[
+                const SizedBox(height: 8),
+                ReceiptInfoRow(
+                  label: 'Payment',
+                  value:
+                      order.paymentMethod!.displayName +
+                      (order.paymentReference != null
+                          ? '  ···${order.paymentReference}'
+                          : ''),
+                ),
+              ],
+              // ── Reseller discount row ──────────────────────────────────
+              if (order.isReseller) ...[
+                const SizedBox(height: 8),
+                ReceiptInfoRow(
+                  label: 'Discount',
+                  value:
+                      '−₱${order.deductionPerItem.toStringAsFixed(0)}/item Reseller',
+                  valueStyle: const TextStyle(
+                    color: AppColors.gold,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+              // ── Account row (only shown when userName is provided) ─────
+              if (userName.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ReceiptInfoRow(
+                  label: 'Account',
+                  value: userName,
+                  valueStyle: const TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontWeight: FontWeight.w500,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const ReceiptDivider(),
 
-      // ── Items ─────────────────────────────────────────────────────
-      ReceiptSection(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(children: const [
-              Expanded(
-                child: Text('ITEM',
-                    style: TextStyle(
+        // ── Items ─────────────────────────────────────────────────────
+        ReceiptSection(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: const [
+                  Expanded(
+                    child: Text(
+                      'ITEM',
+                      style: TextStyle(
                         color: AppColors.whiteTertiary,
                         fontSize: 10,
                         letterSpacing: 1.8,
-                        fontWeight: FontWeight.w700)),
-              ),
-              Text('AMOUNT',
-                  style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    'AMOUNT',
+                    style: TextStyle(
                       color: AppColors.whiteTertiary,
                       fontSize: 10,
                       letterSpacing: 1.8,
-                      fontWeight: FontWeight.w700)),
-            ]),
-            const SizedBox(height: 8),
-            Container(height: 1, color: AppColors.divider),
-            const SizedBox(height: 8),
-            ...order.items.map((item) => Padding(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(height: 1, color: AppColors.divider),
+              const SizedBox(height: 8),
+              ...order.items.map(
+                (item) => Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -316,162 +361,197 @@ class _OrderReceiptPreview extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(item.productName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: AppColors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w500)),
+                            Text(
+                              item.productName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                             const SizedBox(height: 2),
                             Text(
-                              '${item.quantity} x ${cur.format(item.unitPrice)}',
+                              '${item.quantity} x ${item.unitPrice.format()}',
                               style: const TextStyle(
-                                  color: AppColors.whiteTertiary,
-                                  fontSize: 11),
+                                color: AppColors.whiteTertiary,
+                                fontSize: 11,
+                              ),
                             ),
                           ],
                         ),
                       ),
                       const SizedBox(width: 12),
-                      Text(cur.format(item.subtotal),
-                          style: const TextStyle(
-                              color: AppColors.white,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600)),
-                    ],
-                  ),
-                )),
-          ],
-        ),
-      ),
-      const ReceiptDivider(),
-
-      // ── Total ─────────────────────────────────────────────────────
-      ReceiptSection(
-        child: order.isReseller
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('SRP TOTAL',
-                          style: TextStyle(
-                              color: AppColors.whiteTertiary,
-                              fontSize: 12,
-                              letterSpacing: 1.5)),
                       Text(
-                        cur.format(order.totalAmount),
+                        item.subtotal.format(),
                         style: const TextStyle(
-                            color: AppColors.whiteTertiary,
-                            fontSize: 14,
-                            decoration: TextDecoration.lineThrough),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'NET (−₱${order.deductionPerItem.toStringAsFixed(0)}/item)',
-                        style: const TextStyle(
-                            color: AppColors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 2),
-                      ),
-                      Text(cur.format(order.discountedTotal),
-                          style: const TextStyle(
-                              color: AppColors.gold,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w800)),
-                    ],
-                  ),
-                ],
-              )
-            : Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('TOTAL',
-                      style: TextStyle(
                           color: AppColors.white,
                           fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 2)),
-                  Text(cur.format(total),
-                      style: const TextStyle(
-                          color: AppColors.gold,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800)),
-                ],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-      ),
-      const ReceiptDivider(),
-
-      // ── Status ────────────────────────────────────────────────────
-      ReceiptSection(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text('Status',
-                style:
-                    TextStyle(color: AppColors.whiteTertiary, fontSize: 13)),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: statusColor.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: statusColor.withValues(alpha: 0.4)),
-              ),
-              child: Text(
-                order.status.displayName.toUpperCase(),
-                style: TextStyle(
-                    color: statusColor,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.5),
-              ),
-            ),
-          ],
-        ),
-      ),
-
-      // ── Notes (optional) ──────────────────────────────────────────
-      if (order.notes != null && order.notes!.isNotEmpty) ...[
-        const ReceiptDivider(),
-        ReceiptSection(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Notes',
-                  style: TextStyle(
-                      color: AppColors.whiteTertiary,
-                      fontSize: 11,
-                      letterSpacing: 1.2)),
-              const SizedBox(height: 6),
-              Text(order.notes!,
-                  style: const TextStyle(
-                      color: AppColors.whiteSecondary, fontSize: 13)),
             ],
           ),
         ),
-      ],
-      const ReceiptDivider(),
+        const ReceiptDivider(),
 
-      // ── Footer ────────────────────────────────────────────────────
-      ReceiptFooter(
-        line1: '✦  Thank you for your purchase!  ✦',
-        line2:
-            '${AppStrings.appName} — ${AppStrings.luxuryFragranceHouse}',
-      ),
-    ]);
+        // ── Total ─────────────────────────────────────────────────────
+        ReceiptSection(
+          child: order.isReseller
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'SRP TOTAL',
+                          style: TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 12,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                        Text(
+                          breakdown.srpTotal.format(),
+                          style: const TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 14,
+                            decoration: TextDecoration.lineThrough,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'NET (−₱${order.deductionPerItem.toStringAsFixed(0)}/item)',
+                            maxLines: 2,
+                            style: const TextStyle(
+                              color: AppColors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          breakdown.customerPayTotal.format(),
+                          style: const TextStyle(
+                            color: AppColors.gold,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                )
+              : Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'TOTAL',
+                      style: TextStyle(
+                        color: AppColors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    Text(
+                      total.format(),
+                      style: const TextStyle(
+                        color: AppColors.gold,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        const ReceiptDivider(),
+
+        // ── Status ────────────────────────────────────────────────────
+        ReceiptSection(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Status',
+                style: TextStyle(color: AppColors.whiteTertiary, fontSize: 13),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.4)),
+                ),
+                child: Text(
+                  order.status.displayName.toUpperCase(),
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // ── Notes (optional) ──────────────────────────────────────────
+        if (order.notes != null && order.notes!.isNotEmpty) ...[
+          const ReceiptDivider(),
+          ReceiptSection(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Notes',
+                  style: TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontSize: 11,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  order.notes!,
+                  style: const TextStyle(
+                    color: AppColors.whiteSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const ReceiptDivider(),
+
+        // ── Footer ────────────────────────────────────────────────────
+        ReceiptFooter(
+          line1: '✦  Thank you for your purchase!  ✦',
+          line2: '${AppStrings.appName} — ${AppStrings.luxuryFragranceHouse}',
+        ),
+      ],
+    );
   }
 }
 
@@ -485,7 +565,7 @@ class _OrderReceiptPreview extends StatelessWidget {
 //                     no raw Strings or parallel booleans needed.
 // ─────────────────────────────────────────────────────────────────────────────
 class _OrderPrintPanel extends StatefulWidget {
-  final Order  order;
+  final Order order;
   final String userName;
 
   const _OrderPrintPanel({required this.order, this.userName = ''});
@@ -496,7 +576,7 @@ class _OrderPrintPanel extends StatefulWidget {
 
 class _OrderPrintPanelState extends State<_OrderPrintPanel> {
   // Single sealed state object replaces the old (enum + String + List) trio.
-  BtPrintState    _state  = const BtIdle();
+  BtPrintState _state = const BtIdle();
   StreamSubscription? _scanSub;
 
   // ── Lifecycle ────────────────────────────────────────────────────────────
@@ -528,12 +608,14 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
 
   Future<void> _startScan() async {
     if (!await _requestPermissions()) {
-      _set(const BtError(
-          'Bluetooth permission denied.\nPlease allow in Settings.'));
+      _set(
+        const BtError(
+          'Bluetooth permission denied.\nPlease allow in Settings.',
+        ),
+      );
       return;
     }
-    if (await FlutterBluePlus.adapterState.first !=
-        BluetoothAdapterState.on) {
+    if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
       _set(const BtError('Please turn on Bluetooth first.'));
       return;
     }
@@ -553,9 +635,11 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
     _scanSub?.cancel();
 
     if (mounted) {
-      _set(found.isEmpty
-          ? const BtError('No printers found. Make sure printer is on.')
-          : BtScanned(found));
+      _set(
+        found.isEmpty
+            ? const BtError('No printers found. Make sure printer is on.')
+            : BtScanned(found),
+      );
     }
   }
 
@@ -583,7 +667,10 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
     _set(const BtPrinting());
     try {
       // Delegated to OrderReceiptPrinter — no formatting logic here.
-      final bytes    = await OrderReceiptPrinter.buildBytes(widget.order, userName: widget.userName);
+      final bytes = await OrderReceiptPrinter.buildBytes(
+        widget.order,
+        userName: widget.userName,
+      );
       final services = await current.device.discoverServices();
 
       BluetoothCharacteristic? ch;
@@ -628,11 +715,11 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
 
   @override
   Widget build(BuildContext context) => BtPrintPanelShell(
-        state:         _state,
-        statusMessage: _state.defaultMessage,
-        onSelect:      _connectTo,
-        onScan:        _startScan,
-        onPrint:       _print,
-        onDisconnect:  _disconnect,
-      );
+    state: _state,
+    statusMessage: _state.defaultMessage,
+    onSelect: _connectTo,
+    onScan: _startScan,
+    onPrint: _print,
+    onDisconnect: _disconnect,
+  );
 }

@@ -24,30 +24,32 @@ class ResellersScreen extends StatelessWidget {
           backgroundColor: AppColors.background,
           body: SafeArea(
             child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(context),
-              Expanded(
-                child: resellers.isEmpty
-                    ? _buildEmpty()
-                    : ListView.separated(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: resellers.length,
-                        separatorBuilder: (_, __) =>
-                            const SizedBox(height: 8),
-                        itemBuilder: (context, i) =>
-                            _ResellerCard(reseller: resellers[i]),
-                      ),
-              ),
-            ],
-          ),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(context),
+                Expanded(
+                  child: resellers.isEmpty
+                      ? _buildEmpty()
+                      : ListView.separated(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: resellers.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, i) =>
+                              _ResellerCard(reseller: resellers[i]),
+                        ),
+                ),
+              ],
+            ),
           ),
           floatingActionButton: FloatingActionButton.extended(
             backgroundColor: AppColors.gold,
             foregroundColor: Colors.black,
             icon: const Icon(Icons.add),
-            label: const Text('Add Reseller',
-                style: TextStyle(fontWeight: FontWeight.w700)),
+            label: const Text(
+              'Add Reseller',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
             onPressed: () => showDialog(
               context: context,
               builder: (_) => const ResellerDialog(),
@@ -91,13 +93,15 @@ class ResellersScreen extends StatelessWidget {
         children: [
           Icon(Icons.people_outline, color: AppColors.whiteTertiary, size: 56),
           SizedBox(height: 12),
-          Text('No resellers yet',
-              style:
-                  TextStyle(color: AppColors.whiteSecondary, fontSize: 16)),
+          Text(
+            'No resellers yet',
+            style: TextStyle(color: AppColors.whiteSecondary, fontSize: 16),
+          ),
           SizedBox(height: 4),
-          Text('Tap + to add your first reseller',
-              style:
-                  TextStyle(color: AppColors.whiteTertiary, fontSize: 13)),
+          Text(
+            'Tap + to add your first reseller',
+            style: TextStyle(color: AppColors.whiteTertiary, fontSize: 13),
+          ),
         ],
       ),
     );
@@ -117,94 +121,126 @@ class _ResellerCard extends StatelessWidget {
         border: Border.all(color: AppColors.cardBorder),
       ),
       child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: CircleAvatar(
           backgroundColor: AppColors.gold.withValues(alpha: 0.15),
           child: Text(
             reseller.name[0].toUpperCase(),
             style: const TextStyle(
-                color: AppColors.gold, fontWeight: FontWeight.w700),
+              color: AppColors.gold,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
-        title: Text(reseller.name,
-            style: const TextStyle(
-                color: AppColors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 15)),
+        title: Text(
+          reseller.name,
+          style: const TextStyle(
+            color: AppColors.white,
+            fontWeight: FontWeight.w600,
+            fontSize: 15,
+          ),
+        ),
         subtitle: reseller.contact != null
-            ? Text(reseller.contact!,
+            ? Text(
+                reseller.contact!,
                 style: const TextStyle(
-                    color: AppColors.whiteTertiary, fontSize: 12))
+                  color: AppColors.whiteTertiary,
+                  fontSize: 12,
+                ),
+              )
             : null,
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: AppColors.gold.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.gold.withValues(alpha: 0.3)),
+                  color: AppColors.gold.withValues(alpha: 0.3),
+                ),
               ),
               child: Text(
                 '−₱${reseller.deductionPerItem.toStringAsFixed(0)}/item',
                 style: const TextStyle(
-                    color: AppColors.gold,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13),
+                  color: AppColors.gold,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
               ),
             ),
             const SizedBox(width: 8),
             PopupMenuButton<String>(
               color: AppColors.surfaceElevated,
-              icon: const Icon(Icons.more_vert,
-                  color: AppColors.whiteTertiary),
+              icon: const Icon(Icons.more_vert, color: AppColors.whiteTertiary),
               onSelected: (action) async {
                 if (action == 'edit') {
                   showDialog(
                     context: context,
-                    builder: (_) =>
-                        ResellerDialog(existing: reseller),
+                    builder: (_) => ResellerDialog(existing: reseller),
                   );
                 } else if (action == 'delete') {
                   final confirm = await showConfirmDialog(
                     context,
                     title: 'Delete Reseller',
-                    message: 'Remove ${reseller.name} from resellers? This cannot be undone.',
+                    message:
+                        'Remove ${reseller.name} from resellers? This cannot be undone.',
                     confirmLabel: 'Delete',
                     confirmColor: AppColors.error,
                     icon: Icons.person_remove_rounded,
                   );
                   if (confirm && context.mounted) {
-                    await AppState().deleteReseller(reseller.id);
-                    if (context.mounted) KnzToast.error(context, '🗑️ ${reseller.name} removed from resellers.');
+                    try {
+                      await AppState().deleteReseller(reseller.id);
+                      if (context.mounted) {
+                        KnzToast.info(
+                          context,
+                          '${reseller.name} removed from resellers.',
+                        );
+                      }
+                    } catch (_) {
+                      if (context.mounted) {
+                        KnzToast.error(
+                          context,
+                          'The reseller could not be deleted. Please try again.',
+                        );
+                      }
+                    }
                   }
                 }
               },
               itemBuilder: (_) => [
                 const PopupMenuItem(
                   value: 'edit',
-                  child: Row(children: [
-                    Icon(Icons.edit_outlined,
-                        color: AppColors.whiteSecondary, size: 18),
-                    SizedBox(width: 8),
-                    Text('Edit',
-                        style:
-                            TextStyle(color: AppColors.whiteSecondary)),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.edit_outlined,
+                        color: AppColors.whiteSecondary,
+                        size: 18,
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'Edit',
+                        style: TextStyle(color: AppColors.whiteSecondary),
+                      ),
+                    ],
+                  ),
                 ),
                 const PopupMenuItem(
                   value: 'delete',
-                  child: Row(children: [
-                    Icon(Icons.delete_outline,
-                        color: AppColors.error, size: 18),
-                    SizedBox(width: 8),
-                    Text('Delete',
-                        style: TextStyle(color: AppColors.error)),
-                  ]),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.delete_outline,
+                        color: AppColors.error,
+                        size: 18,
+                      ),
+                      SizedBox(width: 8),
+                      Text('Delete', style: TextStyle(color: AppColors.error)),
+                    ],
+                  ),
                 ),
               ],
             ),

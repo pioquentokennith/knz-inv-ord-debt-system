@@ -34,10 +34,10 @@ class SessionTimeoutService {
   /// Override before calling start() if a shorter or longer timeout is needed.
   Duration timeoutDuration = const Duration(minutes: 10);
 
-  Timer?        _timer;       // Active inactivity countdown; null when not running
-  Timer?        _warnTimer;   // Fires 60 s before _timer to show a warning toast
-  VoidCallback? _onTimeout;   // Called once when the timer fires
-  VoidCallback? _onWarning;   // Called 60 s before timeout to show a warning
+  Timer? _timer; // Active inactivity countdown; null when not running
+  Timer? _warnTimer; // Fires 60 s before _timer to show a warning toast
+  VoidCallback? _onTimeout; // Called once when the timer fires
+  VoidCallback? _onWarning; // Called 60 s before timeout to show a warning
 
   /// Starts (or restarts) the inactivity timer.
   /// [onTimeout] is called exactly once when the configured duration elapses.
@@ -72,7 +72,7 @@ class SessionTimeoutService {
   void stop() {
     _timer?.cancel();
     _warnTimer?.cancel();
-    _timer     = null;
+    _timer = null;
     _warnTimer = null;
     _onTimeout = null; // Clear the callbacks to prevent stale references
     _onWarning = null;
@@ -96,9 +96,9 @@ class SessionTimeoutService {
 
   // Fired by the Timer when the inactivity period expires
   void _handleTimeout() {
-    _timer     = null;
-    _onTimeout?.call();  // Trigger the caller-supplied logout callback
-    _onTimeout = null;   // Clear after firing to prevent accidental double-fire
+    _timer = null;
+    _onTimeout?.call(); // Trigger the caller-supplied logout callback
+    _onTimeout = null; // Clear after firing to prevent accidental double-fire
   }
 
   /// True if the service is currently monitoring for inactivity.

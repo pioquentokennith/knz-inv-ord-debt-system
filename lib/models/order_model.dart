@@ -12,39 +12,40 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/material.dart';
+import '../core/money.dart';
 import 'base_model.dart';
 import 'payment_method_model.dart';
 
 // All possible lifecycle states for an order
 enum OrderStatus {
-  pending,    // Newly created, not yet processed
+  pending, // Newly created, not yet processed
   processing, // Being prepared / packed
-  shipped,    // Dispatched to the customer
-  delivered,  // Received by the customer (counts as collected revenue)
-  cancelled,  // Voided — excluded from revenue calculations
-  utang,      // Customer owes payment (debt recorded separately)
+  shipped, // Dispatched to the customer
+  delivered, // Received by the customer (counts as collected revenue)
+  cancelled, // Voided — excluded from revenue calculations
+  utang, // Customer owes payment (debt recorded separately)
 }
 
 // Extension adds display name, color, and parse helper to OrderStatus
 extension OrderStatusExtension on OrderStatus {
   // ── Map-based dispatch — replaces repetitive switch blocks (Polymorphism) ──
   static const _displayNames = {
-    OrderStatus.pending:    'Pending',
+    OrderStatus.pending: 'Pending',
     OrderStatus.processing: 'Processing',
-    OrderStatus.shipped:    'Shipped',
-    OrderStatus.delivered:  'Delivered',
-    OrderStatus.cancelled:  'Cancelled',
-    OrderStatus.utang:      'Utang',
+    OrderStatus.shipped: 'Shipped',
+    OrderStatus.delivered: 'Delivered',
+    OrderStatus.cancelled: 'Cancelled',
+    OrderStatus.utang: 'Utang',
   };
 
   // Semantic UI colors for status badges — one place to change all badge colors
   static const _colors = {
-    OrderStatus.pending:    Color(0xFFFFA726), // Orange — waiting
+    OrderStatus.pending: Color(0xFFFFA726), // Orange — waiting
     OrderStatus.processing: Color(0xFF29B6F6), // Blue — in progress
-    OrderStatus.shipped:    Color(0xFFAB47BC), // Purple — on the way
-    OrderStatus.delivered:  Color(0xFF43A047), // Green — completed
-    OrderStatus.cancelled:  Color(0xFFE53935), // Red — voided
-    OrderStatus.utang:      Color(0xFFD4AF37), // Gold — credit/debt
+    OrderStatus.shipped: Color(0xFFAB47BC), // Purple — on the way
+    OrderStatus.delivered: Color(0xFF43A047), // Green — completed
+    OrderStatus.cancelled: Color(0xFFE53935), // Red — voided
+    OrderStatus.utang: Color(0xFFD4AF37), // Gold — credit/debt
   };
 
   /// User-friendly display name for this status (no switch needed)
@@ -66,134 +67,226 @@ extension OrderStatusExtension on OrderStatus {
 class OrderItem extends BaseModel {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
   final String _productId;
-  final String _productName; // Denormalized — preserves the name even if product is later edited
-  final double _unitPrice;   // Actual selling price (after any deduction)
-  final double? _srpPrice;   // Original catalog SRP — null for legacy rows (fallback to unitPrice)
-  final int    _quantity;
+  final String
+  _productName; // Denormalized — preserves the name even if product is later edited
+  final Money _unitPrice; // Actual selling price (after any deduction)
+  final Money?
+  _srpPrice; // Original catalog SRP — null for legacy rows (fallback to unitPrice)
+  final int _quantity;
 
   OrderItem({
     required super.id,
     required String productId,
     required String productName,
-    required double unitPrice,
-    double?         srpPrice,
-    required int    quantity,
-  })  : _productId   = productId,
-        _productName = productName,
-        _unitPrice   = unitPrice,
-        _srpPrice    = srpPrice,
-        _quantity    = quantity;
+    required Money unitPrice,
+    Money? srpPrice,
+    required int quantity,
+  }) : _productId = productId,
+       _productName = productName,
+       _unitPrice = unitPrice,
+       _srpPrice = srpPrice,
+       _quantity = quantity {
+    final storedSrp = _srpPrice;
+    // Empty item/product IDs remain accepted for the documented legacy flat
+    // order format. New writes assign an item id and validate productId in the
+    // repository transaction.
+    if (_productName.trim().isEmpty) {
+      throw ArgumentError.value(
+        productName,
+        'productName',
+        'Product name cannot be blank.',
+      );
+    }
+    if (_unitPrice.isNegative) {
+      throw ArgumentError.value(
+        unitPrice,
+        'unitPrice',
+        'Unit price must be non-negative.',
+      );
+    }
+    if (storedSrp != null && storedSrp.isNegative) {
+      throw ArgumentError.value(
+        srpPrice,
+        'srpPrice',
+        'SRP must be non-negative.',
+      );
+    }
+    if (_quantity <= 0) {
+      throw ArgumentError.value(
+        quantity,
+        'quantity',
+        'Order item quantity must be positive.',
+      );
+    }
+  }
 
   // ── Public read-only getters (Encapsulation) ──────────────────────────────
-  String get productId   => _productId;
+  String get productId => _productId;
   String get productName => _productName;
-  double get unitPrice   => _unitPrice;
+  Money get unitPrice => _unitPrice;
+
   /// Original catalog SRP. Falls back to unitPrice for legacy rows.
-  double get srpPrice    => _srpPrice ?? _unitPrice;
-  int    get quantity    => _quantity;
+  Money get srpPrice => _srpPrice ?? _unitPrice;
+  int get quantity => _quantity;
   // Computed subtotal — derived from price and quantity, never stored separately
-  double get subtotal    => _unitPrice * _quantity;
+  Money get subtotal => _unitPrice * _quantity;
 
   // Returns a new OrderItem with an updated quantity (used when editing order items)
   OrderItem copyWith({int? quantity}) => OrderItem(
-    id:          id,
-    productId:   _productId,
+    id: id,
+    productId: _productId,
     productName: _productName,
-    unitPrice:   _unitPrice,
-    srpPrice:    _srpPrice,
-    quantity:    quantity ?? _quantity,
+    unitPrice: _unitPrice,
+    srpPrice: _srpPrice,
+    quantity: quantity ?? _quantity,
   );
 
   // Serializes to a map for SQLite order_items table or Firestore array element
   @override
   Map<String, dynamic> toMap() => {
-    'id':          id,
-    'productId':   _productId,
+    'id': id,
+    'productId': _productId,
     'productName': _productName,
-    'unitPrice':   _unitPrice,
-    'srpPrice':    _srpPrice,
-    'quantity':    _quantity,
+    'unitPriceCentavos': _unitPrice.centavos,
+    'srpPriceCentavos': _srpPrice?.centavos,
+    'quantity': _quantity,
   };
 
   // Deserializes a map back into an OrderItem (used when reading from DB or Firestore)
   factory OrderItem.fromMap(Map<String, dynamic> map) => OrderItem(
-    id:          map['id']           as String? ?? '',
-    productId:   map['productId']    as String? ?? '',
-    productName: map['productName']  as String? ?? '',
-    unitPrice:   (map['unitPrice']   as num?)?.toDouble() ?? 0,
-    srpPrice:    (map['srpPrice']    as num?)?.toDouble(),
-    quantity:    map['quantity']     as int?    ?? 1,
+    id: map['id'] as String? ?? '',
+    productId: map['productId'] as String? ?? '',
+    productName: map['productName'] as String? ?? '',
+    unitPrice: Money.fromCentavos(map['unitPriceCentavos'] as int? ?? 0),
+    srpPrice: map['srpPriceCentavos'] == null
+        ? null
+        : Money.fromCentavos(map['srpPriceCentavos'] as int),
+    quantity: map['quantity'] as int? ?? 1,
   );
 }
 
 /// Order entity — the parent record that groups OrderItems under one customer purchase.
 class Order extends BaseModel {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
-  final String          _orderId;       // Human-readable ID e.g. "KNZ-042"
-  final String          _customerName;
+  final String _orderId; // Human-readable ID e.g. "KNZ-042"
+  final String _customerName;
   final List<OrderItem> _items;
-  final double          _totalAmount;
-  final DateTime        _orderDate;
-  final String?         _notes;
+  final Money _totalAmount;
+  final Money? _storedSrpTotal;
+  final DateTime _orderDate;
+  final String? _notes;
 
   // ── v6 new fields ─────────────────────────────────────────────────────────
-  final PaymentMethod?  _paymentMethod;    // How the customer paid
-  final String?         _paymentReference; // Masked card/wallet number
-  final bool            _isReseller;       // true = reseller discount applied
-  final double          _deductionPerItem; // Fixed peso minus per item (₱0 for non-reseller orders)
-  final double?         _discountedTotal;  // totalAmount × (1 - pct/100); null if no discount
-  final String          _orderType;        // 'regular' | 'customized'
+  final PaymentMethod? _paymentMethod; // How the customer paid
+  final String? _paymentReference; // Masked card/wallet number
+  final bool _isReseller; // true = reseller discount applied
+  final Money
+  _deductionPerItem; // Fixed peso minus per item (₱0 for non-reseller orders)
+  final Money?
+  _discountedTotal; // totalAmount × (1 - pct/100); null if no discount
+  final String _orderType; // 'regular' | 'customized'
 
   /// [status] is intentionally mutable — orders change state over their lifecycle
   OrderStatus status;
 
   Order({
     required super.id,
-    required String          orderId,
-    required String          customerName,
+    required String orderId,
+    required String customerName,
     required List<OrderItem> items,
-    required double          totalAmount,
+    required Money totalAmount,
+    Money? srpTotal,
     required this.status,
-    required DateTime        orderDate,
-    String?                  notes,
+    required DateTime orderDate,
+    String? notes,
     // v6 fields — all optional for backward compat with existing rows
-    PaymentMethod?           paymentMethod,
-    String?                  paymentReference,
-    bool                     isReseller      = false,
-    double                   deductionPerItem = 0,
-    double?                  discountedTotal,
-    String                   orderType       = 'regular',
-  })  : _orderId          = orderId,
-        _customerName     = customerName,
-        _items            = items,
-        _totalAmount      = totalAmount,
-        _orderDate        = orderDate,
-        _notes            = notes,
-        _paymentMethod    = paymentMethod,
-        _paymentReference = paymentReference,
-        _isReseller       = isReseller,
-        _deductionPerItem = deductionPerItem,
-        _discountedTotal  = discountedTotal,
-        _orderType        = orderType;
+    PaymentMethod? paymentMethod,
+    String? paymentReference,
+    bool isReseller = false,
+    Money deductionPerItem = Money.zero,
+    Money? discountedTotal,
+    String orderType = 'regular',
+  }) : _orderId = orderId,
+       _customerName = customerName,
+       _items = List<OrderItem>.unmodifiable(items),
+       _totalAmount = totalAmount,
+       _storedSrpTotal = srpTotal,
+       _orderDate = orderDate,
+       _notes = notes,
+       _paymentMethod = paymentMethod,
+       _paymentReference = paymentReference,
+       _isReseller = isReseller,
+       _deductionPerItem = deductionPerItem,
+       _discountedTotal = discountedTotal,
+       _orderType = orderType {
+    final storedDiscountedTotal = _discountedTotal;
+    if (this.id.trim().isEmpty) {
+      throw ArgumentError.value(this.id, 'id', 'Order id cannot be blank.');
+    }
+    if (_orderId.trim().isEmpty) {
+      throw ArgumentError.value(
+        orderId,
+        'orderId',
+        'Human-readable order id cannot be blank.',
+      );
+    }
+    if (_customerName.trim().isEmpty) {
+      throw ArgumentError.value(
+        customerName,
+        'customerName',
+        'Customer name cannot be blank.',
+      );
+    }
+    if (_totalAmount.isNegative) {
+      throw ArgumentError.value(
+        totalAmount,
+        'totalAmount',
+        'Order total must be non-negative.',
+      );
+    }
+    if (_deductionPerItem.isNegative) {
+      throw ArgumentError.value(
+        deductionPerItem,
+        'deductionPerItem',
+        'Deduction must be non-negative.',
+      );
+    }
+    if (storedDiscountedTotal != null && storedDiscountedTotal.isNegative) {
+      throw ArgumentError.value(
+        discountedTotal,
+        'discountedTotal',
+        'Discounted total must be non-negative.',
+      );
+    }
+    if (_orderType.trim().isEmpty) {
+      throw ArgumentError.value(
+        orderType,
+        'orderType',
+        'Order type cannot be blank.',
+      );
+    }
+  }
 
   // ── Public read-only getters (Encapsulation) ──────────────────────────────
-  String          get orderId          => _orderId;
-  String          get customerName     => _customerName;
+  String get orderId => _orderId;
+  String get customerName => _customerName;
   // Unmodifiable view prevents external code from mutating the items list
-  List<OrderItem> get items            => List.unmodifiable(_items);
-  double          get totalAmount      => _totalAmount;
-  DateTime        get orderDate        => _orderDate;
-  String?         get notes            => _notes;
+  List<OrderItem> get items => List.unmodifiable(_items);
+  Money get totalAmount => _totalAmount;
+  DateTime get orderDate => _orderDate;
+  String? get notes => _notes;
 
   // v6 getters
-  PaymentMethod?  get paymentMethod    => _paymentMethod;
-  String?         get paymentReference => _paymentReference;
-  bool            get isReseller       => _isReseller;
-  double          get deductionPerItem => _deductionPerItem;
+  PaymentMethod? get paymentMethod => _paymentMethod;
+  String? get paymentReference => _paymentReference;
+  bool get isReseller => _isReseller;
+  Money get deductionPerItem => _deductionPerItem;
+
   /// The net amount the customer actually pays after discount.
   /// Falls back to totalAmount if no discount was applied.
-  double          get discountedTotal  => _discountedTotal ?? _totalAmount;
-  String          get orderType        => _orderType;
+  Money get discountedTotal => _discountedTotal ?? _totalAmount;
+  Money? get storedDiscountedTotal => _discountedTotal;
+  String get orderType => _orderType;
 
   // ── Computed properties ───────────────────────────────────────────────────
 
@@ -211,7 +304,7 @@ class Order extends BaseModel {
   // NOTE: discountedTotal falls back to totalAmount when null, so for orders where
   // totalAmount IS the net (saved after discount), discountAmount will be 0.
   // Use totalDiscountAmount (item-level) for accurate discount reporting.
-  double get discountAmount => _totalAmount - discountedTotal;
+  Money get discountAmount => srpTotal - customerPayAmount;
 
   /// Per-item deduction discount: sum of (srpPrice - unitPrice) × qty across all items.
   /// This is the authoritative discount figure because:
@@ -223,9 +316,11 @@ class Order extends BaseModel {
   /// LEGACY FALLBACK: For orders restored from Firestore before srp_price was
   /// included in the cloud restore, srpPrice falls back to unitPrice making the
   /// per-item deduction = 0. In that case, fall back to deductionPerItem × total qty.
-  double get itemDiscountAmount {
-    final itemBased = _items.fold(0.0, (sum, item) {
-      final deduction = (item.srpPrice - item.unitPrice).clamp(0.0, item.srpPrice);
+  Money get itemDiscountAmount {
+    final itemBased = _items.fold(Money.zero, (sum, item) {
+      final deduction = (item.srpPrice - item.unitPrice)
+          .max(Money.zero)
+          .min(item.srpPrice);
       return sum + deduction * item.quantity;
     });
     // For legacy orders: srpPrice == unitPrice so itemBased == 0.
@@ -236,80 +331,87 @@ class Order extends BaseModel {
 
   /// Total discount across all items = per-item (srpPrice - unitPrice) × qty.
   /// This is the only reliable discount figure since totalAmount is saved as net.
-  double get totalDiscountAmount => itemDiscountAmount;
+  Money get totalDiscountAmount => itemDiscountAmount;
 
   /// SRP total = sum of srpPrice × qty per item (true catalog price before discount).
   /// For legacy rows where srp_price was null (cloud-restored without srp_price),
   /// srpPrice falls back to unitPrice. In that case, reconstruct from deductionPerItem.
-  double get srpTotal {
+  Money get srpTotal {
     // Use stored srpPrice directly (= _srpPrice ?? _unitPrice).
     // For legacy orders: srpPrice == unitPrice == 220 (the true SRP, no item discount tracked).
     // For new orders: srpPrice=220, unitPrice=170. Both are correct as-is.
-    return _items.fold(0.0, (sum, item) => sum + item.srpPrice * item.quantity);
+    return _storedSrpTotal ??
+        _items.fold(
+          Money.zero,
+          (sum, item) => sum + item.srpPrice * item.quantity,
+        );
   }
 
   /// Net amount = totalAmount, which IS the net (after all discounts applied at order time).
   /// totalAmount is always saved as the final amount the customer pays.
-  double get netAfterAllDiscounts => customerPayAmount;
+  Money get netAfterAllDiscounts => customerPayAmount;
 
   /// The amount the customer actually pays.
   /// For reseller orders: discountedTotal (saved as net). Falls back to totalAmount.
   /// For regular orders: totalAmount (which is already the net selling price).
-  double get customerPayAmount => _discountedTotal ?? _totalAmount;
+  Money get customerPayAmount => _discountedTotal ?? _totalAmount;
 
   // Returns a new Order with only the specified fields changed
   Order copyWith({
-    String?           id,
-    String?           orderId,
-    String?           customerName,
-    List<OrderItem>?  items,
-    double?           totalAmount,
-    OrderStatus?      status,
-    DateTime?         orderDate,
-    String?           notes,
-    PaymentMethod?    paymentMethod,
-    String?           paymentReference,
-    bool?             isReseller,
-    double?           deductionPerItem,
-    double?           discountedTotal,
-    String?           orderType,
+    String? id,
+    String? orderId,
+    String? customerName,
+    List<OrderItem>? items,
+    Money? totalAmount,
+    Money? srpTotal,
+    OrderStatus? status,
+    DateTime? orderDate,
+    String? notes,
+    PaymentMethod? paymentMethod,
+    String? paymentReference,
+    bool? isReseller,
+    Money? deductionPerItem,
+    Money? discountedTotal,
+    String? orderType,
   }) {
     return Order(
-      id:               id              ?? this.id,
-      orderId:          orderId         ?? _orderId,
-      customerName:     customerName    ?? _customerName,
-      items:            items           ?? _items,
-      totalAmount:      totalAmount     ?? _totalAmount,
-      status:           status          ?? this.status,
-      orderDate:        orderDate       ?? _orderDate,
-      notes:            notes           ?? _notes,
-      paymentMethod:    paymentMethod   ?? _paymentMethod,
+      id: id ?? this.id,
+      orderId: orderId ?? _orderId,
+      customerName: customerName ?? _customerName,
+      items: items ?? _items,
+      totalAmount: totalAmount ?? _totalAmount,
+      srpTotal: srpTotal ?? _storedSrpTotal,
+      status: status ?? this.status,
+      orderDate: orderDate ?? _orderDate,
+      notes: notes ?? _notes,
+      paymentMethod: paymentMethod ?? _paymentMethod,
       paymentReference: paymentReference ?? _paymentReference,
-      isReseller:       isReseller      ?? _isReseller,
-      deductionPerItem:  deductionPerItem ?? _deductionPerItem,
-      discountedTotal:  discountedTotal ?? _discountedTotal,
-      orderType:        orderType       ?? _orderType,
+      isReseller: isReseller ?? _isReseller,
+      deductionPerItem: deductionPerItem ?? _deductionPerItem,
+      discountedTotal: discountedTotal ?? _discountedTotal,
+      orderType: orderType ?? _orderType,
     );
   }
 
   // Serializes the order to a map (items as a nested list of maps)
   @override
   Map<String, dynamic> toMap() => {
-    'id':                id,
-    'orderId':           _orderId,
-    'customerName':      _customerName,
-    'items':             _items.map((i) => i.toMap()).toList(),
-    'totalAmount':       _totalAmount,
-    'status':            status.displayName,
-    'orderDate':         _orderDate.toIso8601String(),
-    'notes':             _notes,
+    'id': id,
+    'orderId': _orderId,
+    'customerName': _customerName,
+    'items': _items.map((i) => i.toMap()).toList(),
+    'totalAmountCentavos': _totalAmount.centavos,
+    'srpTotalCentavos': srpTotal.centavos,
+    'status': status.displayName,
+    'orderDate': _orderDate.toIso8601String(),
+    'notes': _notes,
     // v6
-    'paymentMethod':     _paymentMethod?.storageKey,
-    'paymentReference':  _paymentReference,
-    'isReseller':        _isReseller ? 1 : 0,
-    'deductionPerItem':  _deductionPerItem,
-    'discountedTotal':   _discountedTotal,
-    'orderType':         _orderType,
+    'paymentMethod': _paymentMethod?.storageKey,
+    'paymentReference': _paymentReference,
+    'isReseller': _isReseller ? 1 : 0,
+    'deductionPerItemCentavos': _deductionPerItem.centavos,
+    'discountedTotalCentavos': _discountedTotal?.centavos,
+    'orderType': _orderType,
   };
 
   // Deserializes a map back into an Order
@@ -322,39 +424,50 @@ class Order extends BaseModel {
           .toList();
     } else if (map['productName'] != null) {
       // Legacy format — single product stored as flat fields
-      final total = (map['totalAmount'] as num?)?.toDouble() ?? 0;
-      final qty   = map['quantity'] as int? ?? 1;
+      final total = Money.fromCentavos(map['totalAmountCentavos'] as int? ?? 0);
+      final qty = map['quantity'] as int? ?? 1;
       items = [
         OrderItem(
-          id:           '',
-          productId:    '',
-          productName:  map['productName'] as String? ?? '',
-          unitPrice:    qty > 0 ? total / qty : total,
-          quantity:     qty,
-        )
+          id: '',
+          productId: '',
+          productName: map['productName'] as String? ?? '',
+          unitPrice: qty > 0 ? total.divide(qty) : total,
+          quantity: qty,
+        ),
       ];
     } else {
       items = []; // No item data available
     }
 
     return Order(
-      id:               map['id']               as String? ?? '',
-      orderId:          map['orderId']           as String? ?? '',
-      customerName:     map['customerName']      as String? ?? '',
-      items:            items,
-      totalAmount:      (map['totalAmount']      as num?)?.toDouble() ?? 0,
-      status:           OrderStatusExtension.fromString(map['status'] as String? ?? 'Pending'),
-      orderDate:        map['orderDate'] != null
+      id: map['id'] as String? ?? '',
+      orderId: map['orderId'] as String? ?? '',
+      customerName: map['customerName'] as String? ?? '',
+      items: items,
+      totalAmount: Money.fromCentavos(map['totalAmountCentavos'] as int? ?? 0),
+      srpTotal: map['srpTotalCentavos'] == null
+          ? null
+          : Money.fromCentavos(map['srpTotalCentavos'] as int),
+      status: OrderStatusExtension.fromString(
+        map['status'] as String? ?? 'Pending',
+      ),
+      orderDate: map['orderDate'] != null
           ? DateTime.tryParse(map['orderDate'] as String) ?? DateTime.now()
           : DateTime.now(),
-      notes:            map['notes']             as String?,
+      notes: map['notes'] as String?,
       // v6 fields — safe defaults for older DB rows
-      paymentMethod:    PaymentMethodExtension.fromString(map['paymentMethod'] as String?),
-      paymentReference: map['paymentReference']  as String?,
-      isReseller:       (map['isReseller']        as int? ?? 0) == 1,
-      deductionPerItem:  (map['deductionPerItem']   as num?)?.toDouble() ?? (map['discountPercent'] as num?)?.toDouble() ?? 0,
-      discountedTotal:  (map['discountedTotal']   as num?)?.toDouble(),
-      orderType:        map['orderType']          as String? ?? 'regular',
+      paymentMethod: PaymentMethodExtension.fromString(
+        map['paymentMethod'] as String?,
+      ),
+      paymentReference: map['paymentReference'] as String?,
+      isReseller: (map['isReseller'] as int? ?? 0) == 1,
+      deductionPerItem: Money.fromCentavos(
+        map['deductionPerItemCentavos'] as int? ?? 0,
+      ),
+      discountedTotal: map['discountedTotalCentavos'] == null
+          ? null
+          : Money.fromCentavos(map['discountedTotalCentavos'] as int),
+      orderType: map['orderType'] as String? ?? 'regular',
     );
   }
 }

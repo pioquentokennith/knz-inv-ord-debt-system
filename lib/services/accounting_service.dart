@@ -1,109 +1,264 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// accounting_service.dart — Accounting computation layer
-// Purpose : Derives gross sales, total discounts, net sales, and per-reseller
-//           summaries from a list of Order objects (already in AppState memory).
-//           All methods are pure (no I/O) so they are fast and testable.
-// OOP Pillars:
-//   • Encapsulation — computation logic lives here, not scattered in screens
-//   • Abstraction   — callers receive typed summary objects, not raw SQL
-// ─────────────────────────────────────────────────────────────────────────────
-
+import '../core/money.dart';
+import '../models/custom_order_model.dart';
+import '../models/debt_model.dart';
 import '../models/order_model.dart';
+import '../models/payment_method_model.dart';
 import '../models/reseller_accounting_summary.dart';
 
+class AccountingPeriod {
+  const AccountingPeriod({this.from, this.to});
+
+  final DateTime? from;
+  final DateTime? to;
+
+  bool get isBounded => from != null || to != null;
+
+  bool contains(DateTime timestamp) {
+    if (from != null && timestamp.isBefore(from!)) return false;
+    final end = to;
+    if (end == null) return true;
+    final endExclusive = end.isUtc
+        ? DateTime.utc(end.year, end.month, end.day + 1)
+        : DateTime(end.year, end.month, end.day + 1);
+    return timestamp.isBefore(endExclusive);
+  }
+}
+
+class OrderFinancialBreakdown {
+  const OrderFinancialBreakdown({
+    required this.srpTotal,
+    required this.discount,
+    required this.customerPayTotal,
+  });
+
+  final Money srpTotal;
+  final Money discount;
+  final Money customerPayTotal;
+}
+
+class DebtCollectionRow {
+  const DebtCollectionRow({required this.debt, required this.payment});
+
+  final CustomerDebt debt;
+  final PaymentRecord payment;
+}
+
+class CustomOrderCollectionRow {
+  const CustomOrderCollectionRow({required this.order, required this.payment});
+
+  final CustomOrder order;
+  final CustomOrderPayment payment;
+}
+
+class AccountingReport {
+  AccountingReport({
+    required Iterable<Order> recognizedOrders,
+    required Iterable<DebtCollectionRow> debtPayments,
+    required Iterable<CustomOrderCollectionRow> customOrderPayments,
+    required this.legacyCustomOrderReceipts,
+    required this.grossSales,
+    required this.discounts,
+    required this.netSales,
+    required this.debtCollections,
+    required this.debtPrincipalCollections,
+    required this.debtInterestCollections,
+    required this.customOrderReceipts,
+    required this.receivablesPrincipal,
+    required this.receivablesInterest,
+    required Iterable<ResellerAccountingSummary> resellerSummaries,
+  }) : recognizedOrders = List.unmodifiable(recognizedOrders),
+       debtPayments = List.unmodifiable(debtPayments),
+       customOrderPayments = List.unmodifiable(customOrderPayments),
+       resellerSummaries = List.unmodifiable(resellerSummaries);
+
+  final List<Order> recognizedOrders;
+  final List<DebtCollectionRow> debtPayments;
+  final List<CustomOrderCollectionRow> customOrderPayments;
+  final Money legacyCustomOrderReceipts;
+  final Money grossSales;
+  final Money discounts;
+  final Money netSales;
+  final Money debtCollections;
+  final Money debtPrincipalCollections;
+  final Money debtInterestCollections;
+  final Money customOrderReceipts;
+  final Money receivablesPrincipal;
+  final Money receivablesInterest;
+  final List<ResellerAccountingSummary> resellerSummaries;
+
+  Money get cashReceived => netSales + debtCollections + customOrderReceipts;
+  Money get receivables => receivablesPrincipal + receivablesInterest;
+  int get itemsSold =>
+      recognizedOrders.fold(0, (sum, order) => sum + order.quantity);
+
+  Money debtCollectionsFor(String debtId) => debtPayments
+      .where((row) => row.debt.id == debtId)
+      .fold(Money.zero, (sum, row) => sum + row.payment.amount);
+}
+
+/// Pure cash-basis accounting calculations shared by UI and exports.
 class AccountingService {
-  AccountingService._(); // Static-only class
+  AccountingService._();
   static final AccountingService instance = AccountingService._();
 
-  // ── Top-level aggregates ──────────────────────────────────────────────────
+  AccountingReport summarize({
+    required Iterable<Order> orders,
+    required Iterable<CustomerDebt> debts,
+    Iterable<CustomOrder> customOrders = const [],
+    AccountingPeriod period = const AccountingPeriod(),
+  }) {
+    final recognized = orders
+        .where(isRecognizedSale)
+        .where((order) => period.contains(order.orderDate))
+        .toList(growable: false);
+    final debtRows = <DebtCollectionRow>[];
+    var debtCollections = Money.zero;
+    var debtPrincipal = Money.zero;
+    var debtInterest = Money.zero;
+    var receivablesPrincipal = Money.zero;
+    var receivablesInterest = Money.zero;
 
-  /// Gross sales = sum of SRP × qty for each item across non-cancelled orders.
-  /// Uses item.srpPrice (catalog price) when available, falls back to unitPrice.
-  double grossSales(List<Order> orders) => orders
-      .where((o) => o.status != OrderStatus.cancelled)
-      .fold(0.0, (s, o) => s + o.srpTotal);
-
-  /// Total discounts = per-item deductions (srpPrice - unitPrice) × qty.
-  /// This is the authoritative discount since totalAmount is always saved as net.
-  double totalDiscounts(List<Order> orders) => orders
-      .where((o) => o.status != OrderStatus.cancelled)
-      .fold(0.0, (s, o) => s + o.totalDiscountAmount);
-
-  /// Net sales = sum of customerPayAmount across orders (the true net each customer paid).
-  double netSales(List<Order> orders) => orders
-      .where((o) => o.status != OrderStatus.cancelled)
-      .fold(0.0, (s, o) => s + o.customerPayAmount);
-
-  /// Revenue from customized orders (order_type == 'customized').
-  double customizedOrderRevenue(List<Order> orders) => orders
-      .where((o) =>
-          o.status != OrderStatus.cancelled && o.orderType == 'customized')
-      .fold(0.0, (s, o) => s + o.discountedTotal);
-
-  // ── Reseller-specific summaries ───────────────────────────────────────────
-
-  /// Groups reseller orders by customer name and builds per-reseller summaries.
-  /// Orders that are not flagged as reseller orders are excluded.
-  List<ResellerAccountingSummary> resellerSummary(List<Order> orders) {
-    // Group orders by reseller (customer) name
-    final Map<String, List<Order>> byReseller = {};
-    for (final order in orders) {
-      if (!order.isReseller) continue;
-      if (order.status == OrderStatus.cancelled) continue;
-      byReseller.putIfAbsent(order.customerName, () => []).add(order);
+    for (final debt in debts) {
+      receivablesPrincipal += debt.principalOutstanding;
+      receivablesInterest += debt.interestOutstanding;
+      for (final payment in debt.payments) {
+        if (!period.contains(payment.paidAt)) continue;
+        debtRows.add(DebtCollectionRow(debt: debt, payment: payment));
+        debtCollections += payment.amount;
+        debtPrincipal += payment.principalApplied;
+        debtInterest += payment.interestApplied;
+      }
     }
 
-    return byReseller.entries.map((entry) {
-      final name           = entry.key;
-      final resellerOrders = entry.value;
+    final customRows = <CustomOrderCollectionRow>[];
+    var customReceipts = Money.zero;
+    var legacyCustomReceipts = Money.zero;
+    for (final order in customOrders) {
+      // Legacy aggregate money remains visible all-time, but no timestamp is
+      // invented for bounded reports.
+      if (!period.isBounded && order.unattributedPaymentAmount.isPositive) {
+        customReceipts += order.unattributedPaymentAmount;
+        legacyCustomReceipts += order.unattributedPaymentAmount;
+      }
+      for (final payment in order.payments) {
+        if (!period.contains(payment.paidAt)) continue;
+        customRows.add(
+          CustomOrderCollectionRow(order: order, payment: payment),
+        );
+        customReceipts += payment.amount;
+      }
+    }
 
-      // Gross = true SRP total using srpTotal getter (srpPrice × qty per item)
-      final gross = resellerOrders.fold(0.0, (s, o) => s + o.srpTotal);
+    final gross = recognized.fold(
+      Money.zero,
+      (sum, order) => sum + order.srpTotal,
+    );
+    final discounts = recognized.fold(
+      Money.zero,
+      (sum, order) => sum + order.totalDiscountAmount,
+    );
+    final net = recognized.fold(
+      Money.zero,
+      (sum, order) => sum + order.customerPayAmount,
+    );
 
-      // Discount = (srpPrice - unitPrice) × qty per item — always correct
-      // because srpPrice and unitPrice are saved at order time in order_items.
-      final discount = resellerOrders.fold(0.0,
-          (s, o) => s + o.itemDiscountAmount);
-
-      // Net = customerPayAmount per order (discountedTotal for resellers, totalAmount for regular)
-      final net = resellerOrders.fold(0.0, (s, o) => s + o.customerPayAmount);
-      final avgDeduction = resellerOrders.isEmpty
-          ? 0.0
-          : resellerOrders.fold(0.0, (s, o) => s + o.deductionPerItem) /
-              resellerOrders.length;
-
-      return ResellerAccountingSummary(
-        resellerName:     name,
-        totalOrders:      resellerOrders.length,
-        grossSales:       gross,
-        totalDiscount:    discount,
-        netRevenue:       net,
-        averageDeduction: avgDeduction,
-      );
-    }).toList()
-      ..sort((a, b) => b.netRevenue.compareTo(a.netRevenue)); // Highest earner first
+    return AccountingReport(
+      recognizedOrders: recognized,
+      debtPayments: debtRows,
+      customOrderPayments: customRows,
+      legacyCustomOrderReceipts: legacyCustomReceipts,
+      grossSales: gross,
+      discounts: discounts,
+      netSales: net,
+      debtCollections: debtCollections,
+      debtPrincipalCollections: debtPrincipal,
+      debtInterestCollections: debtInterest,
+      customOrderReceipts: customReceipts,
+      receivablesPrincipal: receivablesPrincipal,
+      receivablesInterest: receivablesInterest,
+      resellerSummaries: _resellerSummary(recognized),
+    );
   }
 
-  // ── Date-range filter helper ──────────────────────────────────────────────
+  OrderFinancialBreakdown orderBreakdown(Order order) =>
+      OrderFinancialBreakdown(
+        srpTotal: order.srpTotal,
+        discount: order.totalDiscountAmount,
+        customerPayTotal: order.customerPayAmount,
+      );
 
-  /// Filters orders by an optional date range, inclusive on both ends
-  /// (from = start of [from] day, to = end of [to] day at 23:59:59.999999).
+  Money grossSales(List<Order> orders) =>
+      summarize(orders: orders, debts: const []).grossSales;
+  Money totalDiscounts(List<Order> orders) =>
+      summarize(orders: orders, debts: const []).discounts;
+  Money netSales(List<Order> orders) =>
+      summarize(orders: orders, debts: const []).netSales;
+  Money customizedOrderRevenue(List<Order> orders) => summarize(
+    orders: orders.where((order) => order.orderType == 'customized'),
+    debts: const [],
+  ).netSales;
+
+  Money debtCollections(
+    Iterable<CustomerDebt> debts, {
+    DateTime? from,
+    DateTime? to,
+  }) => summarize(
+    orders: const [],
+    debts: debts,
+    period: AccountingPeriod(from: from, to: to),
+  ).debtCollections;
+
+  List<ResellerAccountingSummary> resellerSummary(List<Order> orders) =>
+      _resellerSummary(orders.where(isRecognizedSale));
+
   List<Order> filterByDateRange(
     List<Order> orders, {
     DateTime? from,
     DateTime? to,
   }) {
-    // End-of-day boundary: add 1 day then subtract 1 microsecond so orders
-    // placed at any time on the [to] date are included, but nothing from the
-    // following day leaks through.
-    final endOfToDay = to
-        ?.add(const Duration(days: 1))
-        .subtract(const Duration(microseconds: 1));
+    final period = AccountingPeriod(from: from, to: to);
+    return orders.where((order) => period.contains(order.orderDate)).toList();
+  }
 
-    return orders.where((o) {
-      if (from       != null && o.orderDate.isBefore(from))       return false;
-      if (endOfToDay != null && o.orderDate.isAfter(endOfToDay))  return false;
-      return true;
-    }).toList();
+  bool isRecognizedSale(Order order) =>
+      order.status == OrderStatus.delivered &&
+      order.paymentMethod != PaymentMethod.utang;
+
+  List<Order> recognizedSales(Iterable<Order> orders) =>
+      orders.where(isRecognizedSale).toList(growable: false);
+
+  List<ResellerAccountingSummary> _resellerSummary(Iterable<Order> orders) {
+    final byReseller = <String, List<Order>>{};
+    for (final order in orders) {
+      if (!order.isReseller) continue;
+      byReseller.putIfAbsent(order.customerName, () => []).add(order);
+    }
+    return byReseller.entries.map((entry) {
+      final resellerOrders = entry.value;
+      final gross = resellerOrders.fold(
+        Money.zero,
+        (sum, order) => sum + order.srpTotal,
+      );
+      final discount = resellerOrders.fold(
+        Money.zero,
+        (sum, order) => sum + order.totalDiscountAmount,
+      );
+      final net = resellerOrders.fold(
+        Money.zero,
+        (sum, order) => sum + order.customerPayAmount,
+      );
+      final units = resellerOrders.fold(
+        0,
+        (sum, order) => sum + order.quantity,
+      );
+      return ResellerAccountingSummary(
+        resellerName: entry.key,
+        totalOrders: resellerOrders.length,
+        grossSales: gross,
+        totalDiscount: discount,
+        netRevenue: net,
+        averageDeduction: units == 0 ? Money.zero : discount.divide(units),
+      );
+    }).toList()..sort((a, b) => b.netRevenue.compareTo(a.netRevenue));
   }
 }

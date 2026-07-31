@@ -12,38 +12,38 @@ import 'package:flutter/material.dart';
 
 /// All supported payment methods for a KNZ Scent order.
 enum PaymentMethod {
-  creditDebitCard,  // Visa / Mastercard / etc.
-  gcash,            // GCash e-wallet
-  maya,             // Maya (formerly PayMaya) e-wallet
-  cashOnDelivery,   // COD — no digital reference
-  utang,            // Utang / Credit — customer owes payment
+  creditDebitCard, // Visa / Mastercard / etc.
+  gcash, // GCash e-wallet
+  maya, // Maya (formerly PayMaya) e-wallet
+  cashOnDelivery, // COD — no digital reference
+  utang, // Utang / Credit — customer owes payment
 }
 
 extension PaymentMethodExtension on PaymentMethod {
   // ── Map-based dispatch (Polymorphism) ────────────────────────────────────
   static const _displayNames = {
-    PaymentMethod.creditDebitCard : 'Credit / Debit Card',
-    PaymentMethod.gcash           : 'GCash',
-    PaymentMethod.maya            : 'Maya',
-    PaymentMethod.cashOnDelivery  : 'Cash on Delivery',
-    PaymentMethod.utang           : 'Utang (Credit)',
+    PaymentMethod.creditDebitCard: 'Credit / Debit Card',
+    PaymentMethod.gcash: 'GCash',
+    PaymentMethod.maya: 'Maya',
+    PaymentMethod.cashOnDelivery: 'Cash on Delivery',
+    PaymentMethod.utang: 'Utang (Credit)',
   };
 
   static const _icons = {
-    PaymentMethod.creditDebitCard : Icons.credit_card_outlined,
-    PaymentMethod.gcash           : Icons.account_balance_wallet_outlined,
-    PaymentMethod.maya            : Icons.payment_outlined,
-    PaymentMethod.cashOnDelivery  : Icons.local_shipping_outlined,
-    PaymentMethod.utang           : Icons.receipt_long_outlined,
+    PaymentMethod.creditDebitCard: Icons.credit_card_outlined,
+    PaymentMethod.gcash: Icons.account_balance_wallet_outlined,
+    PaymentMethod.maya: Icons.payment_outlined,
+    PaymentMethod.cashOnDelivery: Icons.local_shipping_outlined,
+    PaymentMethod.utang: Icons.receipt_long_outlined,
   };
 
   // Stored value in SQLite / Firestore — stable snake_case string
   static const _storageKeys = {
-    PaymentMethod.creditDebitCard : 'credit_debit_card',
-    PaymentMethod.gcash           : 'gcash',
-    PaymentMethod.maya            : 'maya',
-    PaymentMethod.cashOnDelivery  : 'cash_on_delivery',
-    PaymentMethod.utang           : 'utang',
+    PaymentMethod.creditDebitCard: 'credit_debit_card',
+    PaymentMethod.gcash: 'gcash',
+    PaymentMethod.maya: 'maya',
+    PaymentMethod.cashOnDelivery: 'cash_on_delivery',
+    PaymentMethod.utang: 'utang',
   };
 
   /// Human-readable name for display in UI widgets.

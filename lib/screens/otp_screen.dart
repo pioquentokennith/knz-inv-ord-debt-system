@@ -1,30 +1,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // otp_screen.dart
-// Purpose : Email OTP verification screen used for registration and password reset.
-// Function: Generates a 6-digit OTP on load, sends it via the Brevo SMTP API
-//           (credentials loaded from .env — never hardcoded), and displays six
-//           individual digit input boxes. Auto-advances focus to the next box on
-//           each digit entry and auto-submits when all 6 digits are filled.
-//           A 60-second countdown timer controls the "Resend OTP" button.
-//           Calls the onVerified callback and navigates back on success.
+// Purpose : Legacy server-side OTP verification screen retained for emulator tests.
+// Function: Requests a server-generated OTP challenge from Firebase, then displays
+//           six individual digit input boxes. Auto-advances focus to the next
+//           box on each digit entry and auto-submits when all 6 digits are filled.
+//           Verification, expiry, attempt limits, and one-time token consumption
+//           are enforced by Cloud Functions before the callback can run. Production
+//           account registration and password reset use Firebase Auth email links.
 // ─────────────────────────────────────────────────────────────────────────────
 import 'dart:async';
-import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:animate_do/animate_do.dart';
-import 'package:http/http.dart' as http;
-import 'package:flutter_dotenv/flutter_dotenv.dart'; 
 import '../core/app_constants.dart';
+import '../services/otp_service.dart';
 import '../widgets/shared_widgets.dart';
 
-enum OtpPurpose { register, resetPassword }
+enum OtpPurpose { resetPassword }
+
+typedef OtpVerifiedCallback = Future<void> Function(String verificationToken);
 
 class OtpScreen extends StatefulWidget {
   final String email;
   final OtpPurpose purpose;
-  final VoidCallback onVerified;
+  final OtpVerifiedCallback onVerified;
 
   const OtpScreen({
     super.key,
@@ -38,28 +37,18 @@ class OtpScreen extends StatefulWidget {
 }
 
 class _OtpScreenState extends State<OtpScreen> {
-  final List<TextEditingController> _controllers =
-      List.generate(6, (_) => TextEditingController());
+  final List<TextEditingController> _controllers = List.generate(
+    6,
+    (_) => TextEditingController(),
+  );
   final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
 
-  // ── FIX 1: Read Brevo credentials from .env (not hardcoded) ───────────
-  // NEVER hardcode API keys in source code.
-  // Steps: (1) Add flutter_dotenv to pubspec.yaml
-  //        (2) Create .env file in project root (see .env.example)
-  //        (3) Add .env to .gitignore
-  //        (4) Add assets entry in pubspec.yaml: assets: [.env]
-  static String get _brevoApiKey =>
-      dotenv.env['BREVO_API_KEY'] ?? '';
-  static String get _senderEmail =>
-      dotenv.env['BREVO_SENDER_EMAIL'] ?? '';
-  static String get _senderName =>
-      dotenv.env['BREVO_SENDER_NAME'] ?? AppStrings.appName;
-
-  String _generatedOtp = '';
-  int  _resendSeconds  = 0;
-  bool _isVerifying    = false;
-  bool _isSending      = true;
-  bool _hasError       = false;
+  String? _challengeId;
+  DateTime? _challengeExpiresAt;
+  int _resendSeconds = 0;
+  bool _isVerifying = false;
+  bool _isSending = true;
+  bool _hasError = false;
   String? _errorMsg;
   Timer? _timer;
 
@@ -74,116 +63,65 @@ class _OtpScreenState extends State<OtpScreen> {
   @override
   void dispose() {
     _timer?.cancel();
-    for (final c in _controllers) { c.dispose(); }
-    for (final f in _focusNodes) { f.dispose(); }
+    for (final c in _controllers) {
+      c.dispose();
+    }
+    for (final f in _focusNodes) {
+      f.dispose();
+    }
     super.dispose();
   }
 
-  // Generates a secure 6-digit OTP and sends it to the user's email via Brevo SMTP API.
-  // Guards against missing API key and no internet connection. Starts the 60s resend timer.
+  String get _purposeValue => 'resetPassword';
+
+  // The server generates and hashes the OTP. The client receives only a random
+  // challenge ID and never has a copy of the expected code.
   Future<void> _sendOtp({bool resend = false}) async {
     if (!mounted) return;
 
-    // Guard: kung walang API key, ipakita agad ang error
-    if (_brevoApiKey.isEmpty) {
-      setState(() {
-        _isSending = false;
-        _hasError  = true;
-        _errorMsg  = 'Email service not configured. Contact support.';
-      });
-      return;
-    }
-
     setState(() {
       _isSending = true;
-      _hasError  = false;
-      _errorMsg  = null;
+      _hasError = false;
+      _errorMsg = null;
       _resendSeconds = 0;
     });
 
-    // Generate 6-digit OTP
-    final rng = Random.secure();
-    _generatedOtp = List.generate(6, (_) => rng.nextInt(10)).join();
+    final result = await OtpService.instance.requestOtp(
+      email: widget.email,
+      purpose: _purposeValue,
+    );
 
-    final purpose = widget.purpose == OtpPurpose.register
-        ? 'account registration'
-        : 'password reset';
+    if (!mounted) return;
 
-    try {
-      final response = await http.post(
-        Uri.parse('https://api.brevo.com/v3/smtp/email'),
-        headers: {
-          'accept':       'application/json',
-          'api-key':      _brevoApiKey,   // ← FIX 1: from .env
-          'content-type': 'application/json',
-        },
-        body: jsonEncode({
-          'sender': {
-            'name':  _senderName,         // ← FIX 1: from .env
-            'email': _senderEmail,        // ← FIX 1: from .env
-          },
-          'to': [
-            {'email': widget.email}
-          ],
-          'subject': 'Your ${AppStrings.appName} OTP Code',
-          'htmlContent': '''
-<!DOCTYPE html>
-<html>
-<body style="font-family: Arial, sans-serif; background-color: #1a1a1a; margin: 0; padding: 20px;">
-  <div style="max-width: 480px; margin: 0 auto; background-color: #242424; border-radius: 16px; padding: 32px; border: 1px solid #333;">
-    <div style="text-align: center; margin-bottom: 24px;">
-      <h1 style="color: #C9A84C; font-size: 24px; margin: 0; letter-spacing: 2px;">KNZ SCENT</h1>
-      <p style="color: #888; font-size: 12px; margin: 4px 0 0;">LUXURY FRAGRANCE HOUSE</p>
-    </div>
-    <div style="text-align: center; margin-bottom: 24px;">
-      <p style="color: #ffffff; font-size: 16px; margin: 0;">Your OTP code for <strong style="color: #C9A84C;">$purpose</strong>:</p>
-    </div>
-    <div style="background-color: #1a1a1a; border: 2px solid #C9A84C; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
-      <h2 style="color: #C9A84C; font-size: 40px; letter-spacing: 12px; margin: 0; font-weight: 800;">$_generatedOtp</h2>
-    </div>
-    <div style="text-align: center;">
-      <p style="color: #888; font-size: 13px; margin: 0;">⏱ Valid for <strong style="color: #fff;">10 minutes</strong> only.</p>
-      <p style="color: #888; font-size: 12px; margin: 8px 0 0;">Do not share this code with anyone.</p>
-    </div>
-    <div style="border-top: 1px solid #333; margin-top: 24px; padding-top: 16px; text-align: center;">
-      <p style="color: #555; font-size: 11px; margin: 0;">This email was sent to ${widget.email}</p>
-      <p style="color: #555; font-size: 11px; margin: 4px 0 0;">© ${AppStrings.appName} — ${AppStrings.luxuryFragranceHouse}</p>
-    </div>
-  </div>
-</body>
-</html>
-          ''',
-        }),
-      );
-
-      if (!mounted) return;
-
-      if (response.statusCode == 201) {
-        setState(() => _isSending = false);
-        _startResendTimer();
-        _showSnack('OTP sent to ${widget.email}', isError: false);
-      } else {
-        final body = jsonDecode(response.body);
-        setState(() {
-          _isSending = false;
-          _hasError  = true;
-          _errorMsg  = body['message'] ?? 'Failed to send OTP. Please try again.';
-        });
+    if (result.success) {
+      for (final controller in _controllers) {
+        controller.clear();
       }
-    } catch (e) {
-      if (!mounted) return;
+      setState(() {
+        _challengeId = result.challengeId;
+        _challengeExpiresAt = DateTime.now().add(
+          Duration(seconds: result.expiresInSeconds ?? 600),
+        );
+        _isSending = false;
+      });
+      _startResendTimer(result.cooldownSeconds ?? 60);
+      _showSnack('OTP sent to ${widget.email}', isError: false);
+    } else {
       setState(() {
         _isSending = false;
-        _hasError  = true;
-        _errorMsg  = 'No internet connection. Please check and try again.';
+        _hasError = true;
+        _errorMsg = result.error ?? 'Failed to send OTP. Please try again.';
       });
+      if ((result.retryAfterSeconds ?? 0) > 0) {
+        _startResendTimer(result.retryAfterSeconds!);
+      }
     }
   }
 
-  // Compares the entered 6-digit code against the generated OTP.
-  // On match, calls onVerified and pops back to the previous screen.
-  // On mismatch, shows an error and clears all input boxes.
-  void _verify() async {
+  // Verification and token consumption both happen on the trusted server. Only
+  // then is the short-lived token passed into the legacy callback.
+  Future<void> _verify() async {
+    if (_isVerifying) return;
     if (_enteredOtp.length < 6) {
       setState(() {
         _hasError = true;
@@ -192,38 +130,82 @@ class _OtpScreenState extends State<OtpScreen> {
       return;
     }
 
+    final challengeId = _challengeId;
+    if (challengeId == null) {
+      setState(() {
+        _hasError = true;
+        _errorMsg = 'Request a new OTP before verifying.';
+      });
+      return;
+    }
+    if (_challengeExpiresAt?.isBefore(DateTime.now()) ?? false) {
+      setState(() {
+        _hasError = true;
+        _errorMsg = 'The OTP has expired. Request a new code.';
+      });
+      return;
+    }
+
     setState(() {
       _isVerifying = true;
-      _hasError    = false;
-      _errorMsg    = null;
+      _hasError = false;
+      _errorMsg = null;
     });
 
-    await Future.delayed(const Duration(milliseconds: 500));
+    final result = await OtpService.instance.verifyOtp(
+      challengeId: challengeId,
+      otp: _enteredOtp,
+    );
     if (!mounted) return;
 
-    if (_enteredOtp == _generatedOtp) {
-      setState(() => _isVerifying = false);
-      Navigator.pop(context);
-      widget.onVerified();
-    } else {
+    final verificationToken = result.verificationToken;
+    if (!result.success || verificationToken == null) {
       setState(() {
         _isVerifying = false;
-        _hasError    = true;
-        _errorMsg    = 'Invalid OTP. Please check your email and try again.';
+        _hasError = true;
+        _errorMsg =
+            result.error ??
+            'Invalid OTP. Please check your email and try again.';
       });
-      for (final c in _controllers) { c.clear(); }
+      for (final c in _controllers) {
+        c.clear();
+      }
       _focusNodes.first.requestFocus();
+      return;
+    }
+
+    try {
+      // The action callback passes this short-lived token to a backend-owned
+      // account action; the client never treats OTP verification as authority.
+      // atomically. A client-only consume step would not secure either action.
+      await widget.onVerified(verificationToken);
+      if (mounted) {
+        setState(() => _isVerifying = false);
+        Navigator.pop(context);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isVerifying = false;
+        _hasError = true;
+        _errorMsg =
+            'Verification succeeded, but the account update failed. '
+            'Please request a new code and try again.';
+      });
     }
   }
 
   // Joins the 6 individual digit controller values into a single OTP string
   String get _enteredOtp => _controllers.map((c) => c.text).join();
 
-  void _startResendTimer() {
+  void _startResendTimer(int seconds) {
     _timer?.cancel();
-    setState(() => _resendSeconds = 60);
+    setState(() => _resendSeconds = seconds.clamp(1, 3600).toInt());
     _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
       setState(() {
         if (_resendSeconds > 0) {
           _resendSeconds--;
@@ -246,17 +228,14 @@ class _OtpScreenState extends State<OtpScreen> {
   // ── Build ─────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final title = widget.purpose == OtpPurpose.register
-        ? 'Verify Your Email'
-        : 'Verify Identity';
+    const title = 'Verify Identity';
 
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
             child: FadeInUp(
               duration: const Duration(milliseconds: 500),
               child: Container(
@@ -277,77 +256,110 @@ class _OtpScreenState extends State<OtpScreen> {
                         color: AppColors.gold.withValues(alpha: 0.1),
                         shape: BoxShape.circle,
                         border: Border.all(
-                            color: AppColors.gold.withValues(alpha: 0.4),
-                            width: 2),
+                          color: AppColors.gold.withValues(alpha: 0.4),
+                          width: 2,
+                        ),
                       ),
-                      child: const Icon(Icons.mark_email_unread_outlined,
-                          color: AppColors.gold, size: 28),
+                      child: const Icon(
+                        Icons.mark_email_unread_outlined,
+                        color: AppColors.gold,
+                        size: 28,
+                      ),
                     ),
                     const SizedBox(height: 16),
-                    Text(title,
-                        style: const TextStyle(
-                          color: AppColors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                        )),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: AppColors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                     const SizedBox(height: 6),
-                    const Text('We sent a 6-digit code to',
-                        style: TextStyle(
-                            color: AppColors.whiteTertiary, fontSize: 12)),
-                    Text(widget.email,
-                        style: const TextStyle(
-                            color: AppColors.gold,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600)),
+                    const Text(
+                      'We sent a 6-digit code to',
+                      style: TextStyle(
+                        color: AppColors.whiteTertiary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    Text(
+                      widget.email,
+                      style: const TextStyle(
+                        color: AppColors.gold,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 24),
 
                     if (_isSending)
-                      const Column(children: [
-                        SizedBox(
-                          width: 32,
-                          height: 32,
-                          child: CircularProgressIndicator(
-                              color: AppColors.gold, strokeWidth: 2.5),
-                        ),
-                        SizedBox(height: 10),
-                        Text('Sending OTP to your email...',
+                      const Column(
+                        children: [
+                          SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: CircularProgressIndicator(
+                              color: AppColors.gold,
+                              strokeWidth: 2.5,
+                            ),
+                          ),
+                          SizedBox(height: 10),
+                          Text(
+                            'Sending OTP to your email...',
                             style: TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 13)),
-                      ])
+                              color: AppColors.whiteTertiary,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      )
                     else ...[
-                      LayoutBuilder(builder: (ctx, constraints) {
-                        final boxSize =
-                            ((constraints.maxWidth - 8.0 * 6) / 6)
-                                .clamp(36.0, 52.0);
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: List.generate(
-                              6, (i) => _buildOtpBox(i, boxSize)),
-                        );
-                      }),
+                      LayoutBuilder(
+                        builder: (ctx, constraints) {
+                          final boxSize = ((constraints.maxWidth - 8.0 * 6) / 6)
+                              .clamp(36.0, 52.0);
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: List.generate(
+                              6,
+                              (i) => _buildOtpBox(i, boxSize),
+                            ),
+                          );
+                        },
+                      ),
 
                       if (_hasError && _errorMsg != null) ...[
                         const SizedBox(height: 12),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                           decoration: BoxDecoration(
                             color: AppColors.error.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                                color: AppColors.error.withValues(alpha: 0.3)),
+                              color: AppColors.error.withValues(alpha: 0.3),
+                            ),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Icon(Icons.error_outline,
-                                  color: AppColors.error, size: 14),
+                              const Icon(
+                                Icons.error_outline,
+                                color: AppColors.error,
+                                size: 14,
+                              ),
                               const SizedBox(width: 8),
                               Expanded(
-                                child: Text(_errorMsg!,
-                                    style: const TextStyle(
-                                        color: AppColors.error, fontSize: 12)),
+                                child: Text(
+                                  _errorMsg!,
+                                  style: const TextStyle(
+                                    color: AppColors.error,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ),
                             ],
                           ),
@@ -376,51 +388,65 @@ class _OtpScreenState extends State<OtpScreen> {
                                     width: 20,
                                     height: 20,
                                     child: CircularProgressIndicator(
-                                        color: AppColors.background,
-                                        strokeWidth: 2))
-                                : const Text('VERIFY OTP',
+                                      color: AppColors.background,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Text(
+                                    'VERIFY OTP',
                                     style: TextStyle(
                                       color: AppColors.background,
                                       fontWeight: FontWeight.w700,
                                       letterSpacing: 1.5,
                                       fontSize: 14,
-                                    )),
+                                    ),
+                                  ),
                           ),
                         ),
                       ),
                       const SizedBox(height: 16),
 
                       if (_resendSeconds > 0)
-                        Text('Resend OTP in ${_resendSeconds}s',
-                            style: const TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 13))
+                        Text(
+                          'Resend OTP in ${_resendSeconds}s',
+                          style: const TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 13,
+                          ),
+                        )
                       else
                         GestureDetector(
                           onTap: () {
-                            for (final c in _controllers) { c.clear(); }
+                            for (final c in _controllers) {
+                              c.clear();
+                            }
                             setState(() {
                               _hasError = false;
                               _errorMsg = null;
                             });
                             _sendOtp(resend: true);
                           },
-                          child: const Text('Resend OTP',
-                              style: TextStyle(
-                                color: AppColors.gold,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              )),
+                          child: const Text(
+                            'Resend OTP',
+                            style: TextStyle(
+                              color: AppColors.gold,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                     ],
 
                     const SizedBox(height: 14),
                     GestureDetector(
                       onTap: () => Navigator.pop(context),
-                      child: const Text('← Go back',
-                          style: TextStyle(
-                              color: AppColors.whiteTertiary,
-                              fontSize: 12)),
+                      child: const Text(
+                        '← Go back',
+                        style: TextStyle(
+                          color: AppColors.whiteTertiary,
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -459,12 +485,14 @@ class _OtpScreenState extends State<OtpScreen> {
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide(
-                color: _hasError ? AppColors.error : AppColors.cardBorder),
+              color: _hasError ? AppColors.error : AppColors.cardBorder,
+            ),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
             borderSide: BorderSide(
-                color: _hasError ? AppColors.error : AppColors.cardBorder),
+              color: _hasError ? AppColors.error : AppColors.cardBorder,
+            ),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),

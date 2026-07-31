@@ -10,6 +10,7 @@ import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../models/sales_record_model.dart';
+import '../core/money.dart';
 
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
@@ -18,7 +19,15 @@ class SalesScreen extends StatefulWidget {
   State<SalesScreen> createState() => _SalesScreenState();
 }
 
-enum _SortField { itemName, srp, discountedPrice, quantity, customer, date, total }
+enum _SortField {
+  itemName,
+  srp,
+  discountedPrice,
+  quantity,
+  customer,
+  date,
+  total,
+}
 
 class _SalesScreenState extends State<SalesScreen> {
   static const int _pageSize = 50;
@@ -28,7 +37,8 @@ class _SalesScreenState extends State<SalesScreen> {
   String _searchQuery = '';
   DateTime? _fromDate;
   DateTime? _toDate;
-  bool? _resellerFilter; // null = all, true = resellers only, false = regular only
+  bool?
+  _resellerFilter; // null = all, true = resellers only, false = regular only
 
   // ── Sort ─────────────────────────────────────────────────────────────────
   _SortField _sortField = _SortField.date;
@@ -37,8 +47,7 @@ class _SalesScreenState extends State<SalesScreen> {
   // ── Pagination ────────────────────────────────────────────────────────────
   int _currentPage = 0;
 
-  final _currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-  final _dateFmt  = DateFormat('MM/dd/yy');
+  final _dateFmt = DateFormat('MM/dd/yy');
 
   @override
   void dispose() {
@@ -58,10 +67,16 @@ class _SalesScreenState extends State<SalesScreen> {
           return false;
         }
       }
-      if (_fromDate != null && r.datePurchased.isBefore(_fromDate!)) { return false; }
-      if (_toDate   != null &&
-          r.datePurchased.isAfter(_toDate!.add(const Duration(days: 1)))) { return false; }
-      if (_resellerFilter != null && r.isReseller != _resellerFilter) { return false; }
+      if (_fromDate != null && r.datePurchased.isBefore(_fromDate!)) {
+        return false;
+      }
+      if (_toDate != null &&
+          r.datePurchased.isAfter(_toDate!.add(const Duration(days: 1)))) {
+        return false;
+      }
+      if (_resellerFilter != null && r.isReseller != _resellerFilter) {
+        return false;
+      }
       return true;
     }).toList();
   }
@@ -71,19 +86,26 @@ class _SalesScreenState extends State<SalesScreen> {
       int cmp;
       switch (_sortField) {
         case _SortField.itemName:
-          cmp = a.itemName.compareTo(b.itemName); break;
+          cmp = a.itemName.compareTo(b.itemName);
+          break;
         case _SortField.srp:
-          cmp = a.srp.compareTo(b.srp); break;
+          cmp = a.srp.compareTo(b.srp);
+          break;
         case _SortField.discountedPrice:
-          cmp = a.discountedPrice.compareTo(b.discountedPrice); break;
+          cmp = a.discountedPrice.compareTo(b.discountedPrice);
+          break;
         case _SortField.quantity:
-          cmp = a.quantity.compareTo(b.quantity); break;
+          cmp = a.quantity.compareTo(b.quantity);
+          break;
         case _SortField.customer:
-          cmp = a.customerName.compareTo(b.customerName); break;
+          cmp = a.customerName.compareTo(b.customerName);
+          break;
         case _SortField.date:
-          cmp = a.datePurchased.compareTo(b.datePurchased); break;
+          cmp = a.datePurchased.compareTo(b.datePurchased);
+          break;
         case _SortField.total:
-          cmp = a.totalSales.compareTo(b.totalSales); break;
+          cmp = a.totalSales.compareTo(b.totalSales);
+          break;
       }
       return _sortAsc ? cmp : -cmp;
     });
@@ -96,7 +118,7 @@ class _SalesScreenState extends State<SalesScreen> {
         _sortAsc = !_sortAsc;
       } else {
         _sortField = field;
-        _sortAsc   = field == _SortField.itemName || field == _SortField.customer;
+        _sortAsc = field == _SortField.itemName || field == _SortField.customer;
       }
       _currentPage = 0;
     });
@@ -119,8 +141,8 @@ class _SalesScreenState extends State<SalesScreen> {
     );
     if (picked != null) {
       setState(() {
-        _fromDate    = picked.start;
-        _toDate      = picked.end;
+        _fromDate = picked.start;
+        _toDate = picked.end;
         _currentPage = 0;
       });
     }
@@ -131,18 +153,26 @@ class _SalesScreenState extends State<SalesScreen> {
     return ListenableBuilder(
       listenable: AppState(),
       builder: (context, _) {
-        final all      = AppState().salesRecords;
+        final all = AppState().salesRecords;
         final filtered = _sorted(_filtered(all));
-        final pageCount =
-            ((filtered.length + _pageSize - 1) / _pageSize).ceil().clamp(1, 9999);
+        final pageCount = ((filtered.length + _pageSize - 1) / _pageSize)
+            .ceil()
+            .clamp(1, 9999);
         if (_currentPage >= pageCount) _currentPage = pageCount - 1;
-        final pageRows = filtered.skip(_currentPage * _pageSize).take(_pageSize).toList();
+        final pageRows = filtered
+            .skip(_currentPage * _pageSize)
+            .take(_pageSize)
+            .toList();
 
         // Summary totals for visible filtered set
-        final totalSales =
-            filtered.fold(0.0, (s, r) => s + r.totalSales);
-        final totalDiscount =
-            filtered.fold(0.0, (s, r) => s + r.discountAmount);
+        final totalSales = filtered.fold(
+          Money.zero,
+          (s, r) => s + r.totalSales,
+        );
+        final totalDiscount = filtered.fold(
+          Money.zero,
+          (s, r) => s + r.discountAmount,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -170,12 +200,15 @@ class _SalesScreenState extends State<SalesScreen> {
         children: [
           Icon(Icons.table_chart_outlined, color: AppColors.gold, size: 22),
           SizedBox(width: 10),
-          Text('Sales Table',
-              style: TextStyle(
-                  color: AppColors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 1)),
+          Text(
+            'Sales Table',
+            style: TextStyle(
+              color: AppColors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1,
+            ),
+          ),
         ],
       ),
     );
@@ -200,9 +233,14 @@ class _SalesScreenState extends State<SalesScreen> {
               decoration: InputDecoration(
                 hintText: 'Search item / customer…',
                 hintStyle: const TextStyle(
-                    color: AppColors.whiteTertiary, fontSize: 12),
-                prefixIcon: const Icon(Icons.search,
-                    color: AppColors.whiteTertiary, size: 18),
+                  color: AppColors.whiteTertiary,
+                  fontSize: 12,
+                ),
+                prefixIcon: const Icon(
+                  Icons.search,
+                  color: AppColors.whiteTertiary,
+                  size: 18,
+                ),
                 suffixIcon: _searchQuery.isNotEmpty
                     ? GestureDetector(
                         onTap: () => setState(() {
@@ -210,24 +248,31 @@ class _SalesScreenState extends State<SalesScreen> {
                           _searchQuery = '';
                           _currentPage = 0;
                         }),
-                        child: const Icon(Icons.close,
-                            color: AppColors.whiteTertiary, size: 16))
+                        child: const Icon(
+                          Icons.close,
+                          color: AppColors.whiteTertiary,
+                          size: 16,
+                        ),
+                      )
                     : null,
                 filled: true,
                 fillColor: AppColors.surfaceElevated,
                 contentPadding: EdgeInsets.zero,
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide:
-                        const BorderSide(color: AppColors.cardBorder)),
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.cardBorder),
+                ),
                 enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide:
-                        const BorderSide(color: AppColors.cardBorder)),
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.cardBorder),
+                ),
                 focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide:
-                        const BorderSide(color: AppColors.gold, width: 1.5)),
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(
+                    color: AppColors.gold,
+                    width: 1.5,
+                  ),
+                ),
               ),
               onChanged: (v) => setState(() {
                 _searchQuery = v;
@@ -246,10 +291,10 @@ class _SalesScreenState extends State<SalesScreen> {
             onTap: _pickDateRange,
             onClear: _fromDate != null
                 ? () => setState(() {
-                      _fromDate    = null;
-                      _toDate      = null;
-                      _currentPage = 0;
-                    })
+                    _fromDate = null;
+                    _toDate = null;
+                    _currentPage = 0;
+                  })
                 : null,
           ),
 
@@ -268,9 +313,9 @@ class _SalesScreenState extends State<SalesScreen> {
             }),
             onClear: _resellerFilter != null
                 ? () => setState(() {
-                      _resellerFilter = null;
-                      _currentPage    = 0;
-                    })
+                    _resellerFilter = null;
+                    _currentPage = 0;
+                  })
                 : null,
           ),
         ],
@@ -278,27 +323,35 @@ class _SalesScreenState extends State<SalesScreen> {
     );
   }
 
-  Widget _buildSummaryRow(int count, double totalSales, double totalDiscount) {
+  Widget _buildSummaryRow(int count, Money totalSales, Money totalDiscount) {
     return Container(
       color: AppColors.surfaceElevated,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         children: [
-          Text('$count record${count == 1 ? '' : 's'}',
-              style: const TextStyle(
-                  color: AppColors.whiteTertiary, fontSize: 12)),
+          Text(
+            '$count record${count == 1 ? '' : 's'}',
+            style: const TextStyle(
+              color: AppColors.whiteTertiary,
+              fontSize: 12,
+            ),
+          ),
           const Spacer(),
           if (totalDiscount > 0) ...[
-            Text('Discount: ${_currency.format(totalDiscount)}',
-                style: const TextStyle(
-                    color: AppColors.warning, fontSize: 12)),
+            Text(
+              'Discount: ${totalDiscount.format()}',
+              style: const TextStyle(color: AppColors.warning, fontSize: 12),
+            ),
             const SizedBox(width: 16),
           ],
-          Text('Total: ${_currency.format(totalSales)}',
-              style: const TextStyle(
-                  color: AppColors.gold,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13)),
+          Text(
+            'Total: ${totalSales.format()}',
+            style: const TextStyle(
+              color: AppColors.gold,
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
         ],
       ),
     );
@@ -307,14 +360,21 @@ class _SalesScreenState extends State<SalesScreen> {
   Widget _buildTable(List<SalesRecord> rows) {
     if (rows.isEmpty) {
       return const Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.table_rows_outlined,
-              color: AppColors.whiteTertiary, size: 48),
-          SizedBox(height: 12),
-          Text('No sales records match your filters',
-              style:
-                  TextStyle(color: AppColors.whiteSecondary, fontSize: 14)),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.table_rows_outlined,
+              color: AppColors.whiteTertiary,
+              size: 48,
+            ),
+            SizedBox(height: 12),
+            Text(
+              'No sales records match your filters',
+              style: TextStyle(color: AppColors.whiteSecondary, fontSize: 14),
+            ),
+          ],
+        ),
       );
     }
 
@@ -327,21 +387,25 @@ class _SalesScreenState extends State<SalesScreen> {
         padding: const EdgeInsets.all(16),
         child: DataTable(
           headingRowColor: WidgetStateProperty.all(AppColors.surface),
-          dataRowColor: WidgetStateProperty.resolveWith((states) =>
-              states.contains(WidgetState.selected)
-                  ? AppColors.gold.withValues(alpha: 0.08)
-                  : AppColors.background),
+          dataRowColor: WidgetStateProperty.resolveWith(
+            (states) => states.contains(WidgetState.selected)
+                ? AppColors.gold.withValues(alpha: 0.08)
+                : AppColors.background,
+          ),
           border: TableBorder.all(color: AppColors.cardBorder, width: 0.5),
           columnSpacing: 16,
           headingTextStyle: const TextStyle(
-              color: AppColors.gold,
-              fontWeight: FontWeight.w700,
-              fontSize: 12,
-              letterSpacing: 0.8),
+            color: AppColors.gold,
+            fontWeight: FontWeight.w700,
+            fontSize: 12,
+            letterSpacing: 0.8,
+          ),
           dataTextStyle: const TextStyle(
-              color: AppColors.whiteSecondary, fontSize: 12),
+            color: AppColors.whiteSecondary,
+            fontSize: 12,
+          ),
           columns: [
-            _sortCol('Item ID', null),           // fixed, no sort
+            _sortCol('Item ID', null), // fixed, no sort
             _sortCol('Item Name', _SortField.itemName),
             _sortCol('SRP', _SortField.srp),
             _sortCol('Disc. Price', _SortField.discountedPrice),
@@ -351,38 +415,60 @@ class _SalesScreenState extends State<SalesScreen> {
             _sortCol('Total Sales', _SortField.total),
           ],
           rows: rows
-              .map((r) => DataRow(cells: [
-                    DataCell(Text(r.orderId,
+              .map(
+                (r) => DataRow(
+                  cells: [
+                    DataCell(
+                      Text(
+                        r.orderId,
                         style: const TextStyle(
-                            color: AppColors.whiteTertiary,
-                            fontSize: 11))),
-                    DataCell(Row(children: [
-                      if (r.isReseller)
-                        const Padding(
-                          padding: EdgeInsets.only(right: 4),
-                          child: Icon(Icons.people,
-                              color: AppColors.gold, size: 13),
+                          color: AppColors.whiteTertiary,
+                          fontSize: 11,
                         ),
-                      Flexible(child: Text(r.itemName)),
-                    ])),
-                    DataCell(Text(_currency.format(r.srp))),
-                    DataCell(Text(
-                      _currency.format(r.discountedPrice),
-                      style: TextStyle(
+                      ),
+                    ),
+                    DataCell(
+                      Row(
+                        children: [
+                          if (r.isReseller)
+                            const Padding(
+                              padding: EdgeInsets.only(right: 4),
+                              child: Icon(
+                                Icons.people,
+                                color: AppColors.gold,
+                                size: 13,
+                              ),
+                            ),
+                          Flexible(child: Text(r.itemName)),
+                        ],
+                      ),
+                    ),
+                    DataCell(Text(r.srp.format())),
+                    DataCell(
+                      Text(
+                        r.discountedPrice.format(),
+                        style: TextStyle(
                           color: r.discountPercent > 0
                               ? AppColors.gold
-                              : AppColors.whiteSecondary),
-                    )),
+                              : AppColors.whiteSecondary,
+                        ),
+                      ),
+                    ),
                     DataCell(Text(r.quantity.toString())),
                     DataCell(Text(r.customerName)),
                     DataCell(Text(_dateFmt.format(r.datePurchased))),
-                    DataCell(Text(
-                      _currency.format(r.totalSales),
-                      style: const TextStyle(
+                    DataCell(
+                      Text(
+                        r.totalSales.format(),
+                        style: const TextStyle(
                           color: AppColors.white,
-                          fontWeight: FontWeight.w600),
-                    )),
-                  ]))
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              )
               .toList(),
         ),
       ),
@@ -394,19 +480,20 @@ class _SalesScreenState extends State<SalesScreen> {
     return DataColumn(
       label: GestureDetector(
         onTap: field != null ? () => _toggleSort(field) : null,
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(label),
-          if (isActive) ...[
-            const SizedBox(width: 4),
-            Icon(
-              _sortAsc
-                  ? Icons.arrow_upward
-                  : Icons.arrow_downward,
-              size: 12,
-              color: AppColors.gold,
-            ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label),
+            if (isActive) ...[
+              const SizedBox(width: 4),
+              Icon(
+                _sortAsc ? Icons.arrow_upward : Icons.arrow_downward,
+                size: 12,
+                color: AppColors.gold,
+              ),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }
@@ -439,7 +526,9 @@ class _SalesScreenState extends State<SalesScreen> {
           Text(
             '$total rows · $_pageSize per page',
             style: const TextStyle(
-                color: AppColors.whiteTertiary, fontSize: 11),
+              color: AppColors.whiteTertiary,
+              fontSize: 11,
+            ),
           ),
         ],
       ),
@@ -476,26 +565,34 @@ class _FilterChip extends StatelessWidget {
               : AppColors.surfaceElevated,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-              color: active ? AppColors.gold : AppColors.cardBorder),
+            color: active ? AppColors.gold : AppColors.cardBorder,
+          ),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
               size: 14,
-              color: active ? AppColors.gold : AppColors.whiteTertiary),
-          const SizedBox(width: 5),
-          Text(label,
-              style: TextStyle(
-                  color: active ? AppColors.gold : AppColors.whiteSecondary,
-                  fontSize: 12)),
-          if (onClear != null) ...[
-            const SizedBox(width: 4),
-            GestureDetector(
-              onTap: onClear,
-              child: const Icon(Icons.close,
-                  size: 13, color: AppColors.gold),
+              color: active ? AppColors.gold : AppColors.whiteTertiary,
             ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                color: active ? AppColors.gold : AppColors.whiteSecondary,
+                fontSize: 12,
+              ),
+            ),
+            if (onClear != null) ...[
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: onClear,
+                child: const Icon(Icons.close, size: 13, color: AppColors.gold),
+              ),
+            ],
           ],
-        ]),
+        ),
       ),
     );
   }

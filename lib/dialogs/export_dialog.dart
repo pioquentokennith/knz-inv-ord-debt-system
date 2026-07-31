@@ -16,10 +16,16 @@ import 'package:flutter/material.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../models/order_model.dart';
-import '../models/debt_model.dart';
 import '../services/export_service.dart';
 
-enum ExportType { orders, inventory, debts, analytics, customOrders, accounting }
+enum ExportType {
+  orders,
+  inventory,
+  debts,
+  analytics,
+  customOrders,
+  accounting,
+}
 
 class ExportDialog extends StatefulWidget {
   final ExportType type;
@@ -39,25 +45,32 @@ class _ExportDialogState extends State<ExportDialog> {
 
   String get _typeLabel {
     switch (widget.type) {
-      case ExportType.orders:       return 'Orders';
-      case ExportType.inventory:    return 'Inventory';
-      case ExportType.debts:        return 'Utang / Debts';
-      case ExportType.analytics:    return 'Analytics Report';
-      case ExportType.customOrders: return 'Custom Orders';
-      case ExportType.accounting:   return 'Accounting Summary';
+      case ExportType.orders:
+        return 'Orders';
+      case ExportType.inventory:
+        return 'Inventory';
+      case ExportType.debts:
+        return 'Utang / Debts';
+      case ExportType.analytics:
+        return 'Analytics Report';
+      case ExportType.customOrders:
+        return 'Custom Orders';
+      case ExportType.accounting:
+        return 'Accounting Summary';
     }
   }
 
   // MINOR 3 FIX: Whether this export type supports date filtering
   bool get _supportsDateFilter =>
       widget.type != ExportType.inventory &&
-      widget.type != ExportType.customOrders;
+      widget.type != ExportType.customOrders &&
+      widget.type != ExportType.debts;
 
   // MINOR 3 FIX: Human-readable label for the selected range
   String get _dateRangeLabel {
     if (_dateRange == null) return 'All time';
     final start = _dateRange!.start;
-    final end   = _dateRange!.end;
+    final end = _dateRange!.end;
     String fmt(DateTime d) => '${d.month}/${d.day}/${d.year}';
     return '${fmt(start)} – ${fmt(end)}';
   }
@@ -69,11 +82,9 @@ class _ExportDialogState extends State<ExportDialog> {
       context: context,
       firstDate: DateTime(2020),
       lastDate: now,
-      initialDateRange: _dateRange ??
-          DateTimeRange(
-            start: DateTime(now.year, now.month, 1),
-            end: now,
-          ),
+      initialDateRange:
+          _dateRange ??
+          DateTimeRange(start: DateTime(now.year, now.month, 1), end: now),
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -100,40 +111,44 @@ class _ExportDialogState extends State<ExportDialog> {
     // Include the full end day (up to 23:59:59)
     final end = _dateRange!.end.add(const Duration(days: 1));
     return orders
-        .where((o) =>
-            o.orderDate.isAfter(start.subtract(const Duration(seconds: 1))) &&
-            o.orderDate.isBefore(end))
-        .toList();
-  }
-
-  List<CustomerDebt> _filteredDebts(List<CustomerDebt> debts) {
-    if (_dateRange == null) return debts;
-    final start = _dateRange!.start;
-    final end   = _dateRange!.end.add(const Duration(days: 1));
-    return debts
-        .where((d) =>
-            d.createdAt.isAfter(start.subtract(const Duration(seconds: 1))) &&
-            d.createdAt.isBefore(end))
+        .where(
+          (o) =>
+              o.orderDate.isAfter(start.subtract(const Duration(seconds: 1))) &&
+              o.orderDate.isBefore(end),
+        )
         .toList();
   }
 
   Future<void> _export(String format) async {
-    setState(() { _isLoading = true; _error = null; });
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
     final state = AppState();
     final userName = state.currentUser?.displayName;
 
     try {
       switch (widget.type) {
         case ExportType.orders:
-          final orders = _filteredOrders(state.orders);
+          final orders = _filteredOrders(
+            state.orders
+                .where((order) => order.status != OrderStatus.cancelled)
+                .toList(),
+          );
           if (format == 'csv') {
             await ExportService.exportOrdersCsv(orders);
           } else if (format == 'pdf') {
             await ExportService.exportOrdersPdf(
-              orders, businessName: AppStrings.appName, userName: userName);
+              orders,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
           } else {
             await ExportService.printOrdersPdf(
-              orders, businessName: AppStrings.appName, userName: userName);
+              orders,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
           }
           break;
 
@@ -142,47 +157,68 @@ class _ExportDialogState extends State<ExportDialog> {
             await ExportService.exportInventoryCsv(state.products);
           } else if (format == 'pdf') {
             await ExportService.exportInventoryPdf(
-              state.products, businessName: AppStrings.appName, userName: userName);
+              state.products,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
           } else {
             await ExportService.printInventoryPdf(
-              state.products, businessName: AppStrings.appName, userName: userName);
+              state.products,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
           }
           break;
 
         case ExportType.debts:
-          final debts = _filteredDebts(state.debts);
+          final debts = state.debts.toList();
           if (format == 'csv') {
             await ExportService.exportDebtsCsv(debts);
           } else if (format == 'pdf') {
             await ExportService.exportDebtsPdf(
-              debts, businessName: AppStrings.appName, userName: userName);
+              debts,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
           } else {
             await ExportService.printDebtsPdf(
-              debts, businessName: AppStrings.appName, userName: userName);
+              debts,
+              businessName: AppStrings.appName,
+              userName: userName,
+            );
           }
           break;
 
         case ExportType.analytics:
-          final orders = _filteredOrders(state.orders);
-          final debts  = _filteredDebts(state.debts);
+          final orders = state.orders.toList();
+          final debts = state.debts.toList();
           if (format == 'csv') {
             await ExportService.exportAnalyticsCsv(
               orders: orders,
               debts: debts,
+              customOrders: state.customOrders,
+              paymentFrom: _dateRange?.start,
+              paymentTo: _dateRange?.end,
             );
           } else if (format == 'pdf') {
             await ExportService.exportAnalyticsPdf(
               orders: orders,
               debts: debts,
+              customOrders: state.customOrders,
               businessName: AppStrings.appName,
               userName: userName,
+              paymentFrom: _dateRange?.start,
+              paymentTo: _dateRange?.end,
             );
           } else {
             await ExportService.printAnalyticsPdf(
               orders: orders,
               debts: debts,
+              customOrders: state.customOrders,
               businessName: AppStrings.appName,
               userName: userName,
+              paymentFrom: _dateRange?.start,
+              paymentTo: _dateRange?.end,
             );
           }
           break;
@@ -192,19 +228,26 @@ class _ExportDialogState extends State<ExportDialog> {
           break;
 
         case ExportType.accounting:
-          final acctOrders = _filteredOrders(state.orders);
-          final acctDebts  = _filteredDebts(state.debts);
+          final acctOrders = state.orders.toList();
+          final acctDebts = state.debts.toList();
           if (format == 'csv') {
             await ExportService.exportAnalyticsCsv(
               orders: acctOrders,
               debts: acctDebts,
+              customOrders: state.customOrders,
+              paymentFrom: _dateRange?.start,
+              paymentTo: _dateRange?.end,
             );
           } else {
             await ExportService.exportAnalyticsPdf(
               orders: acctOrders,
               debts: acctDebts,
+              customOrders: state.customOrders,
               businessName: AppStrings.appName,
               userName: userName,
+              paymentFrom: _dateRange?.start,
+              paymentTo: _dateRange?.end,
+              reportTitle: 'Revenue & Collections Summary',
             );
           }
           break;
@@ -234,28 +277,43 @@ class _ExportDialogState extends State<ExportDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header
-            Row(children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.gold.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.gold.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.download_outlined,
+                    color: AppColors.gold,
+                    size: 20,
+                  ),
                 ),
-                child: const Icon(Icons.download_outlined,
-                    color: AppColors.gold, size: 20),
-              ),
-              const SizedBox(width: 12),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Export $_typeLabel',
-                    style: const TextStyle(
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Export $_typeLabel',
+                      style: const TextStyle(
                         color: AppColors.white,
                         fontSize: 16,
-                        fontWeight: FontWeight.w600)),
-                const Text('Choose format',
-                    style: TextStyle(
-                        color: AppColors.whiteTertiary, fontSize: 12)),
-              ]),
-            ]),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const Text(
+                      'Choose format',
+                      style: TextStyle(
+                        color: AppColors.whiteTertiary,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
 
             // MINOR 3 FIX: Date range picker row (hidden for inventory)
             if (_supportsDateFilter) ...[
@@ -264,7 +322,10 @@ class _ExportDialogState extends State<ExportDialog> {
                 onTap: _pickDateRange,
                 borderRadius: BorderRadius.circular(10),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
                   decoration: BoxDecoration(
                     color: AppColors.surfaceElevated,
                     borderRadius: BorderRadius.circular(10),
@@ -274,36 +335,44 @@ class _ExportDialogState extends State<ExportDialog> {
                           : AppColors.cardBorder,
                     ),
                   ),
-                  child: Row(children: [
-                    Icon(
-                      Icons.date_range_outlined,
-                      color: _dateRange != null
-                          ? AppColors.gold
-                          : AppColors.whiteTertiary,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _dateRangeLabel,
-                        style: TextStyle(
-                          color: _dateRange != null
-                              ? AppColors.white
-                              : AppColors.whiteTertiary,
-                          fontSize: 13,
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.date_range_outlined,
+                        color: _dateRange != null
+                            ? AppColors.gold
+                            : AppColors.whiteTertiary,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _dateRangeLabel,
+                          style: TextStyle(
+                            color: _dateRange != null
+                                ? AppColors.white
+                                : AppColors.whiteTertiary,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
-                    ),
-                    if (_dateRange != null)
-                      GestureDetector(
-                        onTap: () => setState(() => _dateRange = null),
-                        child: const Icon(Icons.close,
-                            color: AppColors.whiteTertiary, size: 16),
-                      )
-                    else
-                      const Icon(Icons.chevron_right,
-                          color: AppColors.whiteTertiary, size: 16),
-                  ]),
+                      if (_dateRange != null)
+                        GestureDetector(
+                          onTap: () => setState(() => _dateRange = null),
+                          child: const Icon(
+                            Icons.close,
+                            color: AppColors.whiteTertiary,
+                            size: 16,
+                          ),
+                        )
+                      else
+                        const Icon(
+                          Icons.chevron_right,
+                          color: AppColors.whiteTertiary,
+                          size: 16,
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -318,8 +387,10 @@ class _ExportDialogState extends State<ExportDialog> {
                     children: [
                       CircularProgressIndicator(color: AppColors.gold),
                       SizedBox(height: 12),
-                      Text('Generating export...',
-                          style: TextStyle(color: AppColors.whiteSecondary)),
+                      Text(
+                        'Generating export...',
+                        style: TextStyle(color: AppColors.whiteSecondary),
+                      ),
                     ],
                   ),
                 ),
@@ -362,11 +433,16 @@ class _ExportDialogState extends State<ExportDialog> {
                     color: AppColors.error.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                        color: AppColors.error.withValues(alpha: 0.3)),
+                      color: AppColors.error.withValues(alpha: 0.3),
+                    ),
                   ),
-                  child: Text(_error!,
-                      style: const TextStyle(
-                          color: AppColors.error, fontSize: 12)),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(
+                      color: AppColors.error,
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
               ],
 
@@ -375,8 +451,10 @@ class _ExportDialogState extends State<ExportDialog> {
                 width: double.infinity,
                 child: TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel',
-                      style: TextStyle(color: AppColors.whiteTertiary)),
+                  child: const Text(
+                    'Cancel',
+                    style: TextStyle(color: AppColors.whiteTertiary),
+                  ),
                 ),
               ),
             ],
@@ -417,35 +495,47 @@ class _ExportOption extends StatelessWidget {
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: AppColors.cardBorder),
           ),
-          child: Row(children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(8),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, color: color, size: 20),
               ),
-              child: Icon(icon, color: color, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
                       style: const TextStyle(
-                          color: AppColors.white,
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14)),
-                  Text(subtitle,
+                        color: AppColors.white,
+                        fontWeight: FontWeight.w500,
+                        fontSize: 14,
+                      ),
+                    ),
+                    Text(
+                      subtitle,
                       style: const TextStyle(
-                          color: AppColors.whiteTertiary, fontSize: 11)),
-                ],
+                        color: AppColors.whiteTertiary,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            if (!disabled)
-              const Icon(Icons.chevron_right,
-                  color: AppColors.whiteTertiary, size: 18),
-          ]),
+              if (!disabled)
+                const Icon(
+                  Icons.chevron_right,
+                  color: AppColors.whiteTertiary,
+                  size: 18,
+                ),
+            ],
+          ),
         ),
       ),
     );

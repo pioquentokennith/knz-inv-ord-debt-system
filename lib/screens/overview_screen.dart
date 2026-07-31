@@ -7,10 +7,13 @@ import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/app_state_builder.dart';
 import '../models/product_model.dart';
+import '../services/accounting_service.dart';
 import '../widgets/shared_widgets.dart';
 
 class OverviewScreen extends StatefulWidget {
-  const OverviewScreen({super.key});
+  const OverviewScreen({super.key, this.accountingReport});
+
+  final AccountingReport? accountingReport;
 
   @override
   State<OverviewScreen> createState() => _OverviewScreenState();
@@ -37,8 +40,6 @@ class _OverviewScreenState extends State<OverviewScreen> {
   @override
   Widget build(BuildContext context) {
     final dateStr = DateFormat('EEE, MMM d, yyyy').format(DateTime.now());
-    final currency = NumberFormat.currency(symbol: '₱', decimalDigits: 2);
-
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -76,16 +77,20 @@ class _OverviewScreenState extends State<OverviewScreen> {
                               child: Text(
                                 '${AppStrings.appName} Admin Dashboard',
                                 style: TextStyle(
-                                    color: AppColors.whiteTertiary,
-                                    fontSize: 12),
+                                  color: AppColors.whiteTertiary,
+                                  fontSize: 12,
+                                ),
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text(dateStr,
-                                style: const TextStyle(
-                                    color: AppColors.whiteTertiary,
-                                    fontSize: 11)),
+                            Text(
+                              dateStr,
+                              style: const TextStyle(
+                                color: AppColors.whiteTertiary,
+                                fontSize: 11,
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -93,111 +98,126 @@ class _OverviewScreenState extends State<OverviewScreen> {
                     const SizedBox(height: 20),
 
                     // ── Stats Grid ──────────────────────────────────────
-                    LayoutBuilder(builder: (ctx, constraints) {
-                      final isWide = constraints.maxWidth > 600;
-                      final cards = [
-                        StatCard(
-                          emoji: '🧴',
-                          value: state.totalProducts.toString(),
-                          label: AppStrings.totalProducts,
-                          subtitle: '▲ Active SKUs',
-                          subtitleColor: AppColors.success,
-                        ),
-                        StatCard(
-                          emoji: '📊',
-                          value: state.totalStock.toString(),
-                          label: 'TOTAL STOCKS',
-                          subtitle: 'All items combined',
-                          subtitleColor: AppColors.info,
-                        ),
-                        StatCard(
-                          emoji: '📦',
-                          value: state.totalOrders.toString(),
-                          label: AppStrings.totalOrders,
-                          subtitle: '${state.pendingCount} pending',
-                          subtitleColor: AppColors.warning,
-                        ),
-                        StatCard(
-                          emoji: '⚠️',
-                          value: state.lowStockCount.toString(),
-                          label: AppStrings.lowStockItems,
-                          subtitle: 'Needs restocking',
-                          subtitleColor: AppColors.error,
-                        ),
-                      ];
-                      if (isWide) {
-                        return Row(
-                          children: cards
-                              .map((c) => Expanded(
+                    LayoutBuilder(
+                      builder: (ctx, constraints) {
+                        final isWide = constraints.maxWidth > 600;
+                        final cards = [
+                          StatCard(
+                            emoji: '🧴',
+                            value: state.totalProducts.toString(),
+                            label: AppStrings.totalProducts,
+                            subtitle: '▲ Active SKUs',
+                            subtitleColor: AppColors.success,
+                          ),
+                          StatCard(
+                            emoji: '📊',
+                            value: state.totalStock.toString(),
+                            label: 'TOTAL STOCKS',
+                            subtitle: 'All items combined',
+                            subtitleColor: AppColors.info,
+                          ),
+                          StatCard(
+                            emoji: '📦',
+                            value: state.totalOrders.toString(),
+                            label: AppStrings.totalOrders,
+                            subtitle: '${state.pendingCount} pending',
+                            subtitleColor: AppColors.warning,
+                          ),
+                          StatCard(
+                            emoji: '⚠️',
+                            value: state.lowStockCount.toString(),
+                            label: AppStrings.lowStockItems,
+                            subtitle: 'Needs restocking',
+                            subtitleColor: AppColors.error,
+                          ),
+                        ];
+                        if (isWide) {
+                          return Row(
+                            children: cards
+                                .map(
+                                  (c) => Expanded(
                                     child: Padding(
                                       padding: const EdgeInsets.only(right: 12),
                                       child: c,
                                     ),
-                                  ))
-                              .toList(),
+                                  ),
+                                )
+                                .toList(),
+                          );
+                        }
+                        return Column(
+                          children: [
+                            IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(child: cards[0]),
+                                  const SizedBox(width: 10),
+                                  Expanded(child: cards[1]),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(child: cards[2]),
+                                  const SizedBox(width: 10),
+                                  Expanded(child: cards[3]),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            IntrinsicHeight(
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: StatCard(
+                                      emoji: '💵',
+                                      value:
+                                          (widget.accountingReport?.netSales ??
+                                                  state.deliveredRevenue)
+                                              .format(),
+                                      label: 'NET PAID SALES',
+                                      subtitle: 'Delivered non-credit orders',
+                                      subtitleColor: AppColors.success,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: StatCard(
+                                      emoji: '💸',
+                                      value:
+                                          (widget
+                                                      .accountingReport
+                                                      ?.debtCollections ??
+                                                  state.totalUtangCollected)
+                                              .format(),
+                                      label: 'TOTAL PAID',
+                                      subtitle: 'Utang collected',
+                                      subtitleColor: AppColors.success,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            StatCard(
+                              emoji: '💰',
+                              value:
+                                  (widget.accountingReport?.cashReceived ??
+                                          state.totalRevenue)
+                                      .format(),
+                              label: 'CASH RECEIVED',
+                              subtitle: 'Sales + debt + custom receipts',
+                              subtitleColor: AppColors.gold,
+                            ),
+                          ],
                         );
-                      }
-                      return Column(
-                        children: [
-                          IntrinsicHeight(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(child: cards[0]),
-                                const SizedBox(width: 10),
-                                Expanded(child: cards[1]),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          IntrinsicHeight(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(child: cards[2]),
-                                const SizedBox(width: 10),
-                                Expanded(child: cards[3]),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          IntrinsicHeight(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(
-                                  child: StatCard(
-                                    emoji: '💵',
-                                    value: currency.format(state.deliveredRevenue),
-                                    label: 'DELIVERED REVENUE',
-                                    subtitle: 'Delivered orders only',
-                                    subtitleColor: AppColors.success,
-                                  ),
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: StatCard(
-                                    emoji: '💸',
-                                    value: currency.format(state.totalUtangCollected),
-                                    label: 'TOTAL PAID',
-                                    subtitle: 'Utang collected',
-                                    subtitleColor: AppColors.success,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-                          StatCard(
-                            emoji: '💰',
-                            value: currency.format(state.totalRevenue),
-                            label: 'TOTAL REVENUE',
-                            subtitle: 'Delivered + Utang paid',
-                            subtitleColor: AppColors.gold,
-                          ),
-                        ],
-                      );
-                    }),
+                      },
+                    ),
                     const SizedBox(height: 20),
 
                     // ── Low Stock ───────────────────────────────────────
@@ -219,41 +239,66 @@ class _OverviewScreenState extends State<OverviewScreen> {
                           if (state.lowStockProducts.isEmpty)
                             const Padding(
                               padding: EdgeInsets.symmetric(vertical: 12),
-                              child: Text('All products well stocked! 🎉',
-                                  style: TextStyle(
-                                      color: AppColors.success,
-                                      fontSize: 14)),
+                              child: Text(
+                                'All products well stocked! 🎉',
+                                style: TextStyle(
+                                  color: AppColors.success,
+                                  fontSize: 14,
+                                ),
+                              ),
                             )
                           else
-                            ...state.lowStockProducts.map((p) => Padding(
-                                  padding: const EdgeInsets.only(bottom: 12),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(p.name,
+                            ConstrainedBox(
+                              constraints: const BoxConstraints(maxHeight: 320),
+                              child: Scrollbar(
+                                child: ListView.separated(
+                                  primary: false,
+                                  shrinkWrap: true,
+                                  itemCount: state.lowStockProducts.length,
+                                  separatorBuilder: (_, __) =>
+                                      const SizedBox(height: 12),
+                                  itemBuilder: (context, index) {
+                                    final product =
+                                        state.lowStockProducts[index];
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          product.name,
                                           style: const TextStyle(
-                                              color: AppColors.white,
-                                              fontWeight: FontWeight.w600,
-                                              fontSize: 13),
+                                            color: AppColors.white,
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13,
+                                          ),
                                           maxLines: 1,
-                                          overflow: TextOverflow.ellipsis),
-                                      const SizedBox(height: 6),
-                                      Row(
-                                        children: [
-                                          CategoryBadge(label: p.category.shortName),
-                                          const SizedBox(width: 8),
-                                          Text(p.stockQty.toString(),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Row(
+                                          children: [
+                                            CategoryBadge(
+                                              label: product.category.shortName,
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              product.stockQty.toString(),
                                               style: const TextStyle(
-                                                  color: AppColors.warning,
-                                                  fontWeight: FontWeight.w700,
-                                                  fontSize: 15)),
-                                          const SizedBox(width: 8),
-                                          const StockBadge(isLowStock: true),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                )),
+                                                color: AppColors.warning,
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 15,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            const StockBadge(isLowStock: true),
+                                          ],
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -279,9 +324,11 @@ class _OverviewScreenState extends State<OverviewScreen> {
                               topLeft: const Radius.circular(12),
                               topRight: const Radius.circular(12),
                               bottomLeft: Radius.circular(
-                                  _isActivityExpanded ? 0 : 12),
+                                _isActivityExpanded ? 0 : 12,
+                              ),
                               bottomRight: Radius.circular(
-                                  _isActivityExpanded ? 0 : 12),
+                                _isActivityExpanded ? 0 : 12,
+                              ),
                             ),
                             child: Padding(
                               padding: const EdgeInsets.all(16),
@@ -313,12 +360,17 @@ class _OverviewScreenState extends State<OverviewScreen> {
                           AnimatedCrossFade(
                             firstChild: Padding(
                               padding: const EdgeInsets.only(
-                                  left: 16, right: 16, bottom: 16),
+                                left: 16,
+                                right: 16,
+                                bottom: 16,
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   const Divider(
-                                      color: AppColors.cardBorder, height: 1),
+                                    color: AppColors.cardBorder,
+                                    height: 1,
+                                  ),
                                   const SizedBox(height: 10),
                                   // Filter chips
                                   SingleChildScrollView(
@@ -329,19 +381,26 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                             _selectedFilter == filter;
                                         return GestureDetector(
                                           onTap: () => setState(
-                                              () => _selectedFilter = filter),
+                                            () => _selectedFilter = filter,
+                                          ),
                                           child: AnimatedContainer(
                                             duration: const Duration(
-                                                milliseconds: 200),
-                                            margin: const EdgeInsets.only(right: 8),
+                                              milliseconds: 200,
+                                            ),
+                                            margin: const EdgeInsets.only(
+                                              right: 8,
+                                            ),
                                             padding: const EdgeInsets.symmetric(
-                                                horizontal: 10, vertical: 5),
+                                              horizontal: 10,
+                                              vertical: 5,
+                                            ),
                                             decoration: BoxDecoration(
                                               color: isSelected
-                                                  ? _filterColor(filter)
-                                                      .withValues(alpha: 0.2)
+                                                  ? _filterColor(
+                                                      filter,
+                                                    ).withValues(alpha: 0.2)
                                                   : AppColors.cardBorder
-                                                      .withValues(alpha: 0.3),
+                                                        .withValues(alpha: 0.3),
                                               borderRadius:
                                                   BorderRadius.circular(20),
                                               border: Border.all(
@@ -370,86 +429,100 @@ class _OverviewScreenState extends State<OverviewScreen> {
                                   ),
                                   const SizedBox(height: 10),
                                   // Filtered logs
-                                  Builder(builder: (_) {
-                                    // FIX: Products/Stock filter must match both 'product'
-                                    // (addProduct / updateProduct / deleteProduct) and 'stock'
-                                    // (updateStock) log types. Previously only 'product' was
-                                    // checked, so stock-change entries were invisible in this filter.
-                                    final filtered = _selectedFilter == 'All'
-                                        ? state.activityLogs
-                                        : state.activityLogs
-                                            .where((log) {
-                                              final t = _filterType(_selectedFilter);
-                                              if (_selectedFilter == 'Products/Stock') {
-                                                return log.type == 'product' || log.type == 'stock';
+                                  Builder(
+                                    builder: (_) {
+                                      // FIX: Products/Stock filter must match both 'product'
+                                      // (addProduct / updateProduct / deleteProduct) and 'stock'
+                                      // (updateStock) log types. Previously only 'product' was
+                                      // checked, so stock-change entries were invisible in this filter.
+                                      final filtered = _selectedFilter == 'All'
+                                          ? state.activityLogs
+                                          : state.activityLogs.where((log) {
+                                              final t = _filterType(
+                                                _selectedFilter,
+                                              );
+                                              if (_selectedFilter ==
+                                                  'Products/Stock') {
+                                                return log.type == 'product' ||
+                                                    log.type == 'stock';
                                               }
                                               return log.type == t;
-                                            })
-                                            .toList();
+                                            }).toList();
 
-                                    if (filtered.isEmpty) {
-                                      return const Padding(
-                                        padding:
-                                            EdgeInsets.symmetric(vertical: 8),
-                                        child: Text(
-                                          'No activity found',
-                                          style: TextStyle(
+                                      if (filtered.isEmpty) {
+                                        return const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                            vertical: 8,
+                                          ),
+                                          child: Text(
+                                            'No activity found',
+                                            style: TextStyle(
                                               color: AppColors.whiteTertiary,
-                                              fontSize: 13),
-                                        ),
-                                      );
-                                    }
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        );
+                                      }
 
-                                    return ConstrainedBox(
-                                      constraints: const BoxConstraints(
-                                        maxHeight: 280,
-                                      ),
-                                      child: ListView.builder(
-                                        shrinkWrap: true,
-                                        itemCount: filtered.length,
-                                        itemBuilder: (_, idx) {
-                                          final log = filtered[idx];
-                                          return Padding(
-                                            padding: const EdgeInsets.only(
-                                                bottom: 10),
-                                            child: Row(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Container(
-                                                  width: 8,
-                                                  height: 8,
-                                                  margin: const EdgeInsets.only(
-                                                      top: 5, right: 10),
-                                                  decoration: BoxDecoration(
-                                                    color: _logColor(log.type),
-                                                    shape: BoxShape.circle,
+                                      return ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          maxHeight: 280,
+                                        ),
+                                        child: ListView.builder(
+                                          shrinkWrap: true,
+                                          itemCount: filtered.length,
+                                          itemBuilder: (_, idx) {
+                                            final log = filtered[idx];
+                                            return Padding(
+                                              padding: const EdgeInsets.only(
+                                                bottom: 10,
+                                              ),
+                                              child: Row(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Container(
+                                                    width: 8,
+                                                    height: 8,
+                                                    margin:
+                                                        const EdgeInsets.only(
+                                                          top: 5,
+                                                          right: 10,
+                                                        ),
+                                                    decoration: BoxDecoration(
+                                                      color: _logColor(
+                                                        log.type,
+                                                      ),
+                                                      shape: BoxShape.circle,
+                                                    ),
                                                   ),
-                                                ),
-                                                Expanded(
-                                                  child: Text(
-                                                    log.message,
-                                                    style: const TextStyle(
+                                                  Expanded(
+                                                    child: Text(
+                                                      log.message,
+                                                      style: const TextStyle(
                                                         color: AppColors
                                                             .whiteSecondary,
-                                                        fontSize: 12),
+                                                        fontSize: 12,
+                                                      ),
+                                                    ),
                                                   ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                Text(
-                                                  log.timeAgo,
-                                                  style: const TextStyle(
+                                                  const SizedBox(width: 8),
+                                                  Text(
+                                                    log.timeAgo,
+                                                    style: const TextStyle(
                                                       color: AppColors
                                                           .whiteTertiary,
-                                                      fontSize: 11),
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    );
-                                  }),
+                                                      fontSize: 11,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 ],
                               ),
                             ),
@@ -475,31 +548,46 @@ class _OverviewScreenState extends State<OverviewScreen> {
 
   String _filterType(String filter) {
     switch (filter) {
-      case 'Auth': return 'auth';
-      case 'Orders': return 'order';
-      case 'Payments/Utang': return 'payment';
-      case 'Products/Stock': return 'product';
-      default: return '';
+      case 'Auth':
+        return 'auth';
+      case 'Orders':
+        return 'order';
+      case 'Payments/Utang':
+        return 'payment';
+      case 'Products/Stock':
+        return 'product';
+      default:
+        return '';
     }
   }
 
   Color _filterColor(String filter) {
     switch (filter) {
-      case 'Auth': return AppColors.info;
-      case 'Orders': return AppColors.success;
-      case 'Payments/Utang': return AppColors.warning;
-      case 'Products/Stock': return AppColors.gold;
-      default: return AppColors.whiteTertiary;
+      case 'Auth':
+        return AppColors.info;
+      case 'Orders':
+        return AppColors.success;
+      case 'Payments/Utang':
+        return AppColors.warning;
+      case 'Products/Stock':
+        return AppColors.gold;
+      default:
+        return AppColors.whiteTertiary;
     }
   }
 
   Color _logColor(String type) {
     switch (type) {
-      case 'auth': return AppColors.info;
-      case 'product': return AppColors.gold;
-      case 'order': return AppColors.success;
-      case 'stock': return AppColors.warning;
-      default: return AppColors.whiteTertiary;
+      case 'auth':
+        return AppColors.info;
+      case 'product':
+        return AppColors.gold;
+      case 'order':
+        return AppColors.success;
+      case 'stock':
+        return AppColors.warning;
+      default:
+        return AppColors.whiteTertiary;
     }
   }
 }

@@ -1,0 +1,338 @@
+# Phase 7 Completion Report
+
+## Implemented
+- Added focused tests for session warning/timeout behavior, persistent login lockout, order-state transitions, product repository CRUD/stock/soft-delete/restore/error propagation, user switching, and CSV formula sanitization.
+- Added focused custom-order payment-history immutability tests, direct OTP client tests through injected Firebase-token/HTTP seams, and successful password-reset service/widget tests.
+- Kept production OTP authentication and callable endpoint behavior unchanged; the new tests use fakes and perform no Firebase, Brevo, or real email delivery.
+- Added a testable product repository database/outbox seam while preserving the production defaults.
+- Exposed pure CSV sanitization and encoding helpers and kept the export path dependent on them.
+- Extracted OTP caller, App Check, resend/rate-limit, challenge ownership, expiry, attempt, and lockout decisions into a pure Functions policy module used by the deployed handlers.
+- Added Functions policy tests and explicit cross-platform Node 20 test paths.
+- Added Firestore emulator coverage for tombstone ownership/identity and denial of backend-only security collections.
+- Added a deterministic LCOV line-coverage checker and a 30% CI floor against a measured 55.45% Phase 7 baseline.
+- Passed the local CI-equivalent gates for formatting, analysis, Flutter coverage, coverage enforcement, Functions install/lint/unit tests/audit, Functions emulator tests, Firestore rule tests, and the previously verified Android debug build. Remote GitHub Actions execution has not been confirmed.
+- Pinned CI Firebase CLI 14.27.0 because CLI 15 requires Java 21 while the approved repository toolchain uses Java 17.
+- Corrected README authentication, controlled registration, schema v12/table, migration, automated-test, locally validated CI, coverage, Functions, emulator, and dependency-constraint claims. Exact resolved package versions remain defined by `pubspec.lock`.
+- Documented the validated Node.js 20, Java 17, Firebase CLI 14.27.0, Flutter 3.38.4, and Dart 3.10.3 toolchain in the README.
+- Configured CI for every push to every branch and every pull request while preserving the existing Phase 7 jobs and validation commands.
+- Clarified that Firebase Authentication email verification and password reset are the active production flows, while Brevo remains an optional email-delivery capability through Firebase Cloud Functions and is not a required OTP registration/password-reset flow.
+- Evaluated all pending major dependency upgrades independently and made no bundled upgrade.
+
+## Files changed
+- `.github/dependabot.yml`
+- `.github/workflows/ci.yml`
+- `README.md`
+- `lib/screens/forgot_password_screen.dart`
+- `lib/screens/otp_screen.dart`
+- `lib/repositories/local_product_repository.dart`
+- `lib/services/export_service.dart`
+- `lib/services/otp_service.dart`
+- `functions/index.js`
+- `functions/otp_policy.js`
+- `functions/package.json`
+- `functions/test/otp_policy.test.js`
+- `rules-tests/package.json`
+- `rules-tests/test/firestore_rules.test.js`
+- `test/integration/auth_user_switching_test.dart`
+- `test/models/order_state_machine_test.dart`
+- `test/project_configuration_test.dart`
+- `test/repositories/product_repository_test.dart`
+- `test/repositories/entity_outbox_test.dart`
+- `test/screens/forgot_password_screen_test.dart`
+- `test/services/auth_service_test.dart`
+- `test/services/export_service_test.dart`
+- `test/services/login_rate_limiter_test.dart`
+- `test/services/otp_service_test.dart`
+- `test/services/session_timeout_service_test.dart`
+- `tool/check_coverage.dart`
+- `docs/progress/PHASE_7_COMPLETION.md`
+
+## Database or API contract changes
+- No database schema, migration, persisted-data, Firestore document, or public cloud endpoint contract changed.
+- `LocalProductRepository` now accepts optional database and outbox dependencies for deterministic repository tests; production construction remains unchanged.
+- `ExportService` now exposes `sanitizeCsvCell()` and `encodeCsvRows()` and uses them for actual CSV generation.
+- `OtpService` now accepts optional Firebase ID-token and HTTP POST dependencies for deterministic tests; `OtpService.instance` retains the production Firebase/HTTP defaults and the same callable request contract.
+- `ForgotPasswordScreen` accepts an optional password-reset callback for widget tests; production construction still delegates to `AppState.sendPasswordReset()`.
+- OTP policy decisions moved to `functions/otp_policy.js`; callable names, request/response shapes, limits, and error codes remain unchanged.
+- CI pins Flutter 3.38.4, Node 20, Java 17, and Firebase CLI 14.27.0 consistently and runs for every push and pull request.
+
+## Tests added or updated
+- Session timeout warning, activity reset, single timeout, and stop behavior.
+- Case-normalized persistent login lockout and successful-login reset.
+- Initial and ongoing order-state machine rules, cancellation restore, and open-debt restrictions.
+- Product repository owner partition, CRUD, stock, soft delete, restore, hard delete, durable outbox intents, and propagated failures.
+- Login, logout, and switching between distinct Firebase UID profiles.
+- CSV formula neutralization for `=`, `+`, `-`, and `@` prefixes while preserving numeric cells.
+- SDK/lockfile/CI consistency and coverage-gate configuration.
+- OTP authentication, optional App Check, cooldown, email/requester limits, window reset, challenge ownership/status/expiry, attempt countdown, lockout, and successful hash verification.
+- Firestore tombstone ownership/identity and private security-collection denial.
+- Custom-order payment removal/rewrite rejection with transaction rollback and no extra outbox row.
+- OTP authenticated request shape, success/error mapping, retry/attempt details, invalid responses, missing-token short-circuit, and timeout handling.
+- Successful password-reset delegation and generic confirmation UI without account enumeration.
+- Existing integration evidence remains in `order_transaction_test.dart`, `sync_queue_test.dart`, `debt_payment_transaction_test.dart`, `entity_dto_round_trip_test.dart`, `accounting_service_test.dart`, and `export_service_test.dart` for all required Phase 7 workflows.
+
+## Commands run
+- `java -version`
+- `dart format --output=none --set-exit-if-changed lib test`
+- `dart format --output=none --set-exit-if-changed tool`
+- `flutter analyze`
+- `flutter test --coverage`
+- `dart run tool/check_coverage.dart coverage/lcov.info 30`
+- `flutter test test/project_configuration_test.dart`
+- `flutter test test/repositories/entity_outbox_test.dart test/services/otp_service_test.dart test/services/auth_service_test.dart test/screens/forgot_password_screen_test.dart`
+- `cd functions && npm ci`
+- `cd functions && npm run lint`
+- `cd functions && npm test`
+- `cd functions && npm audit --omit=dev --audit-level=high`
+- `cd rules-tests && npm ci`
+- `cd rules-tests && npm audit --audit-level=high`
+- `cd functions && npm run test:emulator` under the pinned Node 20/Firebase CLI 14.27.0 toolchain
+- `npm exec --yes --package=node@20 --package=firebase-tools@14.27.0 -- cmd /c "node --version && firebase --version && npm run test:emulator"` in `functions/`
+- `flutter pub outdated`
+- `cd functions && npm outdated --omit=dev`
+- `git diff --check -- README.md .github/workflows/ci.yml lib/repositories/local_product_repository.dart lib/services/export_service.dart test functions rules-tests tool`
+- `git status --short`
+- `git ls-files --others --exclude-standard`
+
+## Validation results
+- PASS: Java 17.0.19 LTS is active.
+- PASS: final formatting checked 117 `lib`/`test` files with 0 changes required; the separately checked coverage tool also remains formatted.
+- PASS: final `flutter analyze` reported 0 errors and 0 warnings; 26 pre-existing informational lints remain.
+- PASS: focused corrective validation completed all 17 selected tests.
+- PASS: `flutter test --coverage` completed all 138 tests.
+- PASS: line coverage is 4042/7290, or 55.45%, above the unchanged 30% CI floor.
+- PASS: focused SDK/CI contract validation completed all 14 tests.
+- PASS: Functions `npm ci` installed/audited 240 packages. Local Node 24 produced an expected engine warning because the package and CI require Node 20.
+- PASS: Functions syntax/lint completed successfully.
+- PASS: all 17 Functions unit tests passed.
+- PASS WITH WARNINGS: the required Functions production audit found 0 high/critical issues and 9 moderate `uuid` dependency-chain issues. The forced fix requires breaking Firebase Admin/Functions upgrades.
+- PASS: the latest Firestore rules `npm ci` added 111 packages and audited 112 in 9 minutes; all 11 rule tests passed.
+- PASS: all 10 Functions endpoint emulator tests passed.
+- PASS: all 11 Firestore rules tests passed, including unauthenticated, anonymous, cross-UID, pending/rejected/suspended, owner, transition, tombstone, backend-only collection, self-approval, and role-escalation controls.
+- PASS: the complete project emulator script exited with code 0 under Node 20.20.2, Java 17.0.19, and Firebase CLI 14.27.0.
+- PASS: scoped `git diff --check` found no whitespace errors; Git emitted only existing Windows line-ending notices.
+- WARNING: the full Flutter run logged expected negative-path repository errors and offline Noto Sans download/Helvetica fallback messages; no test failed.
+- WARNING: the emulator logged expected permission-denied rule assertions, the intentional missing-secret test error, the pending Firebase Functions major warning, and the CLI 14 notice that CLI 15 will require Java 21.
+- TIMEOUT, RESOLVED: an earlier Firestore rules `npm ci` attempt timed out after 300 seconds; subsequent installs completed, including the final 9-minute run.
+- FAIL, RESOLVED: global Firebase CLI 15.12.0 rejected Java 17. CI and validation now pin CLI 14.27.0.
+- FAIL, RESOLVED: initial Node 20 emulator runs could not expand Windows wildcard test paths. Explicit test paths now pass cross-platform.
+- TIMEOUT, RESOLVED: one CLI 14 emulator attempt under local Node 24 ended after Firestore exited and Functions shutdown waited past 300 seconds. The pinned Node 20 run passed.
+- FAIL, DOCUMENTED: a supplemental rules-test dependency audit reports 1 high and 9 moderate `undici`-chain issues. Its automated fix upgrades Firebase JS from 10.14.1 to 12.16.0, a breaking test-tool dependency change not bundled into Phase 7.
+
+## Product decisions made
+- The CI coverage floor remains 30%. The measured baseline is now 55.45%; the lower floor prevents major regression while leaving headroom for compiler/platform differences in a widget-heavy app. It should be raised gradually.
+- Flutter 3.38.4 with Dart 3.10.3, Node 20, Java 17, and Firebase CLI 14.27.0 remain the validated reproducible toolchain; the project Dart constraint remains `>=3.10.3 <4.0.0`.
+- No major dependency was upgraded. Firebase Core 3 to 4, Auth 5 to 6, Firestore 5 to 6, Crashlytics 4 to 5, Local Notifications 18 to 22, Flutter Lints 4 to 6, Firebase Admin 12 to 14, and Firebase Functions 5 to 7 each require an isolated follow-up.
+- Existing cash-basis accounting and customer-pay reseller decisions remain unchanged.
+
+## Owner-only actions still required
+- Confirm the GitHub Actions workflow passes from a clean clone on remote push and pull-request events; only local CI-equivalent execution and configuration inspection are currently proven.
+- Schedule isolated dependency-upgrade changes, prioritizing the Firebase JS rules-test dependency because its current test-only chain has one high advisory.
+- Decide when to move the project from Java 17/Firebase CLI 14 to Java 21/Firebase CLI 15.
+- Continue production Firebase, Brevo secret, Android device, Bluetooth printer, and signed-release checks in their owner-controlled environments.
+
+## Remaining risks
+- The rules-test-only Firebase 10.14.1 dependency chain has one high and nine moderate `undici` advisories; changing it requires an isolated breaking major upgrade and emulator revalidation.
+- Functions production dependencies have nine moderate advisories; the high-severity audit gate passes, and remediation requires isolated Firebase Admin/Functions majors.
+- The local shell uses Node 24 while Functions and CI require Node 20. Emulator evidence was therefore collected with Node 20 explicitly selected.
+- Firebase CLI 14 supports Java 17 but warns that CLI 15 will require Java 21.
+- Coverage is weighted toward domain, repository, migration, sync, security, authentication/OTP, and reporting paths; Bluetooth hardware, platform permission prompts, and signed release behavior remain outside host automation.
+- The worktree remains heavily dirty with earlier phase and owner changes. Phase 7 did not reset, stash, commit, or alter unrelated work.
+
+## Worktree file classification
+- Classification is relative to the Phase 7 work in this dirty worktree. A Phase 7 path may also contain earlier-phase edits; no pre-existing or uncertain path was deleted, reset, stashed, or overwritten.
+
+### Phase 7 change
+- `.github/dependabot.yml`
+- `.github/workflows/ci.yml`
+- `README.md`
+- `docs/progress/PHASE_7_COMPLETION.md` (currently untracked until staged or committed)
+- `functions/index.js`
+- `functions/otp_policy.js`
+- `functions/package.json`
+- `functions/test/otp_policy.test.js`
+- `lib/repositories/local_product_repository.dart`
+- `lib/screens/forgot_password_screen.dart`
+- `lib/screens/otp_screen.dart`
+- `lib/services/export_service.dart`
+- `lib/services/otp_service.dart`
+- `rules-tests/package.json`
+- `rules-tests/test/firestore_rules.test.js`
+- `test/integration/auth_user_switching_test.dart`
+- `test/models/order_state_machine_test.dart`
+- `test/project_configuration_test.dart`
+- `test/repositories/entity_outbox_test.dart`
+- `test/repositories/product_repository_test.dart`
+- `test/screens/forgot_password_screen_test.dart`
+- `test/services/auth_service_test.dart`
+- `test/services/export_service_test.dart`
+- `test/services/login_rate_limiter_test.dart`
+- `test/services/otp_service_test.dart`
+- `test/services/session_timeout_service_test.dart`
+- `tool/check_coverage.dart`
+
+### Pre-existing change
+- `.env.example`
+- `.firebaserc`
+- `.fvmrc`
+- `analysis_options.yaml`
+- `android/.gitignore`
+- `android/app/build.gradle.kts`
+- `android/app/src/main/AndroidManifest.xml`
+- `android/app/src/main/kotlin/com/example/inventoryordtrack/MainActivity.kt` (pre-existing deletion)
+- `android/app/src/main/kotlin/com/knzscent/admin/MainActivity.kt`
+- `android/gradle/wrapper/gradle-wrapper.jar`
+- `android/gradlew`
+- `android/gradlew.bat`
+- `android/key.properties.example`
+- `android/settings.gradle.kts`
+- `docs/IDENTITY_MIGRATION_PLAN.md`
+- `docs/SYNC_PLAN.md`
+- `docs/progress/PHASE_0_COMPLETION.md`
+- `docs/progress/PHASE_1_COMPLETION.md`
+- `docs/progress/PHASE_2_COMPLETION.md`
+- `docs/progress/PHASE_3_COMPLETION.md`
+- `docs/progress/PHASE_4_COMPLETION.md`
+- `docs/progress/PHASE_5_COMPLETION.md`
+- `docs/progress/PHASE_6_COMPLETION.md`
+- `firebase.json`
+- `firestore.indexes.json`
+- `firestore.rules`
+- `functions/.env.example`
+- `functions/.gitignore`
+- `functions/access_helpers.js`
+- `functions/otp_delivery.js`
+- `functions/otp_helpers.js`
+- `functions/package-lock.json`
+- `functions/scripts/bootstrap_admin.js`
+- `functions/test/access_helpers.test.js`
+- `functions/test/emulator/otp_endpoints.test.js`
+- `functions/test/otp_delivery.test.js`
+- `functions/test/otp_helpers.test.js`
+- `functions/test/prepare_emulator.js`
+- `ios/Runner.xcodeproj/project.pbxproj`
+- `ios/Runner/Info.plist`
+- `lib/core/app_bootstrap.dart`
+- `lib/core/app_constants.dart`
+- `lib/core/app_state.dart`
+- `lib/core/domain_exceptions.dart`
+- `lib/core/money.dart`
+- `lib/core/startup_gate.dart`
+- `lib/database/database_helper.dart`
+- `lib/dialogs/custom_order_dialog.dart`
+- `lib/dialogs/edit_stock_dialog.dart`
+- `lib/dialogs/export_dialog.dart`
+- `lib/dialogs/mark_as_utang_dialog.dart`
+- `lib/dialogs/order_dialog.dart`
+- `lib/dialogs/product_dialog.dart`
+- `lib/dialogs/reseller_dialog.dart`
+- `lib/dialogs/utang_payment_dialog.dart`
+- `lib/dialogs/utang_receipt_printer.dart`
+- `lib/dto/activity_log_dto.dart`
+- `lib/dto/custom_order_dto.dart`
+- `lib/dto/debt_dto.dart`
+- `lib/dto/dto_reader.dart`
+- `lib/dto/order_dto.dart`
+- `lib/dto/product_dto.dart`
+- `lib/dto/reseller_dto.dart`
+- `lib/main.dart`
+- `lib/models/custom_order_model.dart`
+- `lib/models/debt_model.dart`
+- `lib/models/order_model.dart`
+- `lib/models/order_state_machine.dart`
+- `lib/models/payment_method_model.dart`
+- `lib/models/product_model.dart`
+- `lib/models/reseller_accounting_summary.dart`
+- `lib/models/reseller_model.dart`
+- `lib/models/sales_record_model.dart`
+- `lib/models/user_model.dart`
+- `lib/repositories/activity_log_repository.dart`
+- `lib/repositories/base_repository.dart`
+- `lib/repositories/debt_repository.dart`
+- `lib/repositories/firestore_sync.dart`
+- `lib/repositories/local_custom_order_repository.dart`
+- `lib/repositories/local_debt_repository.dart`
+- `lib/repositories/local_order_repository.dart`
+- `lib/repositories/local_reseller_repository.dart`
+- `lib/repositories/local_user_repository.dart`
+- `lib/repositories/order_repository.dart`
+- `lib/repositories/sync_queue.dart`
+- `lib/repositories/user_repository.dart`
+- `lib/screens/accounting_screen.dart`
+- `lib/screens/analytics_screen.dart`
+- `lib/screens/custom_orders_screen.dart`
+- `lib/screens/inventory_screen.dart`
+- `lib/screens/login_screen.dart`
+- `lib/screens/main_shell.dart`
+- `lib/screens/orders_screen.dart`
+- `lib/screens/overview_screen.dart`
+- `lib/screens/products_screen.dart`
+- `lib/screens/receipt_screen.dart`
+- `lib/screens/recycle_bin_screen.dart`
+- `lib/screens/register_screen.dart`
+- `lib/screens/registration_requests_screen.dart`
+- `lib/screens/reports_screen.dart`
+- `lib/screens/reseller_accounting_screen.dart`
+- `lib/screens/reseller_screen.dart`
+- `lib/screens/sales_screen.dart`
+- `lib/screens/utang_screen.dart`
+- `lib/services/accounting_service.dart`
+- `lib/services/agreement_pdf_service.dart`
+- `lib/services/auth_service.dart`
+- `lib/services/cloud_auth_service.dart`
+- `lib/services/debt_service.dart`
+- `lib/services/login_rate_limiter.dart`
+- `lib/services/notification_service.dart`
+- `lib/services/order_service.dart`
+- `lib/services/product_service.dart`
+- `lib/services/session_timeout_service.dart`
+- `lib/widgets/receipt_shared_widgets.dart`
+- `lib/widgets/shared_widgets.dart`
+- `lib/widgets/sync_status_banner.dart`
+- `macos/Flutter/GeneratedPluginRegistrant.swift`
+- `macos/Runner.xcodeproj/project.pbxproj`
+- `macos/Runner/Configs/AppInfo.xcconfig`
+- `macos/Runner/DebugProfile.entitlements`
+- `macos/Runner/Info.plist`
+- `macos/Runner/Release.entitlements`
+- `pubspec.lock`
+- `pubspec.yaml`
+- `rules-tests/.gitignore`
+- `rules-tests/package-lock.json`
+- `test/core/app_bootstrap_test.dart`
+- `test/database/identity_migration_test.dart`
+- `test/database/phase3_migration_test.dart`
+- `test/database/phase4_money_migration_test.dart`
+- `test/database/phase5_migration_matrix_test.dart`
+- `test/dialogs/utang_receipt_printer_test.dart`
+- `test/dto/entity_dto_round_trip_test.dart`
+- `test/fixtures/accounting_fixture.dart`
+- `test/models/debt_model_test.dart`
+- `test/models/domain_invariants_test.dart`
+- `test/recycle_bin_contract_test.dart`
+- `test/repositories/debt_payment_transaction_test.dart`
+- `test/repositories/order_transaction_test.dart`
+- `test/repositories/read_failure_test.dart`
+- `test/repositories/sync_queue_test.dart`
+- `test/screens/accounting_views_test.dart`
+- `test/screens/receipt_screen_test.dart`
+- `test/services/accounting_service_test.dart`
+- `test/widgets/sync_status_banner_test.dart`
+- `web/index.html`
+- `web/manifest.json`
+- `windows/flutter/generated_plugin_registrant.cc`
+- `windows/flutter/generated_plugins.cmake`
+
+### Unrelated or uncertain
+- `AGENTS.md`
+- `AUDIT_REPORT.md`
+- `KNZ-Scent-Full-Verification-Report-v2.md`
+- `ORCHESTRATED_IMPLEMENTATION_GUIDE.md`
+- `PRIVACY.md`
+- `RELEASE_CHECKLIST.md`
+- `REMEDIATION_PLAN.md`
+- `SECURITY.md`
+- `opencode.json`
+
+## Recommended next phase
+- Stop after Phase 7. No Phase 8 implementation was started in this corrective work; Phase 8 requires a separate explicit request.

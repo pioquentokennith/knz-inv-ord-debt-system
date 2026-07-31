@@ -1,24 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // register_screen.dart
-// Purpose : New account registration screen with OTP email verification.
+// Purpose : New account registration with Firebase email verification.
 // Function: Collects full name, username, email, password, and password confirmation.
 //           Validates all fields including email format, minimum password length,
 //           and password match. Shows a live password strength indicator (Weak /
 //           Medium / Strong) based on length, uppercase, digits, and special chars.
-//           Navigates to OtpScreen for email verification before calling
-//           AppState.register(). On success, navigates to MainShell and clears
-//           the navigation stack.
+//           Creates a pending request that requires email verification and an
+//           existing Administrator's approval before application access.
 // ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
+import '../core/app_bootstrap.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../widgets/shared_widgets.dart';
-import 'main_shell.dart';
-import 'otp_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({super.key, required this.bootstrap});
+
+  final AppBootstrap bootstrap;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -26,15 +26,15 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen>
     with SingleTickerProviderStateMixin {
-  final _nameCtrl    = TextEditingController();
-  final _userCtrl    = TextEditingController();
-  final _emailCtrl   = TextEditingController();   // email na, hindi phone
-  final _passCtrl    = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _userCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController(); // email na, hindi phone
+  final _passCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
 
-  bool _obscurePass    = true;
+  bool _obscurePass = true;
   bool _obscureConfirm = true;
-  bool _isLoading      = false;
+  bool _isLoading = false;
   String? _error;
 
   late AnimationController _pulseCtrl;
@@ -47,9 +47,10 @@ class _RegisterScreenState extends State<RegisterScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    _pulse = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
+    _pulse = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
   }
 
   @override
@@ -80,34 +81,42 @@ class _RegisterScreenState extends State<RegisterScreen>
   Color get _strengthColor {
     switch (_passwordStrength) {
       case 0:
-      case 1: return AppColors.error;
+      case 1:
+        return AppColors.error;
       case 2:
-      case 3: return AppColors.warning;
-      default: return AppColors.success;
+      case 3:
+        return AppColors.warning;
+      default:
+        return AppColors.success;
     }
   }
 
   String get _strengthLabel {
     switch (_passwordStrength) {
       case 0:
-      case 1: return 'Weak';
+      case 1:
+        return 'Weak';
       case 2:
-      case 3: return 'Medium';
-      default: return 'Strong';
+      case 3:
+        return 'Medium';
+      default:
+        return 'Strong';
     }
   }
 
-  // Validates all form fields then navigates to OtpScreen.
-  // The OTP screen calls _register() in its onVerified callback.
-  void _proceed() {
-    final name     = _nameCtrl.text.trim();
+  // Creates a Firebase account and a pending administrator-review request.
+  Future<void> _proceed() async {
+    final name = _nameCtrl.text.trim();
     final username = _userCtrl.text.trim();
-    final email    = _emailCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
     final password = _passCtrl.text;
-    final confirm  = _confirmCtrl.text;
+    final confirm = _confirmCtrl.text;
 
-    if (name.isEmpty || username.isEmpty || email.isEmpty ||
-        password.isEmpty || confirm.isEmpty) {
+    if (name.isEmpty ||
+        username.isEmpty ||
+        email.isEmpty ||
+        password.isEmpty ||
+        confirm.isEmpty) {
       setState(() => _error = 'Please fill in all fields.');
       return;
     }
@@ -115,8 +124,15 @@ class _RegisterScreenState extends State<RegisterScreen>
       setState(() => _error = 'Please enter a valid email address.');
       return;
     }
-    if (password.length < 6) {
-      setState(() => _error = 'Password must be at least 6 characters.');
+    if (!RegExp(r'^[A-Za-z0-9_]{3,32}$').hasMatch(username)) {
+      setState(
+        () =>
+            _error = 'Username must be 3-32 letters, numbers, or underscores.',
+      );
+      return;
+    }
+    if (password.length < 8) {
+      setState(() => _error = 'Password must be at least 8 characters.');
       return;
     }
     if (password != confirm) {
@@ -124,51 +140,115 @@ class _RegisterScreenState extends State<RegisterScreen>
       return;
     }
 
-    setState(() => _error = null);
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => OtpScreen(
-          email: email,
-          purpose: OtpPurpose.register,
-          onVerified: () => _register(name, username, email, password),
-        ),
-      ),
+    setState(() {
+      _error = null;
+      _isLoading = true;
+    });
+    final firebaseReady = await widget.bootstrap.ensureFirebaseInitialized(
+      retryIfUnavailable: true,
     );
-  }
-
-  // Called after OTP verification succeeds. Calls AppState.register()
-  // to create the account, then navigates to MainShell on success.
-  Future<void> _register(
-      String name, String username, String email, String password) async {
-    setState(() => _isLoading = true);
-
-    final success = await AppState()
-        .register(name, username, password, email: email);
+    if (!mounted) return;
+    if (!firebaseReady) {
+      setState(() {
+        _isLoading = false;
+        _error =
+            'Account registration is unavailable. Check your connection and try again.';
+      });
+      return;
+    }
+    final success = await AppState().register(
+      name,
+      username.toLowerCase(),
+      password,
+      confirm: confirm,
+      email: email.toLowerCase(),
+    );
 
     if (!mounted) return;
-
     if (success) {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(builder: (_) => const MainShell()),
-        (route) => false,
-      );
-      // Show toast after navigation so it appears on MainShell
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (context.mounted) {
-          KnzToast.success(context,
-            '🎉 Account created! Welcome to ${AppStrings.appName}.');
-        }
-      });
+      if (AppState().lastAuthStatus == 'verification_required') {
+        await _finishVerifiedRegistration();
+      } else {
+        await _showPendingDialog();
+        if (mounted) Navigator.pop(context);
+      }
     } else {
       setState(() {
         _isLoading = false;
-        _error = 'Username already exists or registration failed.';
+        _error = AppState().lastAuthMessage ?? 'Registration request failed.';
       });
     }
   }
+
+  Future<void> _finishVerifiedRegistration() async {
+    while (mounted) {
+      final retryingSubmission =
+          AppState().lastAuthStatus == 'registration_retry_required';
+      final verifyNow = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Text(
+            retryingSubmission ? 'Retry registration' : 'Verify your email',
+          ),
+          content: Text(
+            AppState().lastAuthMessage ??
+                'Open the Firebase verification link sent to your email.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('VERIFY LATER'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(
+                retryingSubmission ? 'RETRY SUBMISSION' : 'I VERIFIED',
+              ),
+            ),
+          ],
+        ),
+      );
+      if (verifyNow != true) {
+        await AppState().deferRegistration();
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+
+      final completed = await AppState().completeRegistration();
+      if (!mounted) return;
+      if (completed) {
+        await _showPendingDialog();
+        if (mounted) Navigator.pop(context);
+        return;
+      }
+      if (AppState().lastAuthStatus != 'verification_required' &&
+          AppState().lastAuthStatus != 'registration_retry_required') {
+        setState(() {
+          _isLoading = false;
+          _error = AppState().lastAuthMessage;
+        });
+        return;
+      }
+    }
+  }
+
+  Future<void> _showPendingDialog() => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Registration pending'),
+      content: Text(
+        AppState().lastAuthMessage ??
+            'Your verified Staff request is pending Administrator approval.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
 
   // ─── Build ────────────────────────────────────────────────────────────
   @override
@@ -200,10 +280,9 @@ class _RegisterScreenState extends State<RegisterScreen>
                 ),
                 child: isWide
                     ? Row(children: [_buildBrandPanel(), _buildFormPanel()])
-                    : Column(children: [
-                        _buildBrandPanelMobile(),
-                        _buildFormPanel(),
-                      ]),
+                    : Column(
+                        children: [_buildBrandPanelMobile(), _buildFormPanel()],
+                      ),
               ),
             ),
           ),
@@ -230,21 +309,26 @@ class _RegisterScreenState extends State<RegisterScreen>
             const SizedBox(height: 32),
             const Text(AppStrings.appName, style: AppTextStyles.brandName),
             const SizedBox(height: 4),
-            const Text(AppStrings.appSubtitle,
-                style: AppTextStyles.brandSubtitle),
+            const Text(
+              AppStrings.appSubtitle,
+              style: AppTextStyles.brandSubtitle,
+            ),
             const SizedBox(height: 32),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
                 border: Border.all(
-                    color: AppColors.gold.withValues(alpha: 0.4)),
+                  color: AppColors.gold.withValues(alpha: 0.4),
+                ),
                 borderRadius: BorderRadius.circular(30),
               ),
               child: const Text(
                 '✦  ${AppStrings.luxuryFragranceHouse}  ✦',
                 style: TextStyle(
-                    color: AppColors.gold, fontSize: 13, letterSpacing: 1.5),
+                  color: AppColors.gold,
+                  fontSize: 13,
+                  letterSpacing: 1.5,
+                ),
               ),
             ),
           ],
@@ -267,11 +351,15 @@ class _RegisterScreenState extends State<RegisterScreen>
         children: [
           _buildPulsingLogo(size: 80),
           const SizedBox(height: 16),
-          Text(AppStrings.appName,
-              style: AppTextStyles.brandName.copyWith(fontSize: 26)),
+          Text(
+            AppStrings.appName,
+            style: AppTextStyles.brandName.copyWith(fontSize: 26),
+          ),
           const SizedBox(height: 4),
-          const Text(AppStrings.appSubtitle,
-              style: AppTextStyles.brandSubtitle),
+          const Text(
+            AppStrings.appSubtitle,
+            style: AppTextStyles.brandSubtitle,
+          ),
         ],
       ),
     );
@@ -283,10 +371,14 @@ class _RegisterScreenState extends State<RegisterScreen>
       builder: (_, __) => Stack(
         alignment: Alignment.center,
         children: [
-          _ring(size * 1.4,
-              AppColors.gold.withValues(alpha: 0.05 * _pulse.value)),
-          _ring(size * 1.15,
-              AppColors.gold.withValues(alpha: 0.1 * _pulse.value)),
+          _ring(
+            size * 1.4,
+            AppColors.gold.withValues(alpha: 0.05 * _pulse.value),
+          ),
+          _ring(
+            size * 1.15,
+            AppColors.gold.withValues(alpha: 0.1 * _pulse.value),
+          ),
           _ring(size, AppColors.gold.withValues(alpha: 0.15)),
           Container(
             width: size * 0.55,
@@ -294,11 +386,13 @@ class _RegisterScreenState extends State<RegisterScreen>
             decoration: BoxDecoration(
               color: AppColors.gold.withValues(alpha: 0.1),
               shape: BoxShape.circle,
-              border:
-                  Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
+              border: Border.all(color: AppColors.gold.withValues(alpha: 0.6)),
             ),
-            child: Icon(Icons.person_add_outlined,
-                color: AppColors.gold, size: size * 0.28),
+            child: Icon(
+              Icons.person_add_outlined,
+              color: AppColors.gold,
+              size: size * 0.28,
+            ),
           ),
         ],
       ),
@@ -306,13 +400,13 @@ class _RegisterScreenState extends State<RegisterScreen>
   }
 
   Widget _ring(double size, Color color) => Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          border: Border.all(color: color, width: 1.5),
-        ),
-      );
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+      shape: BoxShape.circle,
+      border: Border.all(color: color, width: 1.5),
+    ),
+  );
 
   Widget _buildFormPanel() {
     final isWide = MediaQuery.of(context).size.width > 700;
@@ -329,7 +423,8 @@ class _RegisterScreenState extends State<RegisterScreen>
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: const BoxDecoration(
                 border: Border(
-                    bottom: BorderSide(color: AppColors.gold, width: 2)),
+                  bottom: BorderSide(color: AppColors.gold, width: 2),
+                ),
               ),
               child: const Text(
                 'CREATE ACCOUNT',
@@ -380,22 +475,32 @@ class _RegisterScreenState extends State<RegisterScreen>
               const SizedBox(height: 10),
               Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.error.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                      color: AppColors.error.withValues(alpha: 0.3)),
+                    color: AppColors.error.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline,
-                        color: AppColors.error, size: 14),
+                    const Icon(
+                      Icons.error_outline,
+                      color: AppColors.error,
+                      size: 14,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(_error!,
-                          style: const TextStyle(
-                              color: AppColors.error, fontSize: 12)),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(
+                          color: AppColors.error,
+                          fontSize: 12,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -403,26 +508,24 @@ class _RegisterScreenState extends State<RegisterScreen>
             ],
             const SizedBox(height: 20),
 
-            // OTP info banner
+            // Email verification info banner
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: AppColors.gold.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: AppColors.gold.withValues(alpha: 0.3)),
+                  color: AppColors.gold.withValues(alpha: 0.3),
+                ),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.email_outlined,
-                      color: AppColors.gold, size: 16),
+                  Icon(Icons.email_outlined, color: AppColors.gold, size: 16),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'A 6-digit OTP will be sent to your email for verification.',
-                      style:
-                          TextStyle(color: AppColors.gold, fontSize: 11),
+                      'Firebase will email you a verification link. An existing Administrator must approve your pending request before you can sign in.',
+                      style: TextStyle(color: AppColors.gold, fontSize: 11),
                     ),
                   ),
                 ],
@@ -431,7 +534,7 @@ class _RegisterScreenState extends State<RegisterScreen>
             const SizedBox(height: 16),
 
             GoldButton(
-              label: _isLoading ? '...' : 'SEND OTP & VERIFY',
+              label: _isLoading ? '...' : 'REQUEST ACCESS',
               onPressed: _isLoading ? () {} : _proceed,
             ),
             const SizedBox(height: 14),
@@ -441,7 +544,9 @@ class _RegisterScreenState extends State<RegisterScreen>
                 child: Text(
                   'Already have an account? Sign In',
                   style: TextStyle(
-                      color: AppColors.whiteTertiary, fontSize: 12),
+                    color: AppColors.whiteTertiary,
+                    fontSize: 12,
+                  ),
                 ),
               ),
             ),
@@ -456,12 +561,15 @@ class _RegisterScreenState extends State<RegisterScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('EMAIL ADDRESS',
-            style: TextStyle(
-                color: AppColors.whiteTertiary,
-                fontSize: 11,
-                letterSpacing: 1.2,
-                fontWeight: FontWeight.w500)),
+        const Text(
+          'EMAIL ADDRESS',
+          style: TextStyle(
+            color: AppColors.whiteTertiary,
+            fontSize: 11,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         const SizedBox(height: 6),
         TextField(
           controller: _emailCtrl,
@@ -471,13 +579,20 @@ class _RegisterScreenState extends State<RegisterScreen>
           decoration: InputDecoration(
             hintText: 'example@gmail.com',
             hintStyle: const TextStyle(
-                color: AppColors.whiteTertiary, fontSize: 13),
-            prefixIcon: const Icon(Icons.email_outlined,
-                color: AppColors.whiteTertiary, size: 18),
+              color: AppColors.whiteTertiary,
+              fontSize: 13,
+            ),
+            prefixIcon: const Icon(
+              Icons.email_outlined,
+              color: AppColors.whiteTertiary,
+              size: 18,
+            ),
             filled: true,
             fillColor: AppColors.inputFill,
             contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 14),
+              horizontal: 16,
+              vertical: 14,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: AppColors.cardBorder),
@@ -500,12 +615,15 @@ class _RegisterScreenState extends State<RegisterScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('PASSWORD',
-            style: TextStyle(
-                color: AppColors.whiteTertiary,
-                fontSize: 11,
-                letterSpacing: 1.2,
-                fontWeight: FontWeight.w500)),
+        const Text(
+          'PASSWORD',
+          style: TextStyle(
+            color: AppColors.whiteTertiary,
+            fontSize: 11,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         const SizedBox(height: 6),
         TextField(
           controller: _passCtrl,
@@ -514,13 +632,14 @@ class _RegisterScreenState extends State<RegisterScreen>
           style: const TextStyle(color: AppColors.white, fontSize: 14),
           decoration: InputDecoration(
             hintText: 'Min. 6 characters',
-            hintStyle:
-                const TextStyle(color: AppColors.whiteTertiary),
-            prefixIcon: const Icon(Icons.lock_outline,
-                color: AppColors.whiteTertiary, size: 18),
+            hintStyle: const TextStyle(color: AppColors.whiteTertiary),
+            prefixIcon: const Icon(
+              Icons.lock_outline,
+              color: AppColors.whiteTertiary,
+              size: 18,
+            ),
             suffixIcon: GestureDetector(
-              onTap: () =>
-                  setState(() => _obscurePass = !_obscurePass),
+              onTap: () => setState(() => _obscurePass = !_obscurePass),
               child: Icon(
                 _obscurePass
                     ? Icons.visibility_outlined
@@ -532,7 +651,9 @@ class _RegisterScreenState extends State<RegisterScreen>
             filled: true,
             fillColor: AppColors.inputFill,
             contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 14),
+              horizontal: 16,
+              vertical: 14,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: AppColors.cardBorder),
@@ -570,28 +691,35 @@ class _RegisterScreenState extends State<RegisterScreen>
           ),
         ),
         const SizedBox(width: 6),
-        Text(_strengthLabel,
-            style: TextStyle(
-                color: _strengthColor,
-                fontSize: 10,
-                fontWeight: FontWeight.w600)),
+        Text(
+          _strengthLabel,
+          style: TextStyle(
+            color: _strengthColor,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildConfirmField() {
-    final matches = _passCtrl.text.isNotEmpty &&
+    final matches =
+        _passCtrl.text.isNotEmpty &&
         _confirmCtrl.text.isNotEmpty &&
         _passCtrl.text == _confirmCtrl.text;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('CONFIRM PASSWORD',
-            style: TextStyle(
-                color: AppColors.whiteTertiary,
-                fontSize: 11,
-                letterSpacing: 1.2,
-                fontWeight: FontWeight.w500)),
+        const Text(
+          'CONFIRM PASSWORD',
+          style: TextStyle(
+            color: AppColors.whiteTertiary,
+            fontSize: 11,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         const SizedBox(height: 6),
         TextField(
           controller: _confirmCtrl,
@@ -600,10 +728,12 @@ class _RegisterScreenState extends State<RegisterScreen>
           style: const TextStyle(color: AppColors.white, fontSize: 14),
           decoration: InputDecoration(
             hintText: 'Re-enter your password',
-            hintStyle:
-                const TextStyle(color: AppColors.whiteTertiary),
-            prefixIcon: const Icon(Icons.lock_outline,
-                color: AppColors.whiteTertiary, size: 18),
+            hintStyle: const TextStyle(color: AppColors.whiteTertiary),
+            prefixIcon: const Icon(
+              Icons.lock_outline,
+              color: AppColors.whiteTertiary,
+              size: 18,
+            ),
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -614,8 +744,8 @@ class _RegisterScreenState extends State<RegisterScreen>
                     size: 16,
                   ),
                 GestureDetector(
-                  onTap: () => setState(
-                      () => _obscureConfirm = !_obscureConfirm),
+                  onTap: () =>
+                      setState(() => _obscureConfirm = !_obscureConfirm),
                   child: Padding(
                     padding: const EdgeInsets.only(right: 12, left: 4),
                     child: Icon(
@@ -632,7 +762,9 @@ class _RegisterScreenState extends State<RegisterScreen>
             filled: true,
             fillColor: AppColors.inputFill,
             contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 14),
+              horizontal: 16,
+              vertical: 14,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide(

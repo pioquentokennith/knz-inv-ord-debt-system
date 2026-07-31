@@ -11,16 +11,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:animate_do/animate_do.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../services/session_timeout_service.dart';
+import '../widgets/shared_widgets.dart';
+import '../widgets/sync_status_banner.dart';
 import 'overview_screen.dart';
 import 'inventory_screen.dart';
 import 'orders_screen.dart';
 import 'products_screen.dart';
 import 'analytics_screen.dart';
-import 'login_screen.dart';
 import 'utang_screen.dart';
 import 'recycle_bin_screen.dart';
 import 'sales_screen.dart';
@@ -29,11 +31,22 @@ import 'reseller_accounting_screen.dart';
 import 'accounting_screen.dart';
 import 'custom_orders_screen.dart';
 import 'reports_screen.dart';
+import 'registration_requests_screen.dart';
 
 enum NavItem {
-  overview, inventory, orders, products, analytics, utang,
-  sales, resellers, resellerAccounting,
-  accounting, customOrders, reports,
+  overview,
+  inventory,
+  orders,
+  products,
+  analytics,
+  utang,
+  sales,
+  resellers,
+  resellerAccounting,
+  accounting,
+  customOrders,
+  reports,
+  registrationRequests,
 }
 
 class MainShell extends StatefulWidget {
@@ -52,10 +65,11 @@ class MainShellState extends State<MainShell>
   // (e.g., MarkAsUtangDialog calls this to jump to the Utang tab after recording)
   void navigateTo(NavItem item) {
     setState(() {
-      _selected    = item;
+      _selected = item;
       _sidebarOpen = false;
     });
   }
+
   late AnimationController _drawerCtrl;
   late Animation<Offset> _drawerAnim;
 
@@ -83,10 +97,31 @@ class MainShellState extends State<MainShell>
   // for 10 minutes. Logs out the current user and redirects to LoginScreen.
   void _handleSessionTimeout() {
     if (!mounted) return;
-    AppState().logout();
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    unawaited(_logoutAndNavigate());
+  }
+
+  Future<void> _confirmSignOut() async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: 'Sign out?',
+      message: 'You will need to sign in again to access business data.',
+      confirmLabel: 'Sign Out',
+      confirmColor: AppColors.error,
+      icon: Icons.logout_rounded,
     );
+    if (confirmed && mounted) await _logoutAndNavigate();
+  }
+
+  Future<void> _logoutAndNavigate() async {
+    try {
+      await AppState().logout();
+    } catch (_) {
+      if (mounted) {
+        KnzToast.error(context, 'Sign out failed. Please try again.');
+      }
+      return;
+    }
+    if (!mounted) return;
   }
 
   // Called 60 seconds before auto-logout. Shows a persistent animated banner
@@ -151,6 +186,8 @@ class MainShellState extends State<MainShell>
         return const CustomOrdersScreen();
       case NavItem.reports:
         return const ReportsScreen();
+      case NavItem.registrationRequests:
+        return const RegistrationRequestsScreen();
     }
   }
 
@@ -160,18 +197,39 @@ class MainShellState extends State<MainShell>
 
     // Listener catches all pointer events (including from child widgets)
     // to reset the session inactivity timer on any user interaction.
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => SessionTimeoutService.instance.bump(),
-      child: GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap:       () => SessionTimeoutService.instance.bump(),
-      onPanUpdate: (_) => SessionTimeoutService.instance.bump(),
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        body: isWide ? _buildWideLayout() : _buildNarrowLayout(),
+    return Focus(
+      onKeyEvent: (_, event) {
+        if (event is KeyDownEvent) SessionTimeoutService.instance.bump();
+        return KeyEventResult.ignored;
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => SessionTimeoutService.instance.bump(),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => SessionTimeoutService.instance.bump(),
+          onPanUpdate: (_) => SessionTimeoutService.instance.bump(),
+          child: Scaffold(
+            backgroundColor: AppColors.background,
+            body: Column(
+              children: [
+                ListenableBuilder(
+                  listenable: AppState(),
+                  builder: (context, _) => SyncStatusBanner(
+                    status: AppState().syncStatus,
+                    dataError: AppState().lastDataError,
+                    onRetry: () => unawaited(AppState().retryFailedSync()),
+                  ),
+                ),
+                Expanded(
+                  child: isWide ? _buildWideLayout() : _buildNarrowLayout(),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-    ));
+    );
   }
 
   Widget _buildWideLayout() {
@@ -214,11 +272,7 @@ class MainShellState extends State<MainShell>
     final topPadding = MediaQuery.of(context).padding.top;
     return Container(
       color: AppColors.sidebar,
-      padding: EdgeInsets.only(
-        top: topPadding,
-        left: 8,
-        right: 8,
-      ),
+      padding: EdgeInsets.only(top: topPadding, left: 8, right: 8),
       child: SizedBox(
         height: 56,
         child: Row(
@@ -236,15 +290,19 @@ class MainShellState extends State<MainShell>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Flexible(
-                    child: Text(AppStrings.appName,
-                        style: AppTextStyles.brandName.copyWith(fontSize: 20),
-                        overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      AppStrings.appName,
+                      style: AppTextStyles.brandName.copyWith(fontSize: 20),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   const SizedBox(width: 6),
                   Flexible(
-                    child: Text(AppStrings.appSubtitle,
-                        style: AppTextStyles.brandSubtitle.copyWith(fontSize: 8),
-                        overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      AppStrings.appSubtitle,
+                      style: AppTextStyles.brandSubtitle.copyWith(fontSize: 8),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ],
               ),
@@ -264,230 +322,287 @@ class MainShellState extends State<MainShell>
       listenable: AppState(),
       builder: (context, _) {
         final state = AppState();
-    // Use SafeArea so sidebar content clears the status bar on narrow layout
-    final topPadding = MediaQuery.of(context).padding.top;
-    return Container(
-      width: 240,
-      decoration: const BoxDecoration(
-        gradient: AppColors.sidebarGradient,
-        border: Border(
-          right: BorderSide(color: AppColors.cardBorder),
-        ),
-      ),
-      child: Column(
-        children: [
-          // ── Fixed header ──────────────────────────────────────────────
-          SizedBox(height: topPadding + 16),
-          FadeInLeft(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
-                children: [
-                  const Icon(Icons.water_drop_outlined,
-                      color: AppColors.gold, size: 28),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+        // Use SafeArea so sidebar content clears the status bar on narrow layout
+        final topPadding = MediaQuery.of(context).padding.top;
+        return Container(
+          width: 240,
+          decoration: const BoxDecoration(
+            gradient: AppColors.sidebarGradient,
+            border: Border(right: BorderSide(color: AppColors.cardBorder)),
+          ),
+          child: Column(
+            children: [
+              // ── Fixed header ──────────────────────────────────────────────
+              SizedBox(height: topPadding + 16),
+              FadeInLeft(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Row(
                     children: [
-                      Text(AppStrings.appName,
-                          style:
-                              AppTextStyles.brandName.copyWith(fontSize: 22)),
-                      Text(AppStrings.appSubtitle,
-                          style: AppTextStyles.brandSubtitle
-                              .copyWith(fontSize: 9)),
+                      const Icon(
+                        Icons.water_drop_outlined,
+                        color: AppColors.gold,
+                        size: 28,
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            AppStrings.appName,
+                            style: AppTextStyles.brandName.copyWith(
+                              fontSize: 22,
+                            ),
+                          ),
+                          Text(
+                            AppStrings.appSubtitle,
+                            style: AppTextStyles.brandSubtitle.copyWith(
+                              fontSize: 9,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
-                ],
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppColors.gold.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.gold.withValues(alpha: 0.3)),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.settings, color: AppColors.gold, size: 16),
-                  SizedBox(width: 8),
-                  Text(AppStrings.adminPortal,
-                      style: TextStyle(
-                          color: AppColors.gold, fontSize: 13)),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 28),
-
-          // ── Scrollable nav items ──────────────────────────────────────
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-          _navSection('MAIN'),
-          _navItem(NavItem.overview, Icons.bar_chart, AppStrings.overview),
-          const SizedBox(height: 12),
-          _navSection('MANAGEMENT'),
-          _navItem(NavItem.inventory, Icons.inventory_2_outlined,
-              AppStrings.inventory,
-              badge: state.lowStockCount > 0 ? state.lowStockCount : null),
-          _navItem(NavItem.orders, Icons.local_shipping_outlined,
-              AppStrings.orders,
-              badge: state.pendingCount > 0 ? state.pendingCount : null),
-          _navItem(
-              NavItem.products, Icons.auto_awesome, AppStrings.products),
-          const SizedBox(height: 12),
-          _navSection('REPORTS'),
-          _navItem(
-              NavItem.analytics, Icons.trending_up, AppStrings.analytics),
-          const SizedBox(height: 4),
-          _navItem(
-            NavItem.utang,
-            Icons.account_balance_wallet_outlined,
-            'Utang',
-          ),
-          const SizedBox(height: 4),
-          _navItem(
-            NavItem.sales,
-            Icons.table_chart_outlined,
-            'Sales Table',
-          ),
-          const SizedBox(height: 8),
-          _navSection('RESELLERS'),
-          _navItem(
-            NavItem.resellers,
-            Icons.people_outline,
-            'Resellers',
-          ),
-          const SizedBox(height: 4),
-          _navItem(
-            NavItem.resellerAccounting,
-            Icons.receipt_long_outlined,
-            'Reseller Accounting',
-          ),
-          const SizedBox(height: 8),
-          _navSection('ADVANCED'),
-          _navItem(
-            NavItem.accounting,
-            Icons.account_balance_outlined,
-            'Accounting',
-          ),
-          const SizedBox(height: 4),
-          _navItem(
-            NavItem.customOrders,
-            Icons.draw_outlined,
-            'Custom Orders',
-          ),
-          const SizedBox(height: 4),
-          _navItem(
-            NavItem.reports,
-            Icons.summarize_outlined,
-            'Reports',
-          ),
-          const SizedBox(height: 4),
-          _navSection('TOOLS'),
-          ListTile(
-            leading: const Icon(Icons.delete_outline, color: AppColors.whiteTertiary),
-            title: const Text('Recycle Bin', style: AppTextStyles.navItem),
-            onTap: () {
-              if (_sidebarOpen) {
-                _drawerCtrl.reverse();
-                setState(() => _sidebarOpen = false);
-              }
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const RecycleBinScreen()),
-              );
-            },
-          ),
-          const SizedBox(height: 8),
-                ],
-              ),
-            ),
-          ),
-          // ── Fixed footer ──────────────────────────────────────────────
-          const Divider(color: AppColors.divider),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 18,
-                  backgroundColor: AppColors.gold.withValues(alpha: 0.3),
-                  child: Text(
-                    state.currentUser?.avatarLetter ?? 'A',
-                    style: const TextStyle(
-                        color: AppColors.gold, fontWeight: FontWeight.w700),
+              const SizedBox(height: 16),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.gold.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppColors.gold.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.settings, color: AppColors.gold, size: 16),
+                      SizedBox(width: 8),
+                      Text(
+                        AppStrings.adminPortal,
+                        style: TextStyle(color: AppColors.gold, fontSize: 13),
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
+              ),
+              const SizedBox(height: 28),
+
+              // ── Scrollable nav items ──────────────────────────────────────
+              Expanded(
+                child: SingleChildScrollView(
                   child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _navSection('MAIN'),
+                      _navItem(
+                        NavItem.overview,
+                        Icons.bar_chart,
+                        AppStrings.overview,
+                      ),
+                      const SizedBox(height: 12),
+                      _navSection('MANAGEMENT'),
+                      _navItem(
+                        NavItem.inventory,
+                        Icons.inventory_2_outlined,
+                        AppStrings.inventory,
+                        badge: state.lowStockCount > 0
+                            ? state.lowStockCount
+                            : null,
+                      ),
+                      _navItem(
+                        NavItem.orders,
+                        Icons.local_shipping_outlined,
+                        AppStrings.orders,
+                        badge: state.pendingCount > 0
+                            ? state.pendingCount
+                            : null,
+                      ),
+                      _navItem(
+                        NavItem.products,
+                        Icons.auto_awesome,
+                        AppStrings.products,
+                      ),
+                      const SizedBox(height: 12),
+                      _navSection('REPORTS'),
+                      _navItem(
+                        NavItem.analytics,
+                        Icons.trending_up,
+                        AppStrings.analytics,
+                      ),
+                      const SizedBox(height: 4),
+                      _navItem(
+                        NavItem.utang,
+                        Icons.account_balance_wallet_outlined,
+                        'Utang',
+                      ),
+                      const SizedBox(height: 4),
+                      _navItem(
+                        NavItem.sales,
+                        Icons.table_chart_outlined,
+                        'Sales Table',
+                      ),
+                      const SizedBox(height: 8),
+                      _navSection('RESELLERS'),
+                      _navItem(
+                        NavItem.resellers,
+                        Icons.people_outline,
+                        'Resellers',
+                      ),
+                      const SizedBox(height: 4),
+                      _navItem(
+                        NavItem.resellerAccounting,
+                        Icons.receipt_long_outlined,
+                        'Reseller Accounting',
+                      ),
+                      const SizedBox(height: 8),
+                      _navSection('ADVANCED'),
+                      _navItem(
+                        NavItem.accounting,
+                        Icons.account_balance_outlined,
+                        'Accounting',
+                      ),
+                      const SizedBox(height: 4),
+                      _navItem(
+                        NavItem.customOrders,
+                        Icons.draw_outlined,
+                        'Custom Orders',
+                      ),
+                      const SizedBox(height: 4),
+                      _navItem(
+                        NavItem.reports,
+                        Icons.summarize_outlined,
+                        'Reports',
+                      ),
+                      if (state.currentUser?.role == 'Administrator') ...[
+                        const SizedBox(height: 8),
+                        _navSection('ADMINISTRATION'),
+                        _navItem(
+                          NavItem.registrationRequests,
+                          Icons.admin_panel_settings_outlined,
+                          'Registration Requests',
+                        ),
+                      ],
+                      const SizedBox(height: 4),
+                      _navSection('TOOLS'),
+                      ListTile(
+                        leading: const Icon(
+                          Icons.delete_outline,
+                          color: AppColors.whiteTertiary,
+                        ),
+                        title: const Text(
+                          'Recycle Bin',
+                          style: AppTextStyles.navItem,
+                        ),
+                        onTap: () {
+                          if (_sidebarOpen) {
+                            _drawerCtrl.reverse();
+                            setState(() => _sidebarOpen = false);
+                          }
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const RecycleBinScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              ),
+              // ── Fixed footer ──────────────────────────────────────────────
+              const Divider(color: AppColors.divider),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
                   children: [
-                    Text(
-                      state.currentUser?.displayName ?? 'Admin',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: AppColors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13),
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: AppColors.gold.withValues(alpha: 0.3),
+                      child: Text(
+                        state.currentUser?.avatarLetter ?? 'A',
+                        style: const TextStyle(
+                          color: AppColors.gold,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
-                    Text(
-                      state.currentUser?.role ?? 'Administrator',
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: AppColors.whiteTertiary, fontSize: 11),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            state.currentUser?.displayName ?? 'Admin',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                            ),
+                          ),
+                          Text(
+                            state.currentUser?.role ?? 'Administrator',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.whiteTertiary,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            child: GestureDetector(
-              onTap: () {
-                AppState().logout();
-                Navigator.of(context).pushReplacement(
-                  MaterialPageRoute(
-                      builder: (_) => const LoginScreen()),
-                );
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: AppColors.error.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: AppColors.error.withValues(alpha: 0.3)),
-                ),
-                alignment: Alignment.center,
-                child: const Text(
-                  AppStrings.signOut,
-                  style: TextStyle(
-                    color: AppColors.error,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.5,
-                    fontSize: 12,
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                child: Semantics(
+                  button: true,
+                  label: AppStrings.signOut,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _confirmSignOut,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        width: double.infinity,
+                        constraints: const BoxConstraints(minHeight: 48),
+                        decoration: BoxDecoration(
+                          color: AppColors.error.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppColors.error.withValues(alpha: 0.3),
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: const Text(
+                          AppStrings.signOut,
+                          style: TextStyle(
+                            color: AppColors.error,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.5,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+            ],
           ),
-        ],
-      ),
-    );
+        );
       }, // end ListenableBuilder builder
     );
   }
@@ -495,12 +610,15 @@ class MainShellState extends State<MainShell>
   Widget _navSection(String label) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 6),
-      child: Text(label,
-          style: const TextStyle(
-              color: AppColors.whiteTertiary,
-              fontSize: 10,
-              letterSpacing: 2,
-              fontWeight: FontWeight.w600)),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: AppColors.whiteTertiary,
+          fontSize: 10,
+          letterSpacing: 2,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 
@@ -523,7 +641,9 @@ class MainShellState extends State<MainShell>
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: isActive ? AppColors.gold.withValues(alpha: 0.1) : Colors.transparent,
+          color: isActive
+              ? AppColors.gold.withValues(alpha: 0.1)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: isActive
               ? Border.all(color: AppColors.gold.withValues(alpha: 0.3))
@@ -531,11 +651,11 @@ class MainShellState extends State<MainShell>
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 18,
-                color: isActive
-                    ? AppColors.gold
-                    : AppColors.whiteTertiary),
+            Icon(
+              icon,
+              size: 18,
+              color: isActive ? AppColors.gold : AppColors.whiteTertiary,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -547,8 +667,7 @@ class MainShellState extends State<MainShell>
             ),
             if (badge != null)
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: AppColors.warning.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(10),
@@ -556,9 +675,10 @@ class MainShellState extends State<MainShell>
                 child: Text(
                   badge.toString(),
                   style: const TextStyle(
-                      color: AppColors.warning,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700),
+                    color: AppColors.warning,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
           ],
@@ -576,10 +696,7 @@ class _SessionWarningBanner extends StatefulWidget {
   final VoidCallback onStay;
   final VoidCallback onExpire;
 
-  const _SessionWarningBanner({
-    required this.onStay,
-    required this.onExpire,
-  });
+  const _SessionWarningBanner({required this.onStay, required this.onExpire});
 
   @override
   State<_SessionWarningBanner> createState() => _SessionWarningBannerState();
@@ -612,7 +729,10 @@ class _SessionWarningBannerState extends State<_SessionWarningBanner>
 
     // Countdown ticker
     _ticker = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
       setState(() => _secondsLeft--);
       if (_secondsLeft <= 0) {
         t.cancel();
@@ -683,7 +803,9 @@ class _SessionWarningBannerState extends State<_SessionWarningBanner>
                         CircularProgressIndicator(
                           value: _secondsLeft / 60,
                           strokeWidth: 3,
-                          backgroundColor: AppColors.warning.withValues(alpha: 0.2),
+                          backgroundColor: AppColors.warning.withValues(
+                            alpha: 0.2,
+                          ),
                           color: AppColors.warning,
                         ),
                         Text(
@@ -718,7 +840,9 @@ class _SessionWarningBannerState extends State<_SessionWarningBanner>
                     },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 7),
+                        horizontal: 10,
+                        vertical: 7,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.warning,
                         borderRadius: BorderRadius.circular(8),

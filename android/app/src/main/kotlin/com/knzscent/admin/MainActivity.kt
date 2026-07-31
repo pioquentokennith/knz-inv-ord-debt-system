@@ -1,4 +1,4 @@
-package com.example.inventoryordtrack
+package com.knzscent.admin
 
 import io.flutter.embedding.android.FlutterActivity
 

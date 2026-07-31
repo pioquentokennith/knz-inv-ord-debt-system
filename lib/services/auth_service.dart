@@ -1,79 +1,130 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// auth_service.dart — Authentication business logic
-// Purpose : Validates credentials, enforces password rules, and delegates
-//           storage operations to UserRepository. Keeps all auth business rules
-//           in one place so screens stay thin.
-// Interface + Implementation (Abstraction + Polymorphism)
-// FIXED: Removed the anti-pattern cast "(_repo as LocalUserRepository)".
-//        register() is now part of the UserRepository interface.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import '../models/user_model.dart';
 import '../repositories/user_repository.dart';
+import 'cloud_auth_service.dart';
 
-/// Abstract contract for authentication business logic (Abstraction).
-/// AppState depends on this interface — not on AuthService directly — so
-/// tests can inject a stub without touching SQLite.
-abstract class IAuthService {
-  // Returns the matching AppUser on success; null if credentials are wrong
-  Future<AppUser?> login(String username, String password);
+class AuthResult {
+  const AuthResult({
+    required this.status,
+    this.user,
+    this.message,
+    this.diagnosticCode,
+  });
 
-  // Returns null on success; returns an error message string on validation failure
-  Future<String?>  register(String name, String username, String password,
-      String confirm, String email);
+  final String status;
+  final AppUser? user;
+  final String? message;
+  final String? diagnosticCode;
 
-  // Returns null on success; returns an error message string on validation failure
-  Future<String?>  resetPassword(String username, String newPassword, String confirm);
+  bool get success => user?.canAccess ?? false;
 }
 
-/// Concrete implementation — all authentication business logic lives here.
+abstract class IAuthService {
+  Future<AuthResult> login(String email, String password);
+  Future<AuthResult> requestRegistration({
+    required String name,
+    required String username,
+    required String email,
+    required String password,
+  });
+  Future<AuthResult> completeRegistration();
+  Future<void> deferRegistration();
+  Future<void> sendPasswordReset(String email);
+  Future<AuthResult> restoreSession();
+  Future<void> logout();
+}
+
 class AuthService implements IAuthService {
-  final UserRepository _repo; // Depends on the abstract interface (DIP)
-  AuthService(this._repo);
+  AuthService(this._repo, {ICloudAuthService? cloudAuth})
+    : _cloudAuth = cloudAuth ?? CloudAuthService.instance;
 
-  // Validates that fields are non-empty before delegating to the repository
+  final UserRepository _repo;
+  final ICloudAuthService _cloudAuth;
+
   @override
-  Future<AppUser?> login(String username, String password) {
-    if (username.trim().isEmpty || password.isEmpty) return Future.value(null);
-    return _repo.login(username.trim(), password);
+  Future<AuthResult> login(String email, String password) async {
+    final result = await _cloudAuth.login(email, password);
+    return _resolve(result);
   }
 
-  // Enforces all registration rules before saving to the repository
   @override
-  Future<String?> register(
-      String name, String username, String password,
-      String confirm, String email) async {
-    // Validate each field in order — return the first error encountered
-    if (name.trim().isEmpty)     return 'Name is required';
-    if (username.trim().isEmpty) return 'Username is required';
-    if (password.length < 6)     return 'Password must be at least 6 characters';
-    if (password != confirm)     return 'Passwords do not match';
-
-    // Check for duplicate username before attempting to register
-    final exists = await _repo.usernameExists(username);
-    if (exists) return 'Username already taken';
-
-    // Delegates to repo — no direct cast needed (DIP: depend on abstraction)
-    final success = await _repo.register(
-      name.trim(),
-      username.trim(),
-      password,
+  Future<AuthResult> requestRegistration({
+    required String name,
+    required String username,
+    required String email,
+    required String password,
+  }) async {
+    final result = await _cloudAuth.requestRegistration(
+      name: name,
+      username: username,
       email: email,
+      password: password,
     );
-    // Return null (success) or a generic error message for unexpected failures
-    return success ? null : 'Registration failed. Please try again.';
+    return AuthResult(
+      status: result.status,
+      message: result.error,
+      diagnosticCode: result.diagnosticCode,
+    );
   }
 
-  // Enforces password reset rules before delegating to the repository
   @override
-  Future<String?> resetPassword(
-      String username, String newPassword, String confirm) async {
-    if (username.trim().isEmpty) return 'Username is required';
-    if (newPassword.length < 6)  return 'Password must be at least 6 characters';
-    if (newPassword != confirm)  return 'Passwords do not match';
-
-    final success = await _repo.resetPassword(username.trim(), newPassword);
-    // 'Username not found' is returned when the repository finds no matching record
-    return success ? null : 'Username not found';
+  Future<AuthResult> completeRegistration() async {
+    final result = await _cloudAuth.completeRegistration();
+    return AuthResult(
+      status: result.status,
+      message: result.error,
+      diagnosticCode: result.diagnosticCode,
+    );
   }
+
+  @override
+  Future<void> deferRegistration() => _cloudAuth.deferRegistration();
+
+  @override
+  Future<void> sendPasswordReset(String email) =>
+      _cloudAuth.sendPasswordReset(email);
+
+  @override
+  Future<AuthResult> restoreSession() async {
+    final result = await _cloudAuth.restoreSession();
+    if (result.mayUseOfflineCache && result.uid != null) {
+      final cached = await _repo.getByFirebaseUid(result.uid!);
+      if (cached?.canAccess ?? false) {
+        return AuthResult(status: 'approved', user: cached);
+      }
+    }
+    return _resolve(result);
+  }
+
+  Future<AuthResult> _resolve(CloudAuthResult result) async {
+    if (!result.canAccess) {
+      return AuthResult(
+        status: result.status,
+        message: result.error,
+        diagnosticCode: result.diagnosticCode,
+      );
+    }
+    final user = AppUser(
+      id: result.uid!,
+      username: result.username!,
+      name: result.name!,
+      email: result.email!,
+      role: result.role!,
+      accountStatus: result.status,
+      isActive: result.active,
+      legacyOwnerKey: result.legacyOwnerKey,
+      createdAt: result.createdAt ?? DateTime.now(),
+    );
+    try {
+      return AuthResult(
+        status: result.status,
+        user: await _repo.cacheAuthorizedProfile(user),
+      );
+    } on StateError catch (error) {
+      await _cloudAuth.signOut();
+      return AuthResult(status: 'migration_required', message: error.message);
+    }
+  }
+
+  @override
+  Future<void> logout() => _cloudAuth.signOut();
 }

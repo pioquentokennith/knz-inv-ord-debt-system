@@ -1,0 +1,339 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function nativeUser() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    function verifiedNativeUser() {
+      return nativeUser()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string;
+    }
+
+    function access(uid) {
+      return get(/databases/$(database)/documents/accountAccess/$(uid)).data;
+    }
+
+    function approvedActive(uid) {
+      return nativeUser()
+        && request.auth.uid == uid
+        && access(uid).status == 'approved'
+        && access(uid).active == true;
+    }
+
+    function administrator() {
+      return verifiedNativeUser()
+        && access(request.auth.uid).status == 'approved'
+        && access(request.auth.uid).active == true
+        && access(request.auth.uid).role == 'Administrator';
+    }
+
+    function validUsername(username) {
+      return username is string
+        && username.matches('^[a-z0-9_]{3,32}$');
+    }
+
+    function validRegistrationName(name) {
+      return name is string && name.size() >= 1 && name.size() <= 80;
+    }
+
+    function validPendingAccess(uid) {
+      let data = request.resource.data;
+      let profile = getAfter(
+        /databases/$(database)/documents/users/$(uid)
+      ).data;
+      let username = getAfter(
+        /databases/$(database)/documents/_usernames/$(data.username)
+      ).data;
+      return verifiedNativeUser()
+        && request.auth.uid == uid
+        && data.keys().hasOnly([
+          'uid', 'email', 'username', 'name', 'role', 'status', 'active',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid == uid
+        && data.email == request.auth.token.email
+        && validUsername(data.username)
+        && validRegistrationName(data.name)
+        && data.role == 'Staff'
+        && data.status == 'pending'
+        && data.active == false
+        && data.createdAt == request.time
+        && data.updatedAt == request.time
+        && profile.uid == uid
+        && profile.email == data.email
+        && profile.username == data.username
+        && profile.name == data.name
+        && profile.role == 'Staff'
+        && profile.account_status == 'pending'
+        && profile.is_active == false
+        && username.uid == uid;
+    }
+
+    function validPendingProfile(uid) {
+      let data = request.resource.data;
+      let pendingAccess = getAfter(
+        /databases/$(database)/documents/accountAccess/$(uid)
+      ).data;
+      let username = getAfter(
+        /databases/$(database)/documents/_usernames/$(data.username)
+      ).data;
+      return verifiedNativeUser()
+        && request.auth.uid == uid
+        && data.keys().hasOnly([
+          'uid', 'email', 'username', 'name', 'role', 'account_status',
+          'is_active', 'created_at'
+        ])
+        && data.uid == uid
+        && data.email == request.auth.token.email
+        && validUsername(data.username)
+        && validRegistrationName(data.name)
+        && data.role == 'Staff'
+        && data.account_status == 'pending'
+        && data.is_active == false
+        && data.created_at is string
+        && pendingAccess.uid == uid
+        && pendingAccess.email == data.email
+        && pendingAccess.username == data.username
+        && pendingAccess.name == data.name
+        && pendingAccess.role == 'Staff'
+        && pendingAccess.status == 'pending'
+        && pendingAccess.active == false
+        && username.uid == uid;
+    }
+
+    function validUsernameReservation(username) {
+      let data = request.resource.data;
+      let pendingAccess = getAfter(
+        /databases/$(database)/documents/accountAccess/$(request.auth.uid)
+      ).data;
+      let profile = getAfter(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+      return verifiedNativeUser()
+        && validUsername(username)
+        && data.keys().hasOnly(['uid', 'reservedAt'])
+        && data.uid == request.auth.uid
+        && data.reservedAt == request.time
+        && !exists(
+          /databases/$(database)/documents/accountAccess/$(request.auth.uid)
+        )
+        && pendingAccess.uid == request.auth.uid
+        && pendingAccess.username == username
+        && pendingAccess.role == 'Staff'
+        && pendingAccess.status == 'pending'
+        && pendingAccess.active == false
+        && profile.uid == request.auth.uid
+        && profile.username == username
+        && profile.role == 'Staff'
+        && profile.account_status == 'pending'
+        && profile.is_active == false;
+    }
+
+    function validAccessReview(uid) {
+      let data = request.resource.data;
+      let profile = getAfter(
+        /databases/$(database)/documents/users/$(uid)
+      ).data;
+      return administrator()
+        && request.auth.uid != uid
+        && resource.data.status == 'pending'
+        && resource.data.role == 'Staff'
+        && resource.data.active == false
+        && data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'active', 'role', 'reviewedBy', 'reviewedAt', 'updatedAt'
+        ])
+        && data.status in ['approved', 'rejected', 'suspended']
+        && data.active == (data.status == 'approved')
+        && data.role == 'Staff'
+        && data.reviewedBy == request.auth.uid
+        && data.reviewedAt == request.time
+        && data.updatedAt == request.time
+        && profile.uid == data.uid
+        && profile.email == data.email
+        && profile.username == data.username
+        && profile.name == data.name
+        && profile.role == 'Staff'
+        && profile.account_status == data.status
+        && profile.is_active == data.active;
+    }
+
+    function validProfileReview(uid) {
+      let data = request.resource.data;
+      let reviewedAccess = getAfter(
+        /databases/$(database)/documents/accountAccess/$(uid)
+      ).data;
+      return administrator()
+        && request.auth.uid != uid
+        && resource.data.account_status == 'pending'
+        && resource.data.role == 'Staff'
+        && resource.data.is_active == false
+        && data.diff(resource.data).affectedKeys().hasOnly([
+          'role', 'account_status', 'is_active', 'updated_at'
+        ])
+        && data.role == 'Staff'
+        && data.account_status in ['approved', 'rejected', 'suspended']
+        && data.is_active == (data.account_status == 'approved')
+        && data.updated_at is string
+        && reviewedAccess.uid == data.uid
+        && reviewedAccess.email == data.email
+        && reviewedAccess.username == data.username
+        && reviewedAccess.name == data.name
+        && reviewedAccess.role == 'Staff'
+        && reviewedAccess.status == data.account_status
+        && reviewedAccess.active == data.is_active
+        && reviewedAccess.reviewedBy == request.auth.uid
+        && reviewedAccess.reviewedAt == request.time
+        && reviewedAccess.updatedAt == request.time;
+    }
+
+    function validOwnedDocument(uid, documentId) {
+      return request.resource.data.user_id is string
+        && request.resource.data.user_id == uid
+        && request.resource.data.id is string
+        && request.resource.data.id == documentId;
+    }
+
+    function existingOwnedDocument(uid, documentId) {
+      return resource.data.user_id is string
+        && resource.data.user_id == uid
+        && resource.data.id is string
+        && resource.data.id == documentId;
+    }
+
+    function knownOrderStatus(status) {
+      return status is string
+        && status in [
+          'Pending',
+          'Processing',
+          'Shipped',
+          'Delivered',
+          'Cancelled',
+          'Utang'
+        ];
+    }
+
+    function validOrderDocument() {
+      return request.resource.data.is_deleted == 1
+        || (request.resource.data.order_id is string
+          && knownOrderStatus(request.resource.data.status)
+          && request.resource.data.items is list);
+    }
+
+    function validOrderTransition() {
+      let before = resource.data.status;
+      let after = request.resource.data.status;
+      return before == after
+        || (before == 'Pending'
+          && after in ['Processing', 'Utang', 'Cancelled'])
+        || (before == 'Processing'
+          && after in ['Shipped', 'Utang', 'Cancelled'])
+        || (before == 'Shipped'
+          && after in ['Delivered', 'Utang', 'Cancelled'])
+        || (before == 'Cancelled' && after == 'Pending')
+        || (before == 'Utang' && after == 'Delivered');
+    }
+
+    match /accountAccess/{uid} {
+      allow read: if nativeUser()
+        && (request.auth.uid == uid || administrator());
+      allow create: if validPendingAccess(uid);
+      allow update: if validAccessReview(uid);
+      allow delete: if false;
+    }
+
+    match /registrationRequests/{uid} {
+      allow read: if nativeUser()
+        && (request.auth.uid == uid || administrator());
+      allow write: if false;
+    }
+
+    match /users/{uid} {
+      allow read: if approvedActive(uid);
+      allow create: if validPendingProfile(uid);
+      allow update: if validProfileReview(uid);
+      allow delete: if false;
+
+      match /products/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create, update: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId);
+        allow delete: if approvedActive(uid)
+          && existingOwnedDocument(uid, documentId);
+      }
+
+      match /orders/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId)
+          && validOrderDocument();
+        allow update: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId)
+          && validOrderDocument()
+          && validOrderTransition();
+        allow delete: if approvedActive(uid)
+          && existingOwnedDocument(uid, documentId);
+      }
+
+      match /debts/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create, update: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId);
+        allow delete: if approvedActive(uid)
+          && existingOwnedDocument(uid, documentId);
+      }
+
+      match /activity_logs/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create, update: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId);
+        allow delete: if approvedActive(uid)
+          && existingOwnedDocument(uid, documentId);
+      }
+
+      match /resellers/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create, update: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId);
+        allow delete: if approvedActive(uid)
+          && existingOwnedDocument(uid, documentId);
+      }
+
+      match /custom_orders/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create, update: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId);
+        allow delete: if approvedActive(uid)
+          && existingOwnedDocument(uid, documentId);
+      }
+    }
+
+    match /_otpChallenges/{document} {
+      allow read, write: if false;
+    }
+    match /_otpRateLimits/{document} {
+      allow read, write: if false;
+    }
+    match /_otpTokenUses/{document} {
+      allow read, write: if false;
+    }
+    match /_authAccounts/{document} {
+      allow read, write: if false;
+    }
+    match /_authRateLimits/{document} {
+      allow read, write: if false;
+    }
+    match /_usernames/{document} {
+      allow read: if false;
+      allow create: if validUsernameReservation(document);
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

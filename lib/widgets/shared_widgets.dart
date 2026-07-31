@@ -125,27 +125,37 @@ class _KnzToastWidgetState extends State<_KnzToastWidget>
 
   Color get _color {
     switch (widget.type) {
-      case KnzToastType.success: return AppColors.success;
-      case KnzToastType.error:   return AppColors.error;
-      case KnzToastType.warning: return AppColors.warning;
-      case KnzToastType.info:    return AppColors.info;
+      case KnzToastType.success:
+        return AppColors.success;
+      case KnzToastType.error:
+        return AppColors.error;
+      case KnzToastType.warning:
+        return AppColors.warning;
+      case KnzToastType.info:
+        return AppColors.info;
     }
   }
 
   IconData get _icon {
     switch (widget.type) {
-      case KnzToastType.success: return Icons.check_circle_rounded;
-      case KnzToastType.error:   return Icons.cancel_rounded;
-      case KnzToastType.warning: return Icons.warning_rounded;
-      case KnzToastType.info:    return Icons.info_rounded;
+      case KnzToastType.success:
+        return Icons.check_circle_rounded;
+      case KnzToastType.error:
+        return Icons.cancel_rounded;
+      case KnzToastType.warning:
+        return Icons.warning_rounded;
+      case KnzToastType.info:
+        return Icons.info_rounded;
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Positioned(
-      bottom: MediaQuery.of(context).viewInsets.bottom +
-          MediaQuery.of(context).padding.bottom + 24,
+      bottom:
+          MediaQuery.of(context).viewInsets.bottom +
+          MediaQuery.of(context).padding.bottom +
+          24,
       left: 20,
       right: 20,
       child: FadeTransition(
@@ -154,61 +164,73 @@ class _KnzToastWidgetState extends State<_KnzToastWidget>
           position: _slide,
           child: Material(
             color: Colors.transparent,
-            child: GestureDetector(
-              onTap: _dismiss,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceElevated,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: _color.withValues(alpha: 0.45),
-                    width: 1.2,
+            child: Semantics(
+              button: true,
+              label: 'Dismiss notification: ${widget.message}',
+              excludeSemantics: true,
+              child: InkWell(
+                onTap: _dismiss,
+                borderRadius: BorderRadius.circular(14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.45),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceElevated,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _color.withValues(alpha: 0.45),
+                      width: 1.2,
                     ),
-                    BoxShadow(
-                      color: _color.withValues(alpha: 0.12),
-                      blurRadius: 20,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    // Colored left accent bar
-                    Container(
-                      width: 3,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: _color,
-                        borderRadius: BorderRadius.circular(2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        blurRadius: 18,
+                        offset: const Offset(0, 6),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Icon(_icon, color: _color, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        widget.message,
-                        style: const TextStyle(
-                          color: AppColors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          height: 1.4,
+                      BoxShadow(
+                        color: _color.withValues(alpha: 0.12),
+                        blurRadius: 20,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      // Colored left accent bar
+                      Container(
+                        width: 3,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: _color,
+                          borderRadius: BorderRadius.circular(2),
                         ),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(Icons.close_rounded,
-                        color: AppColors.whiteTertiary, size: 16),
-                  ],
+                      const SizedBox(width: 12),
+                      Icon(_icon, color: _color, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          widget.message,
+                          style: const TextStyle(
+                            color: AppColors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            height: 1.4,
+                          ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        Icons.close_rounded,
+                        color: AppColors.whiteTertiary,
+                        size: 16,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -227,7 +249,7 @@ Future<bool> showConfirmDialog(
   required String title,
   required String message,
   String confirmLabel = 'Confirm',
-  String cancelLabel  = 'Cancel',
+  String cancelLabel = 'Cancel',
   Color? confirmColor,
   IconData? icon,
 }) async {
@@ -241,10 +263,7 @@ Future<bool> showConfirmDialog(
       final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutBack);
       return ScaleTransition(
         scale: Tween<double>(begin: 0.85, end: 1.0).animate(curved),
-        child: FadeTransition(
-          opacity: anim,
-          child: child,
-        ),
+        child: FadeTransition(opacity: anim, child: child),
       );
     },
     pageBuilder: (ctx, _, __) => AlertDialog(
@@ -255,8 +274,7 @@ Future<bool> showConfirmDialog(
       title: Row(
         children: [
           if (icon != null) ...[
-            Icon(icon,
-                color: confirmColor ?? AppColors.gold, size: 20),
+            Icon(icon, color: confirmColor ?? AppColors.gold, size: 20),
             const SizedBox(width: 10),
           ],
           Expanded(
@@ -290,7 +308,9 @@ Future<bool> showConfirmDialog(
         TextButton(
           onPressed: () => Navigator.pop(ctx, true),
           style: TextButton.styleFrom(
-            backgroundColor: (confirmColor ?? AppColors.gold).withValues(alpha: 0.12),
+            backgroundColor: (confirmColor ?? AppColors.gold).withValues(
+              alpha: 0.12,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
@@ -334,8 +354,8 @@ class KnzFadeIn extends StatefulWidget {
 class _KnzFadeInState extends State<KnzFadeIn>
     with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
-  late Animation<double>  _opacity;
-  late Animation<Offset>  _slide;
+  late Animation<double> _opacity;
+  late Animation<Offset> _slide;
 
   @override
   void initState() {
@@ -374,7 +394,7 @@ class _KnzFadeInState extends State<KnzFadeIn>
 // ─── Gold Gradient Button ──────────────────────────────────────────────────
 class GoldButton extends StatefulWidget {
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final double? width;
   final double height;
   final double fontSize;
@@ -404,9 +424,10 @@ class _GoldButtonState extends State<GoldButton>
       vsync: this,
       duration: const Duration(milliseconds: 100),
     );
-    _scale = Tween<double>(begin: 1.0, end: 0.96).animate(
-      CurvedAnimation(parent: _ctrl, curve: Curves.easeOut),
-    );
+    _scale = Tween<double>(
+      begin: 1.0,
+      end: 0.96,
+    ).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
   }
 
   @override
@@ -417,39 +438,53 @@ class _GoldButtonState extends State<GoldButton>
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) => _ctrl.forward(),
-      onTapUp: (_) {
-        _ctrl.reverse();
-        widget.onPressed();
-      },
-      onTapCancel: () => _ctrl.reverse(),
-      child: AnimatedBuilder(
-        animation: _scale,
-        builder: (_, child) =>
-            Transform.scale(scale: _scale.value, child: child),
-        child: Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            gradient: AppColors.goldGradient,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: [
-              BoxShadow(
-                color: AppColors.gold.withValues(alpha: 0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+    final enabled = widget.onPressed != null;
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: widget.label,
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onPressed,
+          onTapDown: enabled ? (_) => _ctrl.forward() : null,
+          onTapUp: enabled ? (_) => _ctrl.reverse() : null,
+          onTapCancel: enabled ? () => _ctrl.reverse() : null,
+          borderRadius: BorderRadius.circular(8),
+          canRequestFocus: enabled,
+          child: AnimatedBuilder(
+            animation: _scale,
+            builder: (_, child) =>
+                Transform.scale(scale: _scale.value, child: child),
+            child: Ink(
+              width: widget.width,
+              height: widget.height,
+              decoration: BoxDecoration(
+                gradient: enabled ? AppColors.goldGradient : null,
+                color: enabled ? null : AppColors.whiteTertiary,
+                borderRadius: BorderRadius.circular(8),
+                boxShadow: enabled
+                    ? [
+                        BoxShadow(
+                          color: AppColors.gold.withValues(alpha: 0.3),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : null,
               ),
-            ],
-          ),
-          alignment: Alignment.center,
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              fontSize: widget.fontSize,
-              fontWeight: FontWeight.w700,
-              color: AppColors.background,
-              letterSpacing: 1.5,
+              child: Center(
+                child: Text(
+                  widget.label,
+                  style: TextStyle(
+                    fontSize: widget.fontSize,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.background,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ),
             ),
           ),
         ),
@@ -503,14 +538,18 @@ class DarkTextField extends StatelessWidget {
           decoration: InputDecoration(
             hintText: hint,
             hintStyle: const TextStyle(
-                color: AppColors.whiteTertiary, fontSize: 14),
+              color: AppColors.whiteTertiary,
+              fontSize: 14,
+            ),
             prefixIcon: prefixIcon != null
                 ? Icon(prefixIcon, color: AppColors.whiteTertiary, size: 18)
                 : null,
             filled: true,
             fillColor: AppColors.inputFill,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: AppColors.cardBorder),
@@ -521,8 +560,7 @@ class DarkTextField extends StatelessWidget {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide:
-                  const BorderSide(color: AppColors.gold, width: 1.5),
+              borderSide: const BorderSide(color: AppColors.gold, width: 1.5),
             ),
           ),
         ),
@@ -570,8 +608,10 @@ class DarkDropdown<T> extends StatelessWidget {
               isExpanded: true,
               dropdownColor: AppColors.surfaceElevated,
               style: const TextStyle(color: AppColors.white, fontSize: 14),
-              icon: const Icon(Icons.keyboard_arrow_down,
-                  color: AppColors.whiteTertiary),
+              icon: const Icon(
+                Icons.keyboard_arrow_down,
+                color: AppColors.whiteTertiary,
+              ),
             ),
           ),
         ),
@@ -619,17 +659,21 @@ class StatCard extends StatelessWidget {
             child: Text(value, style: AppTextStyles.cardTitle),
           ),
           const SizedBox(height: 4),
-          Text(label,
-              style: AppTextStyles.cardLabel,
-              maxLines: 2,
-              softWrap: true,
-              overflow: TextOverflow.ellipsis),
+          Text(
+            label,
+            style: AppTextStyles.cardLabel,
+            maxLines: 2,
+            softWrap: true,
+            overflow: TextOverflow.ellipsis,
+          ),
           if (subtitle != null) ...[
             const SizedBox(height: 4),
-            Text(subtitle!,
-                style: TextStyle(fontSize: 11, color: subtitleColor),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
+            Text(
+              subtitle!,
+              style: TextStyle(fontSize: 11, color: subtitleColor),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ],
         ],
       ),
@@ -730,27 +774,40 @@ class DarkIconButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onPressed;
   final Color color;
+  final String? semanticLabel;
 
   const DarkIconButton({
     super.key,
     required this.icon,
     required this.onPressed,
     this.color = AppColors.whiteTertiary,
+    this.semanticLabel,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: 36,
-        height: 36,
-        decoration: BoxDecoration(
-          color: AppColors.surfaceElevated,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.cardBorder),
+    final label = semanticLabel ?? 'Action';
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        button: true,
+        label: label,
+        excludeSemantics: true,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: IconButton(
+            onPressed: onPressed,
+            icon: Icon(icon, color: color, size: 18),
+            style: IconButton.styleFrom(
+              backgroundColor: AppColors.surfaceElevated,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: AppColors.cardBorder),
+              ),
+            ),
+          ),
         ),
-        child: Icon(icon, color: color, size: 18),
       ),
     );
   }
@@ -761,11 +818,7 @@ class SectionHeader extends StatelessWidget {
   final String title;
   final String? trailing;
 
-  const SectionHeader({
-    super.key,
-    required this.title,
-    this.trailing,
-  });
+  const SectionHeader({super.key, required this.title, this.trailing});
 
   @override
   Widget build(BuildContext context) {
@@ -774,16 +827,17 @@ class SectionHeader extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Expanded(
-          child: Text(title,
-              style: AppTextStyles.sectionHeader,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis),
+          child: Text(
+            title,
+            style: AppTextStyles.sectionHeader,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
         if (trailing != null) ...[
           const SizedBox(width: 8),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: AppColors.gold.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(20),

@@ -2,8 +2,8 @@
 // notification_service.dart — Local Push Notification Manager
 // Purpose : Initialises flutter_local_notifications, fires an immediate
 //           low-stock alert and an overdue-debt alert on login.
-//           Overdue alert shows each customer's name, remaining balance,
-//           days overdue, and the logged-in account name in the title.
+//           Notification text intentionally avoids customer, account, balance,
+//           and inventory details that could be exposed on a lock screen.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import 'package:flutter/foundation.dart';
@@ -18,7 +18,7 @@ class NotificationService {
   static final NotificationService instance = NotificationService._();
   NotificationService._();
 
-  static const int _lowStockId    = 1001;
+  static const int _lowStockId = 1001;
   static const int _overdueDebtId = 1002;
 
   final FlutterLocalNotificationsPlugin _plugin =
@@ -38,8 +38,8 @@ class NotificationService {
 
     const initSettings = InitializationSettings(
       android: androidInit,
-      iOS:     darwinInit,
-      macOS:   darwinInit,
+      iOS: darwinInit,
+      macOS: darwinInit,
     );
 
     await _plugin.initialize(
@@ -49,7 +49,8 @@ class NotificationService {
 
     await _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.requestNotificationsPermission();
 
     _ready = true;
@@ -62,100 +63,50 @@ class NotificationService {
     }
   }
 
+  Future<void> cancelAll() => _plugin.cancelAll();
+
   // ── Low-stock alert (existing) ────────────────────────────────────────────
-  Future<void> showLowStockAlert(
-    List<Product> lowItems,
-    String activeUser,
-  ) async {
+  Future<void> showLowStockAlert(List<Product> lowItems, String _) async {
     if (!_ready || lowItems.isEmpty) return;
 
-    final displayUser = activeUser.isNotEmpty
-        ? activeUser[0].toUpperCase() + activeUser.substring(1).toLowerCase()
-        : 'Admin';
+    const title = 'Inventory needs attention';
+    const body = 'Open KNZ Scent to review inventory.';
 
-    final count = lowItems.length;
-    final title = count == 1
-        ? '[$displayUser] ⚠️ 1 Product is Running Low!'
-        : '[$displayUser] ⚠️ $count Products are Running Low!';
-
-    final names = lowItems.take(3).map((p) => p.name).join(', ');
-    final extra = count > 3 ? ' …and ${count - 3} more' : '';
-    final body  = 'Restock needed: $names$extra';
-
-    await _plugin.show(_lowStockId, title, body, _buildStockDetails(),
-        payload: 'inventory');
+    await _plugin.show(
+      _lowStockId,
+      title,
+      body,
+      _buildStockDetails(),
+      payload: 'inventory',
+    );
 
     if (kDebugMode) {
-      debugPrint('[NotificationService] low-stock alert — $count item(s)');
+      debugPrint('[NotificationService] low-stock alert requested');
     }
   }
 
   // ── Overdue debt alert (NEW) ──────────────────────────────────────────────
   /// Fires once on login when [overdueDebts] is non-empty.
-  /// [activeUser] is shown in the title so the owner knows which account
-  /// triggered the alert — e.g. "[Knzadmin] 🔴 5 Overdue Utang!"
-  ///
-  /// • 1 overdue  → single body line with name + balance + days
-  /// • 2+ overdue → inbox-style expanded list, one line per customer
+  /// The notification deliberately contains only a count. Customer identity,
+  /// balances, and overdue periods remain behind the app's authentication UI.
   Future<void> showOverdueDebtAlert(
     List<CustomerDebt> overdueDebts,
-    String activeUser,
+    String _,
   ) async {
     if (!_ready || overdueDebts.isEmpty) return;
 
-    final displayUser = activeUser.isNotEmpty
-        ? activeUser[0].toUpperCase() + activeUser.substring(1).toLowerCase()
-        : 'Admin';
-
-    final count = overdueDebts.length;
-    final title = '[$displayUser] 🔴 $count Overdue Utang!';
-
-    if (count == 1) {
-      final debt = overdueDebts.first;
-      final body =
-          '${debt.customerName} — ${_peso(debt.remainingBalance)} remaining '
-          '(${debt.daysOld}d overdue)';
-
-      await _plugin.show(_overdueDebtId, title, body, _buildDebtDetails(),
-          payload: 'utang');
-    } else {
-      // Inbox-style: one line per customer
-      final inboxLines = overdueDebts
-          .map((d) =>
-              '${d.customerName}  •  ${_peso(d.remainingBalance)}  •  ${d.daysOld}d overdue')
-          .toList();
-
-      final total = overdueDebts.fold<double>(
-          0.0, (s, d) => s + d.remainingBalance);
-
-      final androidDetails = AndroidNotificationDetails(
-        'knz_overdue_debt',
-        'Overdue Debt Alerts',
-        channelDescription: 'Notifies when customer debts become overdue.',
-        importance:       Importance.high,
-        priority:         Priority.high,
-        icon:             '@mipmap/launcher_icon',
-        color:            const Color(0xFFD4AF37),
-        playSound:        true,
-        styleInformation: InboxStyleInformation(
-          inboxLines,
-          contentTitle: title,
-          summaryText:  '$count customers overdue',
-        ),
-      );
-
-      await _plugin.show(
-        _overdueDebtId,
-        title,
-        'Total uncollected: ${_peso(total)}',
-        NotificationDetails(android: androidDetails),
-        payload: 'utang',
-      );
-    }
+    const title = 'Account review needed';
+    const body = 'Open KNZ Scent to review accounts.';
+    await _plugin.show(
+      _overdueDebtId,
+      title,
+      body,
+      _buildDebtDetails(),
+      payload: 'utang',
+    );
 
     if (kDebugMode) {
-      debugPrint(
-          '[NotificationService] overdue-debt alert — $count customer(s)');
+      debugPrint('[NotificationService] account review alert requested');
     }
   }
 
@@ -167,10 +118,11 @@ class NotificationService {
       channelDescription:
           'Notifies you when fragrance products are running low on stock.',
       importance: Importance.high,
-      priority:   Priority.high,
-      icon:       '@mipmap/launcher_icon',
-      color:      Color(0xFFD4AF37),
-      playSound:  true,
+      priority: Priority.high,
+      visibility: NotificationVisibility.private,
+      icon: '@mipmap/launcher_icon',
+      color: Color(0xFFD4AF37),
+      playSound: true,
     );
     const darwin = DarwinNotificationDetails(
       categoryIdentifier: 'knz_low_stock',
@@ -187,10 +139,11 @@ class NotificationService {
       'Overdue Debt Alerts',
       channelDescription: 'Notifies when customer debts become overdue.',
       importance: Importance.high,
-      priority:   Priority.high,
-      icon:       '@mipmap/launcher_icon',
-      color:      Color(0xFFD4AF37),
-      playSound:  true,
+      priority: Priority.high,
+      visibility: NotificationVisibility.private,
+      icon: '@mipmap/launcher_icon',
+      color: Color(0xFFD4AF37),
+      playSound: true,
     );
     const darwin = DarwinNotificationDetails(
       categoryIdentifier: 'knz_overdue_debt',
@@ -199,18 +152,5 @@ class NotificationService {
       presentSound: true,
     );
     return const NotificationDetails(android: android, iOS: darwin);
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-  String _peso(double amount) {
-    final fixed   = amount.toStringAsFixed(2);
-    final parts   = fixed.split('.');
-    final chars   = parts[0].split('').reversed.toList();
-    final buffer  = StringBuffer();
-    for (int i = 0; i < chars.length; i++) {
-      if (i > 0 && i % 3 == 0) buffer.write(',');
-      buffer.write(chars[i]);
-    }
-    return '₱${buffer.toString().split('').reversed.join()}.${parts[1]}';
   }
 }

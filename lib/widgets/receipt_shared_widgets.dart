@@ -113,14 +113,14 @@ extension BtPrintStateX on BtPrintState {
 
   /// Default human-readable status text for each state.
   String get defaultMessage => switch (this) {
-        BtIdle()            => 'Tap "Connect Printer" to find your printer',
-        BtScanning()        => 'Scanning for printers...',
-        BtScanned()         => 'Select your printer below:',
-        BtConnecting(deviceName: final n) => 'Connecting to $n...',
-        BtConnected(device: final d)      => '✓ Connected to ${d.platformName}',
-        BtPrinting()        => 'Printing receipt...',
-        BtError(message: final m)         => m,
-      };
+    BtIdle() => 'Tap "Connect Printer" to find your printer',
+    BtScanning() => 'Scanning for printers...',
+    BtScanned() => 'Select your printer below:',
+    BtConnecting(deviceName: final n) => 'Connecting to $n...',
+    BtConnected(device: final d) => '✓ Connected to ${d.platformName}',
+    BtPrinting() => 'Printing receipt...',
+    BtError(message: final m) => m,
+  };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -166,17 +166,22 @@ class ReceiptInfoRow extends ReceiptWidget<({String label, String value})> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label,
-            style: const TextStyle(
-                color: AppColors.whiteTertiary, fontSize: 13)),
+        Text(
+          label,
+          style: const TextStyle(color: AppColors.whiteTertiary, fontSize: 13),
+        ),
         Flexible(
-          child: Text(value,
-              textAlign: TextAlign.right,
-              style: valueStyle ??
-                  const TextStyle(
-                      color: AppColors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500)),
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            style:
+                valueStyle ??
+                const TextStyle(
+                  color: AppColors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+          ),
         ),
       ],
     );
@@ -209,39 +214,53 @@ class ReceiptHeader
         gradient: AppColors.sidebarGradient,
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      child: Column(children: [
-        const Icon(Icons.water_drop_outlined,
-            color: AppColors.gold, size: 28),
-        const SizedBox(height: 8),
-        const Text(AppStrings.appName,
-            style: TextStyle(
-                color: AppColors.gold,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 5)),
-        const SizedBox(height: 3),
-        const Text('S C E N T',
-            style: TextStyle(
-                color: AppColors.gold,
-                fontSize: 9,
-                letterSpacing: 7,
-                fontWeight: FontWeight.w300)),
-        const SizedBox(height: 13),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-          decoration: BoxDecoration(
-            color: badgeColor.withValues(alpha: 0.10),
-            border: Border.all(color: badgeColor.withValues(alpha: 0.5)),
-            borderRadius: BorderRadius.circular(20),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.water_drop_outlined,
+            color: AppColors.gold,
+            size: 28,
           ),
-          child: Text(badgeLabel,
+          const SizedBox(height: 8),
+          const Text(
+            AppStrings.appName,
+            style: TextStyle(
+              color: AppColors.gold,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 5,
+            ),
+          ),
+          const SizedBox(height: 3),
+          const Text(
+            'S C E N T',
+            style: TextStyle(
+              color: AppColors.gold,
+              fontSize: 9,
+              letterSpacing: 7,
+              fontWeight: FontWeight.w300,
+            ),
+          ),
+          const SizedBox(height: 13),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+            decoration: BoxDecoration(
+              color: badgeColor.withValues(alpha: 0.10),
+              border: Border.all(color: badgeColor.withValues(alpha: 0.5)),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              badgeLabel,
               style: TextStyle(
-                  color: badgeColor,
-                  fontSize: 10,
-                  letterSpacing: 2.5,
-                  fontWeight: FontWeight.w700)),
-        ),
-      ]),
+                color: badgeColor,
+                fontSize: 10,
+                letterSpacing: 2.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -291,16 +310,11 @@ class ReceiptCard extends ReceiptWidget<List<Widget>> {
 // ── Receipt Footer ────────────────────────────────────────────────────────────
 
 /// Two-line footer at the bottom of every receipt card.
-class ReceiptFooter
-    extends ReceiptWidget<({String line1, String line2})> {
+class ReceiptFooter extends ReceiptWidget<({String line1, String line2})> {
   final String line1;
   final String line2;
 
-  const ReceiptFooter({
-    super.key,
-    required this.line1,
-    required this.line2,
-  });
+  const ReceiptFooter({super.key, required this.line1, required this.line2});
 
   @override
   ({String line1, String line2}) get data => (line1: line1, line2: line2);
@@ -313,22 +327,30 @@ class ReceiptFooter
         color: AppColors.inputFill,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
       ),
-      child: Column(children: [
-        Text(line1,
+      child: Column(
+        children: [
+          Text(
+            line1,
             textAlign: TextAlign.center,
             style: const TextStyle(
-                color: AppColors.gold,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.8)),
-        const SizedBox(height: 5),
-        Text(line2,
+              color: AppColors.gold,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.8,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            line2,
             textAlign: TextAlign.center,
             style: const TextStyle(
-                color: AppColors.whiteTertiary,
-                fontSize: 10,
-                letterSpacing: 0.8)),
-      ]),
+              color: AppColors.whiteTertiary,
+              fontSize: 10,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -367,24 +389,20 @@ class BtStatusBar extends StatelessWidget {
   final BtPrintState state;
   final String message;
 
-  const BtStatusBar({
-    super.key,
-    required this.state,
-    required this.message,
-  });
+  const BtStatusBar({super.key, required this.state, required this.message});
 
   Color get _color => switch (state) {
-        BtConnected() => AppColors.success,
-        BtError()     => AppColors.error,
-        BtPrinting()  => AppColors.info,
-        _             => AppColors.whiteTertiary,
-      };
+    BtConnected() => AppColors.success,
+    BtError() => AppColors.error,
+    BtPrinting() => AppColors.info,
+    _ => AppColors.whiteTertiary,
+  };
 
   IconData get _icon => switch (state) {
-        BtConnected() => Icons.bluetooth_connected,
-        BtError()     => Icons.error_outline,
-        _             => Icons.bluetooth_outlined,
-      };
+    BtConnected() => Icons.bluetooth_connected,
+    BtError() => Icons.error_outline,
+    _ => Icons.bluetooth_outlined,
+  };
 
   bool get _isBusy => state.isBusy;
 
@@ -394,20 +412,22 @@ class BtStatusBar extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       color: _color.withValues(alpha: 0.08),
-      child: Row(children: [
-        if (_isBusy)
-          SizedBox(
+      child: Row(
+        children: [
+          if (_isBusy)
+            SizedBox(
               width: 14,
               height: 14,
-              child:
-                  CircularProgressIndicator(strokeWidth: 2, color: _color))
-        else
-          Icon(_icon, color: _color, size: 16),
-        const SizedBox(width: 10),
-        Expanded(
-            child: Text(message,
-                style: TextStyle(color: _color, fontSize: 12))),
-      ]),
+              child: CircularProgressIndicator(strokeWidth: 2, color: _color),
+            )
+          else
+            Icon(_icon, color: _color, size: 16),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(message, style: TextStyle(color: _color, fontSize: 12)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -443,7 +463,8 @@ class BtDeviceList extends StatelessWidget {
         itemBuilder: (_, i) {
           final r = results[i];
           final name = r.device.platformName.toLowerCase();
-          final isPrinter = name.contains('printer') ||
+          final isPrinter =
+              name.contains('printer') ||
               name.contains('sdxp') ||
               name.contains('pt-') ||
               name.contains('mtp') ||
@@ -455,18 +476,26 @@ class BtDeviceList extends StatelessWidget {
               color: isPrinter ? AppColors.gold : AppColors.whiteTertiary,
               size: 18,
             ),
-            title: Text(r.device.platformName,
-                style: TextStyle(
-                    color: isPrinter ? AppColors.gold : AppColors.white,
-                    fontSize: 13,
-                    fontWeight: isPrinter
-                        ? FontWeight.w600
-                        : FontWeight.normal)),
-            subtitle: Text(r.device.remoteId.toString(),
-                style: const TextStyle(
-                    color: AppColors.whiteTertiary, fontSize: 10)),
-            trailing: const Icon(Icons.chevron_right,
-                color: AppColors.whiteTertiary, size: 18),
+            title: Text(
+              r.device.platformName,
+              style: TextStyle(
+                color: isPrinter ? AppColors.gold : AppColors.white,
+                fontSize: 13,
+                fontWeight: isPrinter ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+            subtitle: Text(
+              r.device.remoteId.toString(),
+              style: const TextStyle(
+                color: AppColors.whiteTertiary,
+                fontSize: 10,
+              ),
+            ),
+            trailing: const Icon(
+              Icons.chevron_right,
+              color: AppColors.whiteTertiary,
+              size: 18,
+            ),
             onTap: () => onSelect(r.device),
           );
         },
@@ -504,19 +533,20 @@ class BtGoldButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon,
-                color: active
-                    ? AppColors.background
-                    : AppColors.whiteTertiary,
-                size: 18),
+            Icon(
+              icon,
+              color: active ? AppColors.background : AppColors.whiteTertiary,
+              size: 18,
+            ),
             const SizedBox(width: 8),
-            Text(label,
-                style: TextStyle(
-                    color: active
-                        ? AppColors.background
-                        : AppColors.whiteTertiary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13)),
+            Text(
+              label,
+              style: TextStyle(
+                color: active ? AppColors.background : AppColors.whiteTertiary,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
           ],
         ),
       ),
@@ -556,11 +586,14 @@ class BtOutlineButton extends StatelessWidget {
           children: [
             Icon(icon, color: color, size: 18),
             const SizedBox(width: 8),
-            Text(label,
-                style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13)),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
           ],
         ),
       ),
@@ -591,25 +624,27 @@ class BtActionButtons extends StatelessWidget {
     final busy = state.isBusy;
 
     if (state.isConnected) {
-      return Row(children: [
-        Expanded(
-          child: BtOutlineButton(
-            label: 'Disconnect',
-            icon: Icons.bluetooth_disabled,
-            color: AppColors.error,
-            onTap: busy ? null : onDisconnect,
+      return Row(
+        children: [
+          Expanded(
+            child: BtOutlineButton(
+              label: 'Disconnect',
+              icon: Icons.bluetooth_disabled,
+              color: AppColors.error,
+              onTap: busy ? null : onDisconnect,
+            ),
           ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 2,
-          child: BtGoldButton(
-            label: 'Print Receipt',
-            icon: Icons.print_outlined,
-            onTap: busy ? null : onPrint,
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 2,
+            child: BtGoldButton(
+              label: 'Print Receipt',
+              icon: Icons.print_outlined,
+              onTap: busy ? null : onPrint,
+            ),
           ),
-        ),
-      ]);
+        ],
+      );
     }
 
     return BtGoldButton(
@@ -648,7 +683,7 @@ class BtPrintPanelShell extends StatelessWidget {
     // Results live inside BtScanned — no separate list needed.
     final scanResults = switch (state) {
       BtScanned(:final results) => results,
-      _                        => <ScanResult>[],
+      _ => <ScanResult>[],
     };
 
     return Container(

@@ -11,16 +11,18 @@
 import 'package:flutter/material.dart';
 import 'package:animate_do/animate_do.dart';
 import 'dart:async';
+import '../core/app_bootstrap.dart';
 import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../services/login_rate_limiter.dart';
 import '../widgets/shared_widgets.dart';
-import 'main_shell.dart';
 import 'register_screen.dart';
 import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  const LoginScreen({super.key, required this.bootstrap});
+
+  final AppBootstrap bootstrap;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -49,9 +51,10 @@ class _LoginScreenState extends State<LoginScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
-    _pulse = Tween<double>(begin: 0.8, end: 1.0).animate(
-      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut),
-    );
+    _pulse = Tween<double>(
+      begin: 0.8,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
   }
 
   @override
@@ -68,9 +71,13 @@ class _LoginScreenState extends State<LoginScreen>
     _lockoutTimer?.cancel();
     setState(() => _lockoutSeconds = seconds);
     _lockoutTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) { t.cancel(); return; }
-      final remaining = LoginRateLimiter.instance
-          .secondsRemaining(_userCtrl.text.trim());
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final remaining = LoginRateLimiter.instance.secondsRemaining(
+        _userCtrl.text.trim(),
+      );
       setState(() => _lockoutSeconds = remaining);
       if (remaining <= 0) {
         t.cancel();
@@ -83,49 +90,60 @@ class _LoginScreenState extends State<LoginScreen>
   // On success, navigates to MainShell with a fade transition.
   // On failure, records the attempt and shows error or lockout message.
   void _login() async {
-    final username = _userCtrl.text.trim();
-    final limiter  = LoginRateLimiter.instance;
+    final email = _userCtrl.text.trim().toLowerCase();
+    final limiter = LoginRateLimiter.instance;
 
     // ── Check lockout before even calling AppState ─────────────────────────
-    if (limiter.isLockedOut(username)) {
-      final secs = limiter.secondsRemaining(username);
+    if (limiter.isLockedOut(email)) {
+      final secs = limiter.secondsRemaining(email);
       _startLockoutCountdown(secs);
-      setState(() => _error =
-          'Too many failed attempts. Try again in ${secs}s.');
+      setState(
+        () => _error = 'Too many failed attempts. Try again in ${secs}s.',
+      );
       return;
     }
 
-    setState(() { _isLoading = true; _error = null; });
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
 
-    final success =
-        await AppState().login(username, _passCtrl.text.trim());
+    final firebaseReady = await widget.bootstrap.ensureFirebaseInitialized(
+      retryIfUnavailable: true,
+    );
+    if (!mounted) return;
+    if (!firebaseReady) {
+      setState(() {
+        _isLoading = false;
+        _error =
+            'Cloud authentication is unavailable. Check your connection and try again.';
+      });
+      return;
+    }
+
+    final success = await AppState().login(email, _passCtrl.text);
 
     if (success && mounted) {
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 600),
-          pageBuilder: (_, anim, __) => FadeTransition(
-            opacity: anim,
-            child: const MainShell(),
-          ),
-        ),
-      );
+      setState(() => _isLoading = false);
     } else if (mounted) {
       // Check again — the failure may have just triggered a lockout
-      if (limiter.isLockedOut(username)) {
-        final secs = limiter.secondsRemaining(username);
+      if (limiter.isLockedOut(email)) {
+        final secs = limiter.secondsRemaining(email);
         _startLockoutCountdown(secs);
         setState(() {
           _isLoading = false;
           _error = 'Too many failed attempts. Try again in ${secs}s.';
         });
       } else {
-        final remaining = LoginRateLimiter.maxAttempts - limiter.failureCount(username);
+        final remaining =
+            LoginRateLimiter.maxAttempts - limiter.failureCount(email);
         setState(() {
           _isLoading = false;
-          _error = remaining > 0
-              ? 'Invalid username or password ($remaining attempt${remaining == 1 ? '' : 's'} left)'
-              : 'Invalid username or password';
+          _error =
+              AppState().lastAuthMessage ??
+              (remaining > 0
+                  ? 'Invalid email or password ($remaining attempt${remaining == 1 ? '' : 's'} left)'
+                  : 'Invalid email or password');
         });
       }
     }
@@ -161,10 +179,9 @@ class _LoginScreenState extends State<LoginScreen>
                 ),
                 child: isWide
                     ? Row(children: [_buildBrandPanel(), _buildFormPanel()])
-                    : Column(children: [
-                        _buildBrandPanelMobile(),
-                        _buildFormPanel()
-                      ]),
+                    : Column(
+                        children: [_buildBrandPanelMobile(), _buildFormPanel()],
+                      ),
               ),
             ),
           ),
@@ -191,7 +208,10 @@ class _LoginScreenState extends State<LoginScreen>
             const SizedBox(height: 32),
             const Text(AppStrings.appName, style: AppTextStyles.brandName),
             const SizedBox(height: 4),
-            const Text(AppStrings.appSubtitle, style: AppTextStyles.brandSubtitle),
+            const Text(
+              AppStrings.appSubtitle,
+              style: AppTextStyles.brandSubtitle,
+            ),
             const SizedBox(height: 20),
             // UNLEASH • CONFIDENCE • ELEVATE tagline
             const Text(
@@ -206,10 +226,11 @@ class _LoginScreenState extends State<LoginScreen>
             ),
             const SizedBox(height: 32),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
-                border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
+                border: Border.all(
+                  color: AppColors.gold.withValues(alpha: 0.4),
+                ),
                 borderRadius: BorderRadius.circular(30),
               ),
               child: const Text(
@@ -243,10 +264,15 @@ class _LoginScreenState extends State<LoginScreen>
           // KNZ actual logo image with pulsing rings
           _buildPulsingLogo(size: 120),
           const SizedBox(height: 20),
-          Text(AppStrings.appName,
-              style: AppTextStyles.brandName.copyWith(fontSize: 26)),
+          Text(
+            AppStrings.appName,
+            style: AppTextStyles.brandName.copyWith(fontSize: 26),
+          ),
           const SizedBox(height: 4),
-          const Text(AppStrings.appSubtitle, style: AppTextStyles.brandSubtitle),
+          const Text(
+            AppStrings.appSubtitle,
+            style: AppTextStyles.brandSubtitle,
+          ),
           const SizedBox(height: 14),
           // UNLEASH • CONFIDENCE • ELEVATE tagline
           const Text(
@@ -273,8 +299,14 @@ class _LoginScreenState extends State<LoginScreen>
         return Stack(
           alignment: Alignment.center,
           children: [
-            _ring(size * 1.4, AppColors.gold.withValues(alpha: 0.05 * _pulse.value)),
-            _ring(size * 1.15, AppColors.gold.withValues(alpha: 0.1 * _pulse.value)),
+            _ring(
+              size * 1.4,
+              AppColors.gold.withValues(alpha: 0.05 * _pulse.value),
+            ),
+            _ring(
+              size * 1.15,
+              AppColors.gold.withValues(alpha: 0.1 * _pulse.value),
+            ),
             _ring(size, AppColors.gold.withValues(alpha: 0.15 * _pulse.value)),
             // KNZ logo image inside the rings
             Container(
@@ -342,8 +374,8 @@ class _LoginScreenState extends State<LoginScreen>
             ),
             const SizedBox(height: 28),
             DarkTextField(
-              label: AppStrings.username,
-              hint: 'Enter your username',
+              label: 'EMAIL ADDRESS',
+              hint: 'Enter your email address',
               controller: _userCtrl,
             ),
             const SizedBox(height: 16),
@@ -355,14 +387,18 @@ class _LoginScreenState extends State<LoginScreen>
             ),
             if (_error != null) ...[
               const SizedBox(height: 10),
-              Text(_error!,
-                  style: const TextStyle(color: AppColors.error, fontSize: 13)),
+              Text(
+                _error!,
+                style: const TextStyle(color: AppColors.error, fontSize: 13),
+              ),
             ],
             const SizedBox(height: 24),
             GoldButton(
               label: _lockoutSeconds > 0
                   ? 'Try again in ${_lockoutSeconds}s'
-                  : _isLoading ? '...' : AppStrings.enterPortal,
+                  : _isLoading
+                  ? '...'
+                  : AppStrings.enterPortal,
               onPressed: (_isLoading || _lockoutSeconds > 0) ? () {} : _login,
             ),
             const SizedBox(height: 12),
@@ -375,8 +411,7 @@ class _LoginScreenState extends State<LoginScreen>
               alignment: Alignment.center,
               child: const Text(
                 AppStrings.defaultLogin,
-                style: TextStyle(
-                    color: AppColors.whiteTertiary, fontSize: 12),
+                style: TextStyle(color: AppColors.whiteTertiary, fontSize: 12),
               ),
             ),
             const SizedBox(height: 12),
@@ -385,9 +420,7 @@ class _LoginScreenState extends State<LoginScreen>
             GestureDetector(
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => const ForgotPasswordScreen(),
-                ),
+                MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
               ),
               child: const Center(
                 child: Text(
@@ -403,14 +436,22 @@ class _LoginScreenState extends State<LoginScreen>
             const SizedBox(height: 16),
 
             // Divider
-            Row(children: [
-              Expanded(child: Divider(color: AppColors.cardBorder)),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10),
-                child: Text('OR', style: TextStyle(color: AppColors.whiteTertiary, fontSize: 11)),
-              ),
-              Expanded(child: Divider(color: AppColors.cardBorder)),
-            ]),
+            Row(
+              children: [
+                Expanded(child: Divider(color: AppColors.cardBorder)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(
+                    'OR',
+                    style: TextStyle(
+                      color: AppColors.whiteTertiary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+                Expanded(child: Divider(color: AppColors.cardBorder)),
+              ],
+            ),
             const SizedBox(height: 16),
 
             // Sign Up button
@@ -418,7 +459,7 @@ class _LoginScreenState extends State<LoginScreen>
               onTap: () => Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => const RegisterScreen(),
+                  builder: (_) => RegisterScreen(bootstrap: widget.bootstrap),
                 ),
               ),
               child: Container(
@@ -426,7 +467,9 @@ class _LoginScreenState extends State<LoginScreen>
                 decoration: BoxDecoration(
                   color: AppColors.inputFill,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppColors.gold.withValues(alpha: 0.4)),
+                  border: Border.all(
+                    color: AppColors.gold.withValues(alpha: 0.4),
+                  ),
                 ),
                 alignment: Alignment.center,
                 child: const Text(
@@ -445,5 +488,4 @@ class _LoginScreenState extends State<LoginScreen>
       ),
     );
   }
-
 }
