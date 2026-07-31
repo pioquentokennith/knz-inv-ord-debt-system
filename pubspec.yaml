@@ -33,10 +33,10 @@ dependencies:
   connectivity_plus: ^6.1.4
   shared_preferences: ^2.3.2
   # ── Firebase ──────────────────────────────────────────────────────────────
-  firebase_core: ^3.13.0
-  cloud_firestore: ^5.6.5
-  firebase_auth: ^5.5.2
-  firebase_crashlytics: ^4.3.3   # Error reporting for production builds
+  firebase_core: ^4.12.1
+  cloud_firestore: ^6.7.1
+  firebase_auth: ^6.5.6
+  firebase_crashlytics: ^5.2.6   # Error reporting for production builds
 
   # ── Notifications ──────────────────────────────────────────────────────────
   flutter_local_notifications: ^18.0.1   # Low-stock restock reminders
