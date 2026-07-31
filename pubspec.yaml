@@ -39,7 +39,7 @@ dependencies:
   firebase_crashlytics: ^4.3.3   # Error reporting for production builds
 
   # ── Notifications ──────────────────────────────────────────────────────────
-  flutter_local_notifications: ^18.0.1   # Low-stock restock reminders
+  flutter_local_notifications: ^22.2.0   # Low-stock restock reminders
 
   # ── Bluetooth Printing ────────────────────────────────────────────────────
   flutter_blue_plus: ^1.35.5
