@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "subagent_depth": 1,
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 10000
+  },
+  "agent": {
+    "build": {
+      "steps": 24,
+      "permission": {
+        "task": {
+          "*": "deny",
+          "explore": "allow"
+        }
+      }
+    },
+    "plan": {
+      "steps": 8
+    }
+  }
+}

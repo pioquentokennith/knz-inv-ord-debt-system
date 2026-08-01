@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "120139747390",
+    "project_id": "knz-scent",
+    "storage_bucket": "knz-scent.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:120139747390:android:fd162e9194e69cc5f6816f",
+        "android_client_info": {
+          "package_name": "com.example.inventoryordtrack"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC08jcq1YiTcc9lSl-upsllh_RLcUkumqc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:120139747390:android:823a15d9a89f4cfaf6816f",
+        "android_client_info": {
+          "package_name": "com.knzscent.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC08jcq1YiTcc9lSl-upsllh_RLcUkumqc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

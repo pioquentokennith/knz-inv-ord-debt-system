@@ -1,0 +1,18 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  exclude:
+    - build/**
+    - .dart_tool/**
+  language:
+    strict-casts: true
+
+linter:
+  rules:
+    # These remain disabled temporarily to avoid a formatting-only migration
+    # obscuring functional changes.
+    prefer_const_constructors: false
+    prefer_const_declarations: false
+    prefer_const_literals_to_create_immutables: false
+    cancel_subscriptions: true
+    close_sinks: true

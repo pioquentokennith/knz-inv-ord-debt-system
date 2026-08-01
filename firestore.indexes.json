@@ -1,0 +1,20 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "_otpChallenges",
+      "fieldPath": "deleteAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "_otpRateLimits",
+      "fieldPath": "deleteAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "_otpTokenUses",
+      "fieldPath": "deleteAt",
+      "indexes": []
+    }
+  ]
+}
