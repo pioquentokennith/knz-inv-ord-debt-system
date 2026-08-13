@@ -273,8 +273,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                                     icon: Icons
                                                         .delete_outline_rounded,
                                                   );
-                                              if (!confirm || !context.mounted)
+                                              if (!confirm ||
+                                                  !context.mounted) {
                                                 return;
+                                              }
                                               try {
                                                 await AppState().deleteProduct(
                                                   p.id,

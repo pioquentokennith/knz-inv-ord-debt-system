@@ -7,7 +7,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:sqflite/sqflite.dart';
@@ -300,8 +299,9 @@ class OutboxProcessor {
 
   String _classify(Object error) {
     if (error is SyncConflictException) return 'conflict';
-    if (error is FormatException || error is UnsupportedError)
+    if (error is FormatException || error is UnsupportedError) {
       return 'permanent';
+    }
     if (error is FirebaseException) {
       if ({'permission-denied', 'unauthenticated'}.contains(error.code)) {
         return 'authorization';

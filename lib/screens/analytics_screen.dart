@@ -869,8 +869,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                             ),
                             getTitlesWidget: (val, meta) {
                               final i = val.toInt();
-                              if (i < 0 || i >= points.length)
+                              if (i < 0 || i >= points.length) {
                                 return const SizedBox.shrink();
+                              }
                               return Text(
                                 points[i].label,
                                 style: const TextStyle(
@@ -1267,8 +1268,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                           showTitles: true,
                           getTitlesWidget: (val, _) {
                             final i = val.toInt();
-                            if (i < 0 || i >= keys.length)
+                            if (i < 0 || i >= keys.length) {
                               return const SizedBox.shrink();
+                            }
                             return Padding(
                               padding: const EdgeInsets.only(top: 4),
                               child: Text(

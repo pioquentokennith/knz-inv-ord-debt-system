@@ -110,14 +110,17 @@ class MainShellState extends State<MainShell>
     } catch (_) {
       // Logout is fail-closed: local protected state stays cleared even when a
       // remote cleanup step fails.
-      final loginContext = ProtectedNavigation.navigatorKey.currentContext;
-      if (loginContext != null) {
-        KnzToast.error(
-          loginContext,
-          'Signed out locally, but remote sign-out cleanup was incomplete.',
-        );
-      }
+      _showIncompleteRemoteSignOut();
     }
+  }
+
+  void _showIncompleteRemoteSignOut() {
+    final loginContext = ProtectedNavigation.navigatorKey.currentContext;
+    if (loginContext == null) return;
+    KnzToast.error(
+      loginContext,
+      'Signed out locally, but remote sign-out cleanup was incomplete.',
+    );
   }
 
   @override

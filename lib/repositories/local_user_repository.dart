@@ -130,8 +130,9 @@ class LocalUserRepository extends BaseRepository implements UserRepository {
           where: 'uid = ?',
           whereArgs: [uid],
         );
-        if (changed > 1)
+        if (changed > 1) {
           throw StateError('Multiple device grants share UID $uid.');
+        }
       });
 
   @override

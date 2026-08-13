@@ -207,8 +207,9 @@ class LocalResellerRepository extends BaseRepository {
         where: 'id = ? AND user_id = ? AND is_deleted = 1 AND purge_state = ?',
         whereArgs: [id, userId, 'none'],
       );
-      if (changed != 1)
+      if (changed != 1) {
         throw StateError('Reseller purge could not be queued: $id');
+      }
     });
     _queue.requestSync();
   });

@@ -136,12 +136,8 @@ class CustomOrder extends BaseModel {
        _terms = terms,
        _userId = userId,
        _createdAt = createdAt {
-    if (this.id.trim().isEmpty) {
-      throw ArgumentError.value(
-        this.id,
-        'id',
-        'Custom order id cannot be blank.',
-      );
+    if (id.trim().isEmpty) {
+      throw ArgumentError.value(id, 'id', 'Custom order id cannot be blank.');
     }
     if (_customerName.trim().isEmpty) {
       throw ArgumentError.value(
@@ -176,7 +172,7 @@ class CustomOrder extends BaseModel {
     }
     final paymentIds = <String>{};
     final recordedTotal = _payments.fold<Money>(Money.zero, (total, payment) {
-      if (payment.customOrderId != this.id) {
+      if (payment.customOrderId != id) {
         throw ArgumentError.value(
           payment.customOrderId,
           'payments',

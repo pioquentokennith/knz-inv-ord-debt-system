@@ -15,7 +15,7 @@ class Money implements Comparable<Money> {
     final negative = match.group(1) == '-';
     final pesos = int.parse(match.group(2)!);
     final fraction = match.group(3) ?? '';
-    final firstTwo = (fraction + '00').substring(0, 2);
+    final firstTwo = '${fraction}00'.substring(0, 2);
     var result = pesos * 100 + int.parse(firstTwo);
     if (fraction.length > 2 && int.parse(fraction[2]) >= 5) result++;
     return Money.fromCentavos(negative ? -result : result);

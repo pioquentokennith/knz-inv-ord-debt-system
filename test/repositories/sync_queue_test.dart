@@ -217,8 +217,9 @@ void main() {
         databaseProvider: () async => database,
         dispatch: (row) async {
           final id = row['doc_id'] as String;
-          if (id == 'bad-product')
+          if (id == 'bad-product') {
             throw const FormatException('invalid payload');
+          }
           dispatched.add(id);
         },
         now: () => DateTime.utc(2026),

@@ -528,8 +528,9 @@ class CloudAuthService implements ICloudAuthService {
     final current = await accessReference
         .get(const GetOptions(source: Source.server))
         .timeout(_timeout);
-    if (!current.exists)
+    if (!current.exists) {
       throw StateError('Account access record was not found.');
+    }
     final currentData = current.data()!;
     final currentStatus = currentData['status'] as String? ?? 'pending';
     final validTransition = switch (currentStatus) {

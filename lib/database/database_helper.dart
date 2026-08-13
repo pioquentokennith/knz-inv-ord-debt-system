@@ -1730,8 +1730,9 @@ class DatabaseHelper {
       String? childrenKey,
     }) async {
       final payload = Map<String, dynamic>.from(row);
-      if (children != null && childrenKey != null)
+      if (children != null && childrenKey != null) {
         payload[childrenKey] = children;
+      }
       await db.insert('sync_queue', {
         'operation': operation,
         'collection': collection,

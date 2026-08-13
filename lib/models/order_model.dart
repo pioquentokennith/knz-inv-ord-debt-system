@@ -213,8 +213,8 @@ class Order extends BaseModel {
        _discountedTotal = discountedTotal,
        _orderType = orderType {
     final storedDiscountedTotal = _discountedTotal;
-    if (this.id.trim().isEmpty) {
-      throw ArgumentError.value(this.id, 'id', 'Order id cannot be blank.');
+    if (id.trim().isEmpty) {
+      throw ArgumentError.value(id, 'id', 'Order id cannot be blank.');
     }
     if (_orderId.trim().isEmpty) {
       throw ArgumentError.value(

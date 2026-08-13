@@ -163,8 +163,9 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.restoreOrder(order.id);
-      if (mounted)
+      if (mounted) {
         KnzToast.success(context, 'Order ${order.orderId} restored.');
+      }
       await _load();
     } catch (error) {
       if (!mounted) return;
@@ -184,12 +185,14 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.restoreProduct(product.id);
-      if (mounted)
+      if (mounted) {
         KnzToast.success(context, '"${product.name}" restored to Inventory.');
+      }
       await _load();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         KnzToast.error(context, 'The product could not be restored.');
+      }
     }
   }
 
@@ -206,8 +209,9 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.hardDeleteOrder(order.id);
-      if (mounted)
+      if (mounted) {
         KnzToast.info(context, 'Order ${order.orderId} permanently deleted.');
+      }
       await _load();
     } catch (error) {
       if (mounted) {
@@ -231,15 +235,17 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.hardDeleteProduct(product.id);
-      if (mounted)
+      if (mounted) {
         KnzToast.info(context, '"${product.name}" permanently deleted.');
+      }
       await _load();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         KnzToast.error(
           context,
           'The product could not be permanently deleted.',
         );
+      }
     }
   }
 
@@ -256,12 +262,14 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.restoreDebt(debt.id);
-      if (mounted)
+      if (mounted) {
         KnzToast.success(context, 'Utang for ${debt.customerName} restored.');
+      }
       await _load();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         KnzToast.error(context, 'The utang record could not be restored.');
+      }
     }
   }
 
@@ -286,11 +294,12 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
       }
       await _load();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         KnzToast.error(
           context,
           'The utang record could not be permanently deleted.',
         );
+      }
     }
   }
 
@@ -315,8 +324,9 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
       }
       await _load();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         KnzToast.error(context, 'The custom order could not be restored.');
+      }
     }
   }
 
@@ -362,11 +372,14 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.restoreReseller(reseller.id);
-      if (mounted) KnzToast.success(context, '"${reseller.name}" restored.');
+      if (mounted) {
+        KnzToast.success(context, '"${reseller.name}" restored.');
+      }
       await _load();
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         KnzToast.error(context, 'The reseller could not be restored.');
+      }
     }
   }
 
@@ -383,8 +396,9 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
     if (!confirm || !mounted) return;
     try {
       await _appState.hardDeleteReseller(reseller.id);
-      if (mounted)
+      if (mounted) {
         KnzToast.info(context, '"${reseller.name}" permanently deleted.');
+      }
       await _load();
     } catch (_) {
       if (mounted) {

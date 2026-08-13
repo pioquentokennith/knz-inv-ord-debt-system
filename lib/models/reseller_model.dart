@@ -32,8 +32,8 @@ class Reseller extends BaseModel {
        _deductionPerItem = deductionPerItem,
        _userId = userId,
        _createdAt = createdAt {
-    if (this.id.trim().isEmpty) {
-      throw ArgumentError.value(this.id, 'id', 'Reseller id cannot be blank.');
+    if (id.trim().isEmpty) {
+      throw ArgumentError.value(id, 'id', 'Reseller id cannot be blank.');
     }
     if (_name.trim().isEmpty) {
       throw ArgumentError.value(name, 'name', 'Reseller name cannot be blank.');

@@ -100,8 +100,8 @@ class Product extends BaseModel {
        _imagePath = imagePath,
        _createdAt = createdAt ?? DateTime.now() {
     // Default to now if not provided
-    if (this.id.trim().isEmpty) {
-      throw ArgumentError.value(this.id, 'id', 'Product id cannot be blank.');
+    if (id.trim().isEmpty) {
+      throw ArgumentError.value(id, 'id', 'Product id cannot be blank.');
     }
     if (_name.trim().isEmpty) {
       throw ArgumentError.value(name, 'name', 'Product name cannot be blank.');
