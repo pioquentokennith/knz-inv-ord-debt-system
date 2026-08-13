@@ -16,6 +16,7 @@ void main() {
       orders: fixture.orders,
       debts: fixture.debts,
       customOrders: fixture.customOrders,
+      businessEvents: fixture.businessEvents,
       period: AccountingPeriod(from: fixture.periodFrom, to: fixture.periodTo),
     );
   });
@@ -33,7 +34,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('₱330.00'), findsOneWidget);
+    expect(find.text('₱630.00'), findsOneWidget);
     expect(find.text('₱100.00'), findsOneWidget);
     expect(find.text('₱550.00'), findsOneWidget);
   });
@@ -48,14 +49,14 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('₱400.00'), findsOneWidget);
+    expect(find.text('₱700.00'), findsOneWidget);
     expect(find.text('₱70.00'), findsOneWidget);
-    expect(find.text('₱330.00'), findsOneWidget);
+    expect(find.text('₱630.00'), findsOneWidget);
     expect(find.text('₱120.00'), findsOneWidget);
     expect(find.text('₱100.00'), findsOneWidget);
     expect(find.text('₱550.00'), findsOneWidget);
     expect(find.text('cancelled'), findsNothing);
-    expect(find.text('utang'), findsNothing);
+    expect(find.text('utang'), findsOneWidget);
   });
 
   testWidgets('revenue report preview uses the fixed fixture cash total', (

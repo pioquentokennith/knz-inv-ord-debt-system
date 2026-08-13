@@ -16,6 +16,7 @@ class AppBootstrap {
     required this.initializeDatabase,
     required this.initializePreferences,
     required this.configureLocalState,
+    required this.restoreTrustedSession,
     required this.initializeFirebase,
     required this.initializeCrashlytics,
     required this.initializeNotifications,
@@ -29,6 +30,7 @@ class AppBootstrap {
   final Future<void> Function() initializeDatabase;
   final Future<void> Function() initializePreferences;
   final Future<void> Function() configureLocalState;
+  final Future<void> Function() restoreTrustedSession;
   final Future<void> Function() initializeFirebase;
   final Future<void> Function() initializeCrashlytics;
   final Future<void> Function() initializeNotifications;
@@ -58,6 +60,7 @@ class AppBootstrap {
     await initializeDatabase().timeout(requiredTimeout);
     await initializePreferences().timeout(requiredTimeout);
     await configureLocalState().timeout(requiredTimeout);
+    await restoreTrustedSession().timeout(requiredTimeout);
   }
 
   void startOptional() {

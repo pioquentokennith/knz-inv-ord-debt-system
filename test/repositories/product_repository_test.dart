@@ -84,16 +84,19 @@ void main() {
       await repository.updateStock('product-1', 3);
       expect((await repository.getAll('owner-1')).single.stockQty, 3);
 
-      await repository.delete('product-1');
+      await repository.delete('product-1', 'owner-1');
       expect(await repository.getAll('owner-1'), isEmpty);
       expect((await repository.getDeleted('owner-1')).single.name, 'Rose Oud');
 
-      await repository.restore('product-1');
+      await repository.restore('product-1', 'owner-1');
       expect(await repository.getAll('owner-1'), hasLength(1));
-      await repository.delete('product-1');
-      await repository.hardDelete('product-1');
+      await repository.delete('product-1', 'owner-1');
+      await repository.hardDelete('product-1', 'owner-1');
 
-      expect(await database.query('products'), isEmpty);
+      expect(
+        (await database.query('products')).single['purge_state'],
+        'pending',
+      );
       expect(
         (await database.query('sync_queue')).map((row) => row['operation']),
         [
@@ -119,7 +122,7 @@ void main() {
       throwsA(isA<ArgumentError>()),
     );
     await expectLater(
-      repository.restore('missing'),
+      repository.restore('missing', 'owner-1'),
       throwsA(isA<StateError>()),
     );
     expect(await database.query('sync_queue'), isEmpty);

@@ -19,6 +19,8 @@ typedef RegistrationSubmissionChecker =
     Future<bool> Function(RegistrationSubmission submission);
 
 abstract class ICloudAuthService {
+  bool get isAvailable => false;
+  String? get currentUid => null;
   Future<CloudAuthResult> login(String email, String password);
   Future<CloudAuthResult> requestRegistration({
     required String name,
@@ -30,6 +32,7 @@ abstract class ICloudAuthService {
   Future<void> deferRegistration();
   Future<void> sendPasswordReset(String email);
   Future<CloudAuthResult> restoreSession();
+  Future<CloudAuthResult> revalidateAccess(String uid) => restoreSession();
   Future<void> signOut();
 }
 
@@ -67,6 +70,13 @@ class CloudAuthService implements ICloudAuthService {
 
   FirebaseAuth get _auth => FirebaseAuth.instance;
   FirebaseFirestore get _firestore => FirebaseFirestore.instance;
+
+  @override
+  bool get isAvailable => _firebaseAvailable();
+
+  @override
+  String? get currentUid =>
+      _firebaseAvailable() ? _auth.currentUser?.uid : null;
 
   @override
   Future<CloudAuthResult> login(String email, String password) async {
@@ -405,11 +415,66 @@ class CloudAuthService implements ICloudAuthService {
     }
   }
 
+  @override
+  Future<CloudAuthResult> revalidateAccess(String uid) async {
+    if (!_firebaseAvailable()) {
+      return const CloudAuthResult(
+        status: 'offline',
+        mayUseOfflineCache: true,
+        diagnosticCode: 'firebase-not-initialized',
+      );
+    }
+    final user = _auth.currentUser;
+    if (user == null || user.isAnonymous || user.uid != uid) {
+      return const CloudAuthResult(
+        status: 'reauth_required',
+        error:
+            'Sign in online again before cloud synchronization can continue.',
+      );
+    }
+    try {
+      await user.getIdToken(true).timeout(_timeout);
+      return await _loadAccess(uid).timeout(_timeout);
+    } on FirebaseAuthException catch (error) {
+      if (error.code == 'network-request-failed') {
+        return CloudAuthResult(
+          status: 'offline',
+          uid: uid,
+          mayUseOfflineCache: true,
+          diagnosticCode: error.code,
+        );
+      }
+      return CloudAuthResult(
+        status: 'reauth_required',
+        uid: uid,
+        error: 'Cloud authentication must be renewed.',
+        diagnosticCode: error.code,
+      );
+    } on FirebaseException catch (error) {
+      if (error.code == 'unavailable' || error.code == 'deadline-exceeded') {
+        return CloudAuthResult(
+          status: 'offline',
+          uid: uid,
+          mayUseOfflineCache: true,
+          diagnosticCode: error.code,
+        );
+      }
+      rethrow;
+    } on TimeoutException {
+      return CloudAuthResult(
+        status: 'offline',
+        uid: uid,
+        mayUseOfflineCache: true,
+        diagnosticCode: 'timeout',
+      );
+    }
+  }
+
   Future<CloudAuthResult> _loadAccess(String uid) async {
     final snapshot = await _firestore
         .collection('accountAccess')
         .doc(uid)
-        .get();
+        .get(const GetOptions(source: Source.server));
     if (!snapshot.exists) {
       return const CloudAuthResult(
         status: 'registration_required',
@@ -434,6 +499,7 @@ class CloudAuthService implements ICloudAuthService {
       username: data['username'] as String?,
       name: data['name'] as String?,
       role: data['role'] as String? ?? 'Staff',
+      accessGeneration: data['accessGeneration'] as int? ?? 1,
       legacyOwnerKey: data['legacyOwnerKey'] as String?,
       createdAt: _asDateTime(data['createdAt']),
     );
@@ -442,7 +508,7 @@ class CloudAuthService implements ICloudAuthService {
   Future<List<Map<String, dynamic>>> pendingRegistrationRequests() async {
     final snapshot = await _firestore
         .collection('accountAccess')
-        .where('status', isEqualTo: 'pending')
+        .orderBy('createdAt', descending: true)
         .get();
     return snapshot.docs.map((doc) => {'uid': doc.id, ...doc.data()}).toList();
   }
@@ -458,15 +524,33 @@ class CloudAuthService implements ICloudAuthService {
     if (administratorUid == null || administratorUid == uid) {
       throw StateError('Administrators cannot review themselves.');
     }
+    final accessReference = _firestore.collection('accountAccess').doc(uid);
+    final current = await accessReference
+        .get(const GetOptions(source: Source.server))
+        .timeout(_timeout);
+    if (!current.exists)
+      throw StateError('Account access record was not found.');
+    final currentData = current.data()!;
+    final currentStatus = currentData['status'] as String? ?? 'pending';
+    final validTransition = switch (currentStatus) {
+      'pending' => {'approved', 'rejected', 'suspended'}.contains(decision),
+      'approved' => decision == 'suspended',
+      'suspended' => decision == 'approved',
+      _ => false,
+    };
+    if (!validTransition) {
+      throw StateError('Invalid transition from $currentStatus to $decision.');
+    }
     final batch = _firestore.batch();
     final now = DateTime.now().toUtc().toIso8601String();
-    batch.update(_firestore.collection('accountAccess').doc(uid), {
+    batch.update(accessReference, {
       'status': decision,
       'active': decision == 'approved',
       'role': 'Staff',
       'reviewedBy': administratorUid,
       'reviewedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
+      'accessGeneration': FieldValue.increment(1),
     });
     batch.update(_firestore.collection('users').doc(uid), {
       'role': 'Staff',
@@ -479,7 +563,13 @@ class CloudAuthService implements ICloudAuthService {
 
   @override
   Future<void> signOut() async {
-    if (_firebaseAvailable()) await _auth.signOut();
+    if (!_firebaseAvailable()) {
+      throw const AuthOperationException(
+        'Firebase sign-out cleanup is pending.',
+        code: 'firebase-not-initialized',
+      );
+    }
+    await _auth.signOut();
   }
 
   Future<RegistrationAccount?> _createRegistrationAccount({
@@ -540,6 +630,7 @@ class CloudAuthService implements ICloudAuthService {
       'active': false,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
+      'accessGeneration': 0,
     });
     batch.set(_firestore.collection('users').doc(submission.uid), {
       'uid': submission.uid,
@@ -649,6 +740,7 @@ class CloudAuthResult {
     this.error,
     this.mayUseOfflineCache = false,
     this.diagnosticCode,
+    this.accessGeneration = 1,
   });
 
   const CloudAuthResult.denied(String message)
@@ -666,6 +758,7 @@ class CloudAuthResult {
   final String? error;
   final bool mayUseOfflineCache;
   final String? diagnosticCode;
+  final int accessGeneration;
 
   bool get canAccess =>
       status == 'approved' &&

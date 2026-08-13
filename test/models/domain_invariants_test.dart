@@ -36,6 +36,13 @@ void main() {
       expect(product.description, '');
       expect(product.minStockLevel, 5);
     });
+
+    test('copyWith can explicitly clear a local inventory image', () {
+      final product = _product().copyWith(imagePath: 'local-product.jpg');
+
+      expect(product.imagePath, 'local-product.jpg');
+      expect(product.copyWith(clearImage: true).imagePath, isNull);
+    });
   });
 
   group('CustomOrder invariants', () {
@@ -134,6 +141,18 @@ void main() {
       expect(() => order.items.clear(), throwsUnsupportedError);
     });
 
+    test('calculates canonical gross and net totals from line items', () {
+      final order = _order(
+        items: [
+          _item(unitPriceCentavos: 17000, srpPriceCentavos: 20000, quantity: 2),
+        ],
+        totalCentavos: 34000,
+      );
+
+      expect(order.lineSrpTotal, const Money.fromCentavos(40000));
+      expect(order.lineCustomerPayTotal, const Money.fromCentavos(34000));
+    });
+
     test('documented flat legacy orders remain readable', () {
       final order = Order.fromMap({
         'id': 'order-1',
@@ -223,9 +242,12 @@ void main() {
       final service = ProductService(repository);
 
       await expectLater(service.updateStock(' ', 1), throwsArgumentError);
-      expect(() => service.deleteProduct(' '), throwsArgumentError);
-      expect(() => service.restoreProduct(' '), throwsArgumentError);
-      expect(() => service.hardDeleteProduct(' '), throwsArgumentError);
+      expect(() => service.deleteProduct(' ', 'owner-1'), throwsArgumentError);
+      expect(() => service.restoreProduct(' ', 'owner-1'), throwsArgumentError);
+      expect(
+        () => service.hardDeleteProduct(' ', 'owner-1'),
+        throwsArgumentError,
+      );
     });
   });
 }
@@ -330,7 +352,7 @@ class _FakeProductRepository implements ProductRepository {
   }
 
   @override
-  Future<void> delete(String productId) async {}
+  Future<void> delete(String productId, String userId) async {}
 
   @override
   Future<List<Product>> getAll(String userId) async => <Product>[];
@@ -339,10 +361,10 @@ class _FakeProductRepository implements ProductRepository {
   Future<List<Product>> getDeleted(String userId) async => <Product>[];
 
   @override
-  Future<void> hardDelete(String productId) async {}
+  Future<void> hardDelete(String productId, String userId) async {}
 
   @override
-  Future<void> restore(String productId) async {}
+  Future<void> restore(String productId, String userId) async {}
 
   @override
   Future<void> update(Product product) async {}

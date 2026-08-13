@@ -76,6 +76,7 @@ class _AccountingScreenState extends State<AccountingScreen>
               orders: state.orders,
               debts: state.debts,
               customOrders: state.customOrders,
+              businessEvents: state.businessEvents,
               period: AccountingPeriod(from: _fromDate, to: _toDate),
             );
         final orders = report.recognizedOrders;
@@ -208,6 +209,20 @@ class _AccountingScreenState extends State<AccountingScreen>
                           report.netSales.format(),
                           AppColors.gold,
                           Icons.trending_up,
+                        ),
+                        const SizedBox(width: 10),
+                        _SummaryCard(
+                          'Direct Order Cash',
+                          report.netOrderCash.format(),
+                          AppColors.success,
+                          Icons.point_of_sale_outlined,
+                        ),
+                        const SizedBox(width: 10),
+                        _SummaryCard(
+                          'Refunds',
+                          report.orderRefunds.format(),
+                          AppColors.error,
+                          Icons.currency_exchange,
                         ),
                         const SizedBox(width: 10),
                         _SummaryCard(

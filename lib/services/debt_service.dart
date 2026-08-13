@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// debt_service.dart — Debt business logic  (v6: computeTotalWithInterest added)
+// debt_service.dart — Debt business logic
 // ─────────────────────────────────────────────────────────────────────────────
 
 import '../models/debt_model.dart';
@@ -8,20 +8,15 @@ import '../repositories/debt_repository.dart';
 
 abstract class IDebtService {
   Future<List<CustomerDebt>> getAll(String userId);
-  Future<void> addDebt(CustomerDebt debt, String userId);
   Future<String?> addPayment(
     String debtId,
     PaymentRecord payment,
     Money remainingBalance,
   );
-  Future<void> deleteDebt(String debtId);
+  Future<void> deleteDebt(String debtId, String userId);
   Future<List<CustomerDebt>> getDeleted(String userId);
-  Future<void> restoreDebt(String debtId);
-  Future<void> hardDeleteDebt(String debtId);
-
-  // v6 — Feature 4
-  /// Returns principal remaining + accrued interest.
-  Money computeTotalWithInterest(CustomerDebt debt);
+  Future<void> restoreDebt(String debtId, String userId);
+  Future<void> hardDeleteDebt(String debtId, String userId);
 }
 
 class DebtService implements IDebtService {
@@ -31,10 +26,6 @@ class DebtService implements IDebtService {
 
   @override
   Future<List<CustomerDebt>> getAll(String userId) => _repo.getAll(userId);
-
-  @override
-  Future<void> addDebt(CustomerDebt debt, String userId) =>
-      _repo.add(debt, userId);
 
   @override
   Future<String?> addPayment(
@@ -53,22 +44,18 @@ class DebtService implements IDebtService {
   }
 
   @override
-  Future<void> deleteDebt(String debtId) => _repo.delete(debtId);
+  Future<void> deleteDebt(String debtId, String userId) =>
+      _repo.delete(debtId, userId);
 
   @override
   Future<List<CustomerDebt>> getDeleted(String userId) =>
       _repo.getDeleted(userId);
 
   @override
-  Future<void> restoreDebt(String debtId) => _repo.restore(debtId);
+  Future<void> restoreDebt(String debtId, String userId) =>
+      _repo.restore(debtId, userId);
 
   @override
-  Future<void> hardDeleteDebt(String debtId) => _repo.hardDelete(debtId);
-
-  // ── v6: Feature 4 ─────────────────────────────────────────────────────────
-
-  /// Pure computation — delegates to the model's accruedInterest getter.
-  /// Kept in the service so callers never depend on model internals directly.
-  @override
-  Money computeTotalWithInterest(CustomerDebt debt) => debt.totalWithInterest;
+  Future<void> hardDeleteDebt(String debtId, String userId) =>
+      _repo.hardDelete(debtId, userId);
 }

@@ -61,9 +61,6 @@ extension PaymentMethodExtension on PaymentMethod {
       this == PaymentMethod.gcash ||
       this == PaymentMethod.maya;
 
-  /// Whether this payment method is utang (debt).
-  bool get isUtang => this == PaymentMethod.utang;
-
   /// Placeholder hint text for the reference field.
   String get referenceHint {
     switch (this) {

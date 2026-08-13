@@ -52,6 +52,8 @@ void main() {
           ),
           hasLength(1),
         );
+        expect(await database.query('device_auth_grants'), isEmpty);
+        expect(await database.query('auth_runtime_state'), hasLength(1));
       } finally {
         await database?.close();
         await directory.delete(recursive: true);

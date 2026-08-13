@@ -62,8 +62,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  functions:
-    name: Cloud Functions checks
+  firebase:
+    name: Firebase admin and rules checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -85,13 +85,13 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install backend dependencies
+      - name: Install Administrator tooling dependencies
         run: npm ci
 
       - name: Check JavaScript syntax
         run: npm run lint
 
-      - name: Run backend tests
+      - name: Run Administrator tooling tests
         run: npm test
 
       - name: Install Firestore rules test dependencies
@@ -100,8 +100,8 @@ jobs:
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@14.27.0 --ignore-scripts
 
-      - name: Run Functions emulator tests
-        run: npm run test:emulator
+      - name: Run Firestore rules tests
+        run: npm run test:rules
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high

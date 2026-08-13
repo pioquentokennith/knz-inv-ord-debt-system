@@ -7,25 +7,35 @@ class SyncStatusBanner extends StatelessWidget {
   const SyncStatusBanner({
     super.key,
     required this.status,
+    this.isOffline = false,
     this.dataError,
     this.onRetry,
   });
 
   final SyncStatus status;
+  final bool isOffline;
   final String? dataError;
   final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
     final failed = status.hasFailures;
-    final message = failed
+    final message = status.requiresReview
+        ? '${status.conflictCount} sync conflict(s) and ${status.deadLetterCount} invalid operation(s) require review. Local data was preserved.'
+        : isOffline
+        ? status.hasPending
+              ? 'Offline. ${status.pendingCount} local change(s) will sync after account access is verified online.'
+              : 'Offline mode. Business data is saved on this device.'
+        : failed
         ? '${status.failedCount} cloud change(s) failed to sync. Local data is safe.'
         : status.hasPending
         ? '${status.pendingCount} cloud change(s) pending.'
         : dataError;
     if (message == null) return const SizedBox.shrink();
 
-    final color = failed ? AppColors.error : AppColors.gold;
+    final color = (failed && !isOffline) || status.requiresReview
+        ? AppColors.error
+        : AppColors.gold;
     return Material(
       color: color.withValues(alpha: 0.14),
       child: SafeArea(
@@ -35,7 +45,9 @@ class SyncStatusBanner extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                failed ? Icons.cloud_off_outlined : Icons.cloud_queue_outlined,
+                isOffline || failed || status.requiresReview
+                    ? Icons.cloud_off_outlined
+                    : Icons.cloud_queue_outlined,
                 color: color,
                 size: 18,
               ),
@@ -50,7 +62,10 @@ class SyncStatusBanner extends StatelessWidget {
                   ),
                 ),
               ),
-              if (failed && onRetry != null)
+              if (failed &&
+                  !status.requiresReview &&
+                  !isOffline &&
+                  onRetry != null)
                 TextButton(onPressed: onRetry, child: const Text('RETRY')),
             ],
           ),

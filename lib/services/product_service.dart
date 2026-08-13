@@ -38,14 +38,14 @@ abstract class IProductService {
   Future<void> updateStock(String productId, int newQty);
 
   // Soft-deletes a product (moves to Recycle Bin)
-  Future<void> deleteProduct(String productId);
+  Future<void> deleteProduct(String productId, String userId);
 
   // ── Recycle Bin operations ────────────────────────────────────────────────
   Future<List<Product>> getDeleted(
     String userId,
   ); // Returns soft-deleted products
-  Future<void> restoreProduct(String productId); // Un-deletes a product
-  Future<void> hardDeleteProduct(String productId); // Permanent purge
+  Future<void> restoreProduct(String productId, String userId);
+  Future<void> hardDeleteProduct(String productId, String userId);
 }
 
 /// Concrete implementation — all business logic for products.
@@ -134,9 +134,9 @@ class ProductService implements IProductService {
 
   // Delegates soft-delete to the repository
   @override
-  Future<void> deleteProduct(String productId) {
+  Future<void> deleteProduct(String productId, String userId) {
     _requireProductId(productId);
-    return _repo.delete(productId);
+    return _repo.delete(productId, userId);
   }
 
   // Delegates Recycle Bin operations to the repository
@@ -144,15 +144,15 @@ class ProductService implements IProductService {
   Future<List<Product>> getDeleted(String userId) => _repo.getDeleted(userId);
 
   @override
-  Future<void> restoreProduct(String productId) {
+  Future<void> restoreProduct(String productId, String userId) {
     _requireProductId(productId);
-    return _repo.restore(productId);
+    return _repo.restore(productId, userId);
   }
 
   @override
-  Future<void> hardDeleteProduct(String productId) {
+  Future<void> hardDeleteProduct(String productId, String userId) {
     _requireProductId(productId);
-    return _repo.hardDelete(productId);
+    return _repo.hardDelete(productId, userId);
   }
 
   void _requireProductId(String productId) {

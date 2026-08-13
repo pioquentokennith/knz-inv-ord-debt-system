@@ -11,9 +11,11 @@ const {
 } = require('@firebase/rules-unit-testing');
 const {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
+  increment,
   serverTimestamp,
   setDoc,
   Timestamp,
@@ -38,19 +40,44 @@ function anonymous(uid) {
   }).firestore();
 }
 
-async function seedAccess(uid, status, role = 'Staff', active = false) {
+async function seedAccess(uid, status, role = 'Staff', active = false,
+    accessGeneration = status === 'pending' ? 0 : 1) {
   await environment.withSecurityRulesDisabled(async (context) => {
     await setDoc(doc(context.firestore(), 'accountAccess', uid), {
       uid,
       status,
       role,
       active,
+      accessGeneration,
     });
   });
 }
 
 function defaultUsername(uid) {
   return `${uid.replace(/[^a-z0-9_]/g, '_')}_user`;
+}
+
+function businessEvent(uid, id, overrides = {}) {
+  return {
+    id,
+    user_id: uid,
+    subject_type: 'order',
+    subject_id: 'order-1',
+    event_type: 'payment',
+    amount_centavos: 1000,
+    occurred_at: '2026-01-01T00:00:00.000Z',
+    recorded_at: '2026-01-01T00:00:00.000Z',
+    payment_method: 'cash_on_delivery',
+    reference: null,
+    related_event_id: null,
+    reason: null,
+    command_id: id,
+    provenance: 'native',
+    source_type: null,
+    source_id: null,
+    schema_version: 1,
+    ...overrides,
+  };
 }
 
 async function seedPending(uid, username = defaultUsername(uid)) {
@@ -68,6 +95,7 @@ async function seedPending(uid, username = defaultUsername(uid)) {
       active: false,
       createdAt: timestamp,
       updatedAt: timestamp,
+      accessGeneration: 0,
     });
     await setDoc(doc(firestore, 'users', uid), {
       uid,
@@ -104,6 +132,7 @@ function registrationBatch(firestore, uid, {
     active,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+    accessGeneration: 0,
   });
   batch.set(doc(firestore, 'users', uid), {
     uid,
@@ -131,6 +160,7 @@ function reviewBatch(firestore, administratorUid, targetUid, decision) {
     reviewedBy: administratorUid,
     reviewedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
+    accessGeneration: increment(1),
   });
   batch.update(doc(firestore, 'users', targetUid), {
     role: 'Staff',
@@ -370,6 +400,55 @@ test('rejected and suspended states remain inactive and deny business access',
       )));
     });
 
+test('administrator can suspend and reactivate Staff with generation increments',
+    async () => {
+      await seedAccess('admin-user', 'approved', 'Administrator', true);
+      await seedPending('target-user');
+      const administrator = authenticated('admin-user');
+      await assertSucceeds(
+        reviewBatch(
+          administrator,
+          'admin-user',
+          'target-user',
+          'approved',
+        ).commit(),
+      );
+      await assertSucceeds(
+        reviewBatch(
+          administrator,
+          'admin-user',
+          'target-user',
+          'suspended',
+        ).commit(),
+      );
+      let access = await getDoc(doc(
+        administrator,
+        'accountAccess/target-user',
+      ));
+      assert.equal(access.data().accessGeneration, 2);
+      await assertSucceeds(
+        reviewBatch(
+          administrator,
+          'admin-user',
+          'target-user',
+          'approved',
+        ).commit(),
+      );
+      access = await getDoc(doc(
+        administrator,
+        'accountAccess/target-user',
+      ));
+      assert.equal(access.data().accessGeneration, 3);
+    });
+
+test('Staff cannot change lifecycle state or generation', async () => {
+  await seedAccess('admin-user', 'approved', 'Administrator', true);
+  await seedPending('target-user');
+  const staff = authenticated('target-user');
+  const batch = reviewBatch(staff, 'target-user', 'target-user', 'approved');
+  await assertFails(batch.commit());
+});
+
 test('approved active users can access only UID-owned business documents', async () => {
   await seedAccess('approved-user', 'approved', 'Staff', true);
   const firestore = authenticated('approved-user');
@@ -386,6 +465,96 @@ test('approved active users can access only UID-owned business documents', async
   ));
 });
 
+test('revision-aware writes advance exactly one and reject stale updates', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const product = doc(firestore, 'users/approved-user/products/product-1');
+  await assertSucceeds(setDoc(product, {
+    id: 'product-1',
+    user_id: 'approved-user',
+    revision: 1,
+    base_revision: 0,
+    writer_device_id: 'DEVICE01',
+    updated_at: new Date().toISOString(),
+  }));
+  await assertSucceeds(updateDoc(product, {
+    revision: 2,
+    base_revision: 1,
+    writer_device_id: 'DEVICE01',
+    updated_at: new Date().toISOString(),
+  }));
+  await assertFails(updateDoc(product, {
+    revision: 2,
+    base_revision: 1,
+    writer_device_id: 'DEVICE02',
+    updated_at: new Date().toISOString(),
+  }));
+  await assertFails(updateDoc(product, {
+    revision: 4,
+    base_revision: 2,
+    writer_device_id: 'DEVICE02',
+    updated_at: new Date().toISOString(),
+  }));
+});
+
+test('Staff cannot delete, restore, or permanently purge business entities', async () => {
+  await seedAccess('staff-user', 'approved', 'Staff', true);
+  const firestore = authenticated('staff-user');
+  for (const collectionName of [
+    'products',
+    'debts',
+    'resellers',
+    'custom_orders',
+  ]) {
+    const reference = doc(
+      firestore,
+      `users/staff-user/${collectionName}/record-1`,
+    );
+    await assertSucceeds(setDoc(reference, {
+      id: 'record-1',
+      user_id: 'staff-user',
+      is_deleted: 0,
+      deleted_at: null,
+    }));
+    await assertFails(updateDoc(reference, {
+      is_deleted: 1,
+      deleted_at: new Date().toISOString(),
+    }));
+    await assertFails(deleteDoc(reference));
+  }
+});
+
+test('Administrator can delete, restore, and purge owned business entities', async () => {
+  await seedAccess('admin-user', 'approved', 'Administrator', true);
+  const firestore = authenticated('admin-user');
+  for (const collectionName of [
+    'products',
+    'debts',
+    'resellers',
+    'custom_orders',
+  ]) {
+    const reference = doc(
+      firestore,
+      `users/admin-user/${collectionName}/record-1`,
+    );
+    await assertSucceeds(setDoc(reference, {
+      id: 'record-1',
+      user_id: 'admin-user',
+      is_deleted: 0,
+      deleted_at: null,
+    }));
+    await assertSucceeds(updateDoc(reference, {
+      is_deleted: 1,
+      deleted_at: new Date().toISOString(),
+    }));
+    await assertSucceeds(updateDoc(reference, {
+      is_deleted: 0,
+      deleted_at: null,
+    }));
+    await assertSucceeds(deleteDoc(reference));
+  }
+});
+
 test('allows required reseller and custom-order sync paths', async () => {
   await seedAccess('approved-user', 'approved', 'Staff', true);
   const firestore = authenticated('approved-user');
@@ -396,6 +565,153 @@ test('allows required reseller and custom-order sync paths', async () => {
   await assertSucceeds(setDoc(
     doc(firestore, 'users/approved-user/custom_orders/custom-1'),
     { id: 'custom-1', user_id: 'approved-user', is_deleted: 0 },
+  ));
+});
+
+test('atomic order finalization may allocate one canonical command result', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const batch = writeBatch(firestore);
+  const order = doc(firestore, 'users/approved-user/orders/order-1');
+  const counter = doc(firestore, 'users/approved-user/counters/orders');
+  const command = doc(
+    firestore,
+    'users/approved-user/order_commands/command-1',
+  );
+  batch.set(order, {
+    id: 'order-1',
+    user_id: 'approved-user',
+    order_id: 'KNZ-000001',
+    command_id: 'command-1',
+    status: 'Pending',
+    items: [{ product_id: 'product-1', quantity: 1 }],
+    is_deleted: 0,
+  });
+  batch.set(counter, {
+    id: 'orders',
+    user_id: 'approved-user',
+    last_value: 1,
+  });
+  batch.set(command, {
+    id: 'command-1',
+    user_id: 'approved-user',
+    order_doc_id: 'order-1',
+    canonical_order_id: 'KNZ-000001',
+    sequence_value: 1,
+  });
+
+  await assertSucceeds(batch.commit());
+  await assertFails(updateDoc(command, { canonical_order_id: 'KNZ-000002' }));
+  await assertFails(deleteDoc(command));
+});
+
+test('canonical command must match its order and sequence counter', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const batch = writeBatch(firestore);
+  batch.set(doc(firestore, 'users/approved-user/orders/order-1'), {
+    id: 'order-1',
+    user_id: 'approved-user',
+    order_id: 'KNZ-000001',
+    command_id: 'command-1',
+    status: 'Pending',
+    items: [],
+    is_deleted: 0,
+  });
+  batch.set(doc(firestore, 'users/approved-user/counters/orders'), {
+    id: 'orders',
+    user_id: 'approved-user',
+    last_value: 1,
+  });
+  batch.set(
+    doc(firestore, 'users/approved-user/order_commands/command-1'),
+    {
+      id: 'command-1',
+      user_id: 'approved-user',
+      order_doc_id: 'order-1',
+      canonical_order_id: 'KNZ-999999',
+      sequence_value: 1,
+    },
+  );
+  await assertFails(batch.commit());
+});
+
+test('debt payment and command records are append-only and allocation-safe', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const debt = doc(firestore, 'users/approved-user/debts/debt-1');
+  await assertSucceeds(setDoc(debt, {
+    id: 'debt-1',
+    user_id: 'approved-user',
+    revision: 1,
+    base_revision: 0,
+    writer_device_id: 'DEVICE01',
+    updated_at: new Date().toISOString(),
+  }));
+  const payment = doc(
+    firestore,
+    'users/approved-user/debts/debt-1/payments/payment-1',
+  );
+  const command = doc(
+    firestore,
+    'users/approved-user/payment_commands/debt-collection-payment-1',
+  );
+  const batch = writeBatch(firestore);
+  batch.update(debt, {
+    revision: 2,
+    base_revision: 1,
+    writer_device_id: 'DEVICE01',
+    updated_at: new Date().toISOString(),
+  });
+  batch.set(payment, {
+    id: 'payment-1',
+    debt_id: 'debt-1',
+    amount_centavos: 1000,
+    interest_applied_centavos: 200,
+    principal_applied_centavos: 800,
+    paid_at: new Date().toISOString(),
+    payment_method: 'cash',
+    reference: null,
+    note: null,
+    schema_version: 1,
+  });
+  batch.set(command, {
+    id: 'debt-collection-payment-1',
+    user_id: 'approved-user',
+    parent_id: 'debt-1',
+    payment_id: 'payment-1',
+    event_id: 'debt-collection-payment-1',
+    resulting_revision: 2,
+  });
+  await assertSucceeds(batch.commit());
+  await assertFails(updateDoc(payment, { amount_centavos: 2000 }));
+  await assertFails(deleteDoc(payment));
+  await assertFails(updateDoc(command, { resulting_revision: 3 }));
+});
+
+test('debt payment rejects mismatched allocation', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  await environment.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'users/approved-user/debts/debt-1'), {
+      id: 'debt-1',
+      user_id: 'approved-user',
+    });
+  });
+  await assertFails(setDoc(
+    doc(firestore, 'users/approved-user/debts/debt-1/payments/payment-1'),
+    {
+      id: 'payment-1',
+      debt_id: 'debt-1',
+      amount_centavos: 1000,
+      interest_applied_centavos: 200,
+      principal_applied_centavos: 700,
+      paid_at: new Date().toISOString(),
+      payment_method: 'cash',
+      reference: null,
+      note: null,
+      schema_version: 1,
+    },
   ));
 });
 
@@ -433,16 +749,90 @@ test('tombstones retain owner and document identity validation', async () => {
   ));
 });
 
+test('approved users can create and read valid immutable business events', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const reference = doc(
+    firestore,
+    'users/approved-user/business_events/event-1',
+  );
+  await assertSucceeds(setDoc(
+    reference,
+    businessEvent('approved-user', 'event-1'),
+  ));
+  await assertSucceeds(getDoc(reference));
+  await assertFails(updateDoc(reference, { amount_centavos: 900 }));
+  await assertFails(deleteDoc(reference));
+});
+
+test('business event rules reject malformed and cross-owner facts', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const pathPrefix = 'users/approved-user/business_events';
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/bad-amount`),
+    businessEvent('approved-user', 'bad-amount', { amount_centavos: 0 }),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/bad-subject`),
+    businessEvent('approved-user', 'bad-subject', {
+      subject_type: 'debt',
+      event_type: 'payment',
+    }),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/wrong-owner`),
+    businessEvent('another-user', 'wrong-owner'),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/bad-delivery`),
+    businessEvent('approved-user', 'bad-delivery', {
+      event_type: 'delivery',
+      amount_centavos: 1000,
+      payment_method: null,
+    }),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/missing-time`),
+    businessEvent('approved-user', 'missing-time', { occurred_at: null }),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/bad-tender`),
+    businessEvent('approved-user', 'bad-tender', { payment_method: 'utang' }),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/missing-reference`),
+    businessEvent('approved-user', 'missing-reference', {
+      payment_method: 'gcash',
+      reference: null,
+    }),
+  ));
+  await assertFails(setDoc(
+    doc(firestore, `${pathPrefix}/partial-source`),
+    businessEvent('approved-user', 'partial-source', {
+      source_type: 'debt_payment',
+      source_id: null,
+    }),
+  ));
+});
+
+test('pending users cannot create business events', async () => {
+  await seedAccess('pending-user', 'pending', 'Staff', false);
+  const firestore = authenticated('pending-user');
+  await assertFails(setDoc(
+    doc(firestore, 'users/pending-user/business_events/event-1'),
+    businessEvent('pending-user', 'event-1'),
+  ));
+});
+
 test('approved users cannot read private security collections', async () => {
   await seedAccess('approved-user', 'approved', 'Staff', true);
   const firestore = authenticated('approved-user');
   for (const collectionName of [
-    '_otpChallenges',
-    '_otpRateLimits',
-    '_otpTokenUses',
     '_authAccounts',
     '_authRateLimits',
     '_usernames',
+    '_unrecognizedPrivate',
   ]) {
     await assertFails(getDoc(doc(firestore, collectionName, 'record-1')));
   }

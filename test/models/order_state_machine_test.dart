@@ -4,15 +4,23 @@ import 'package:knz_scent_admin/models/order_model.dart';
 import 'package:knz_scent_admin/models/order_state_machine.dart';
 
 void main() {
-  test('new orders support every status while preserving debt pairing', () {
+  test('new orders require explicit delivery and preserve debt pairing', () {
     for (final status in OrderStatus.values.where(
-      (status) => status != OrderStatus.utang,
+      (status) =>
+          status != OrderStatus.utang && status != OrderStatus.delivered,
     )) {
       expect(
         () => OrderStateMachine.validateInitial(status, hasDebt: false),
         returnsNormally,
       );
     }
+    expect(
+      () => OrderStateMachine.validateInitial(
+        OrderStatus.delivered,
+        hasDebt: false,
+      ),
+      throwsA(isA<InvalidOrderTransitionException>()),
+    );
     expect(
       () => OrderStateMachine.validateInitial(OrderStatus.utang, hasDebt: true),
       returnsNormally,

@@ -86,7 +86,6 @@ class AppStrings {
 
   // ── Login / auth screen labels ────────────────────────────────────────────
   // removed: signIn, register (inline strings used in login/register screens)
-  static const String username = 'USERNAME'; // Login field label
   static const String password = 'PASSWORD'; // Password field label
   static const String enterPortal = 'ENTER PORTAL'; // Submit button text
   static const String defaultLogin =

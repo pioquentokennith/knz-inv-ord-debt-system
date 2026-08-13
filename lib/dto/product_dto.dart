@@ -118,7 +118,8 @@ class ProductDto {
     'schema_version': currentVersion,
   };
 
-  Map<String, dynamic> toCloud() => toLocal();
+  // Product photos are intentionally device-local and never leave SQLite.
+  Map<String, dynamic> toCloud() => {...toLocal(), 'image_path': null};
 
   Product toDomain() => Product(
     id: id,

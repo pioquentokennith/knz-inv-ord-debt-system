@@ -23,6 +23,7 @@ import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/debt_model.dart';
 import '../models/custom_order_model.dart';
+import '../models/business_event_model.dart';
 import '../core/app_constants.dart';
 import '../core/money.dart';
 import 'accounting_service.dart';
@@ -177,6 +178,7 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     List<CustomOrder> customOrders = const [],
+    List<BusinessEvent> businessEvents = const [],
     DateTime? paymentFrom,
     DateTime? paymentTo,
   }) async {
@@ -185,6 +187,7 @@ class ExportService {
       orders: orders,
       debts: debts,
       customOrders: customOrders,
+      businessEvents: businessEvents,
       period: AccountingPeriod(from: paymentFrom, to: paymentTo),
     );
     final rows = buildAnalyticsCsvRows(
@@ -213,6 +216,13 @@ class ExportService {
       ['Gross Sales (PHP)', report.grossSales.toStringAsFixed(2)],
       ['Discounts (PHP)', report.discounts.toStringAsFixed(2)],
       ['Net Sales (PHP)', report.netSales.toStringAsFixed(2)],
+      ['Direct Order Payments (PHP)', report.orderPayments.toStringAsFixed(2)],
+      ['Order Refunds (PHP)', report.orderRefunds.toStringAsFixed(2)],
+      [
+        'Order Reversal Effect (PHP)',
+        report.orderReversalEffect.toStringAsFixed(2),
+      ],
+      ['Net Direct Order Cash (PHP)', report.netOrderCash.toStringAsFixed(2)],
       ['Debt Collections (PHP)', report.debtCollections.toStringAsFixed(2)],
       [
         'Custom Order Receipts (PHP)',
@@ -799,6 +809,7 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     List<CustomOrder> customOrders = const [],
+    List<BusinessEvent> businessEvents = const [],
     required String businessName,
     String? userName,
     DateTime? paymentFrom,
@@ -810,6 +821,7 @@ class ExportService {
       orders: orders,
       debts: debts,
       customOrders: customOrders,
+      businessEvents: businessEvents,
       businessName: businessName,
       userName: userName,
       paymentFrom: paymentFrom,
@@ -827,6 +839,7 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     List<CustomOrder> customOrders = const [],
+    List<BusinessEvent> businessEvents = const [],
     required String businessName,
     String? userName,
     DateTime? paymentFrom,
@@ -838,6 +851,7 @@ class ExportService {
       orders: orders,
       debts: debts,
       customOrders: customOrders,
+      businessEvents: businessEvents,
       businessName: businessName,
       userName: userName,
       paymentFrom: paymentFrom,
@@ -851,6 +865,7 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     List<CustomOrder> customOrders = const [],
+    List<BusinessEvent> businessEvents = const [],
     required String businessName,
     String? userName,
     DateTime? paymentFrom,
@@ -862,6 +877,7 @@ class ExportService {
       orders: orders,
       debts: debts,
       customOrders: customOrders,
+      businessEvents: businessEvents,
       businessName: businessName,
       userName: userName,
       paymentFrom: paymentFrom,
@@ -882,6 +898,7 @@ class ExportService {
     required List<Order> orders,
     required List<CustomerDebt> debts,
     List<CustomOrder> customOrders = const [],
+    List<BusinessEvent> businessEvents = const [],
     required String businessName,
     String? userName,
     DateTime? paymentFrom,
@@ -896,6 +913,7 @@ class ExportService {
       orders: orders,
       debts: debts,
       customOrders: customOrders,
+      businessEvents: businessEvents,
       period: AccountingPeriod(from: paymentFrom, to: paymentTo),
     );
     final totalOrders = orders.length;
@@ -971,7 +989,7 @@ class ExportService {
                     ),
                     pw.SizedBox(height: 2),
                     pw.Text(
-                      'Paid sales, debt collections, and custom-order receipts',
+                      'Fulfilled sales, explicit payments, refunds, and collections',
                       style: const pw.TextStyle(
                         fontSize: 7,
                         color: PdfColors.grey500,
@@ -1393,11 +1411,13 @@ class ExportService {
   static Future<void> exportResellerDetailedPdf(
     List<Order> orders, {
     required String businessName,
+    List<BusinessEvent> businessEvents = const [],
   }) async {
     await _ensureFonts();
     final report = AccountingService.instance.summarize(
       orders: orders,
       debts: const [],
+      businessEvents: businessEvents,
     );
     final pdf = pw.Document();
     pdf.addPage(

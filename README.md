@@ -15,7 +15,7 @@
 
 The current supported release target is **Android**. The repository keeps iOS, macOS, web, Windows, and Linux scaffolding for future work, but those targets are not release-supported until their Firebase registrations, native capabilities, and device test matrices are completed.
 
-The production package ID is `com.knzscent.admin`. The checked-in Android Firebase file belongs to the previous template ID, so regenerate Firebase configuration for the new package before expecting Firebase-backed features or Crashlytics to work. Credential-free CI builds intentionally skip the Firebase Gradle plugins when no matching configuration is available.
+The production package ID is `com.knzscent.admin`. The checked-in Android Firebase configuration includes that package registration. Credential-free CI builds intentionally skip the Firebase Gradle plugins when no matching configuration is available.
 
 ---
 
@@ -37,7 +37,8 @@ The production package ID is `com.knzscent.admin`. The checked-in Android Fireba
 | 📤 **Export** | Export inventory, orders, and debt records as PDF or CSV and share them |
 | 🖨️ **Bluetooth Printing** | Print receipts and debt agreements wirelessly to ESC/POS Bluetooth thermal printers |
 | 🔄 **Offline-First Sync** | Works without internet; auto-syncs to Firebase Firestore when back online via a persistent sync queue |
-| ⏱️ **Session Timeout** | Automatically logs out after a period of inactivity for security |
+| 🔓 **Trusted Offline Session** | Automatically restores an approved account on its enrolled device until explicit sign-out or confirmed suspension |
+| 🖼️ **Local Product Photos** | Inventory photos remain on the device and are not uploaded to Firebase |
 | 🔔 **Local Notifications** | On-device notifications for low-stock and overdue-debt reminders |
 
 ---
@@ -92,13 +93,11 @@ lib/
 │   ├── export_service.dart            # PDF and CSV export logic
 │   ├── notification_service.dart      # Local push notifications (low-stock alerts)
 │   ├── login_rate_limiter.dart        # Persistent brute-force lockout (SharedPreferences-backed)
-│   ├── otp_service.dart                # Calls the secured Firebase OTP backend
 │   └── session_timeout_service.dart
 │
 ├── screens/                           # UI screens (one per feature)
 │   ├── login_screen.dart
 │   ├── register_screen.dart
-│   ├── otp_screen.dart
 │   ├── forgot_password_screen.dart
 │   ├── main_shell.dart               # Navigation shell with sidebar
 │   ├── overview_screen.dart
@@ -132,7 +131,7 @@ lib/
 │   └── receipt_shared_widgets.dart
 │
 ├── database/
-│   └── database_helper.dart          # SQLite setup and schema migrations (current version: 12)
+│   └── database_helper.dart          # SQLite setup and schema migrations (current version: 16)
 │
 ├── firebase_options.dart
 └── main.dart
@@ -193,7 +192,7 @@ IAuthService    _authService;
 
 - **Local:** SQLite via `sqflite` (primary, offline-first)
 - **Cloud:** Firebase Firestore (backup, synced when back online)
-- **Schema Version:** 12, with tested upgrades from every historical version
+- **Schema Version:** 16, with tested upgrades from every historical version
 
 ### Tables
 
@@ -211,6 +210,9 @@ IAuthService    _authService;
 | `resellers` | Reseller accounts with per-item deduction amounts |
 | `custom_orders` | Custom/bespoke order records |
 | `custom_order_payments` | Immutable custom-order receipt history |
+| `business_events` | Immutable accounting and collection events |
+| `device_auth_grants` | Trusted-device authorization metadata; secrets remain in OS secure storage |
+| `auth_runtime_state` | Durable sign-out and active-session journal |
 
 ---
 
@@ -284,7 +286,7 @@ The app supports the following fragrance product categories:
 | Cloud Database | Firebase Firestore (`cloud_firestore ^5.6.5`) |
 | Authentication | Firebase Authentication with Firestore-rules-enforced approval and UID ownership |
 | State Management | `ChangeNotifier` — singleton `AppState` |
-| Optional Email Delivery | Brevo through Firebase callable Functions; secrets stored in Google Cloud Secret Manager |
+| Accounting | Immutable payment, delivery, refund, reversal, and collection events with integer-centavo projections |
 | Password Handling | Managed by Firebase Authentication; no client or Firestore password verifier |
 | Login Protection | Persistent rate limiter via `shared_preferences ^2.3.2` |
 | Analytics Charts | `fl_chart ^0.70.2` |
@@ -313,7 +315,7 @@ Reproducible installs use the exact resolutions in `pubspec.lock`.
 - Firebase CLI `14.27.0` and FlutterFire CLI
 - Android Studio or VS Code with Flutter plugin
 - Spark-plan Firebase project with Firestore, Email/Password Authentication, and Crashlytics enabled
-- Node.js tooling for local Functions and Firestore emulator tests; no production Functions deployment is required
+- Node.js tooling for Administrator bootstrap and Firestore rules tests
 - A Bluetooth ESC/POS thermal printer (optional, for receipt printing)
 
 ### Setup
@@ -336,20 +338,22 @@ Reproducible installs use the exact resolutions in `pubspec.lock`.
 
 3. **Deploy the Spark-compatible Firestore configuration**
 
-   Firebase Authentication email verification and password reset are the active production authentication flows. Registration and account review use Firebase Auth plus atomic Firestore batches protected by rules. They do not call deployed Cloud Functions or Brevo.
+   Firebase Authentication email verification and password reset are the active production authentication flows. Registration and account review use Firebase Auth plus atomic Firestore batches protected by rules. No callable backend deployment is required.
 
-   Keep the Functions source for emulator coverage or a future owner-approved Blaze migration, but do not deploy it for the Spark production path:
+   Use the retained Administrator tooling to validate bootstrap behavior and deploy the Firestore rules and indexes:
 
    ```bash
    cd functions
    npm ci
    npm run lint
    npm test
-   npm run deploy:spark
+   npm run deploy:firestore
    cd ..
    ```
 
-   Never place Firebase Admin credentials, Brevo keys, OTP secrets, or sender credentials in Flutter source, assets, logs, or crash reports.
+   Never place Firebase Administrator credentials in Flutter source, assets, logs, or crash reports.
+
+   Local schema v15 backfills existing deliveries and payment histories into an immutable business-event ledger. New orders record delivery separately from payment; changing an order to `Delivered` never implies that cash was collected.
 
 4. **Run the Android app**
 
@@ -363,7 +367,7 @@ Apple, web, and desktop targets require separate Firebase registrations and plat
 
 ## 🧪 Tests and CI
 
-The automated suite covers authentication and registration decisions, sessions and rate limiting, domain validation, products, atomic order/stock/debt transactions, interest and payment allocation, accounting, CSV/PDF exports, DTO restore into a fresh database, migrations, durable outbox retries, Functions policies/endpoints, and Firestore authorization rules. Bluetooth hardware, platform permissions, production Firebase configuration, and signed-release behavior still require device or owner-controlled verification.
+The automated suite covers authentication and registration decisions, sessions and rate limiting, domain validation, products, atomic order/stock/debt transactions, immutable payment/delivery/refund/reversal/collection events, interest and payment allocation, accounting, CSV/PDF exports, DTO restore into a fresh database, migrations, durable outbox retries, Administrator bootstrap behavior, and Firestore authorization rules. Bluetooth hardware, platform permissions, production Firebase configuration, and signed-release behavior still require device or owner-controlled verification.
 
 Run Flutter checks with:
 
@@ -381,11 +385,11 @@ cd functions
 npm ci
 npm run lint
 npm test
-npm run test:emulator
+npm run test:rules
 npm audit --omit=dev --audit-level=high
 ```
 
-The GitHub Actions workflow is configured to run formatting, analysis, Flutter tests with a 30% line-coverage floor, an Android debug build, Functions unit/emulator tests, Firestore rule tests, and a production dependency audit. These CI-equivalent checks pass locally; a clean-clone remote workflow run still requires owner validation. The Phase 7 baseline measured 55.45% line coverage; the lower gate allows normal compiler and platform variation while preventing a major regression, and should increase as additional UI and platform seams become deterministic.
+The GitHub Actions workflow is configured to run formatting, analysis, Flutter tests with a 30% line-coverage floor, an Android debug build, Administrator tooling tests, Firestore rules tests, and a production dependency audit. These CI-equivalent checks pass locally; a clean-clone remote workflow run still requires owner validation. The Phase 7 baseline measured 55.45% line coverage; the lower gate allows normal compiler and platform variation while preventing a major regression, and should increase as additional UI and platform seams become deterministic.
 
 ---
 

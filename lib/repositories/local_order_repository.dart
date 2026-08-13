@@ -2,15 +2,20 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../core/domain_exceptions.dart';
+import '../core/money.dart';
 import '../database/database_helper.dart';
+import '../dto/business_event_dto.dart';
 import '../dto/debt_dto.dart';
 import '../dto/order_dto.dart';
 import '../dto/product_dto.dart';
 import '../models/debt_model.dart';
+import '../models/business_event_model.dart';
 import '../models/order_model.dart';
 import '../models/order_state_machine.dart';
+import '../models/payment_method_model.dart';
 import 'base_repository.dart';
 import 'firestore_sync.dart';
+import 'local_business_event_repository.dart';
 import 'order_repository.dart';
 import 'sync_queue.dart';
 
@@ -59,9 +64,11 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
 
     if (localRows.isEmpty && _queue.isOnline) {
       final cloudOrders = await _cloud.getOrders(userId);
+      final incoming = cloudOrders
+          .map((order) => OrderDto.fromCloud(order, userId: userId))
+          .toList(growable: false);
       await database.transaction((txn) async {
-        for (final cloudOrder in cloudOrders) {
-          final dto = OrderDto.fromCloud(cloudOrder, userId: userId);
+        for (final dto in incoming) {
           final orderId = dto.id;
           final existing = await txn.query(
             'orders',
@@ -93,11 +100,6 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   @override
   Future<List<Order>> getDeleted(String userId) =>
       safeCall(() => _loadOrders(userId, isDeleted: true));
-
-  @override
-  Future<void> add(Order order, String userId) async {
-    await addWithInventory(order, userId);
-  }
 
   @override
   Future<OrderCreationResult> addWithInventory(
@@ -177,6 +179,23 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           'Use the Utang workflow so the debt ledger is created atomically.',
         );
       }
+      if (status == OrderStatus.delivered) {
+        throw const InvalidOrderTransitionException(
+          'Use the delivery workflow so its timestamp is recorded atomically.',
+        );
+      }
+      if (status == OrderStatus.cancelled) {
+        final events = await _eventsForOrder(
+          txn,
+          row['user_id'] as String,
+          orderId,
+        );
+        if (BusinessEventLedger.netCash(events).isPositive) {
+          throw StateError(
+            'Refund or reverse all collected payments before cancelling.',
+          );
+        }
+      }
       final hasOpenDebt = await _hasOpenDebt(txn, row);
       OrderStateMachine.validate(current, status, hasOpenDebt: hasOpenDebt);
 
@@ -248,123 +267,207 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   });
 
   @override
-  Future<void> markAsUtang(String orderId, CustomerDebt debt) =>
-      safeVoidCall(() async {
-        _validateDebt(debt);
-        final database = await _databaseProvider();
-        await database.transaction((txn) async {
-          final orderRows = await txn.query(
-            'orders',
-            where: 'id = ? AND is_deleted = 0',
-            whereArgs: [orderId],
-            limit: 1,
-          );
-          if (orderRows.isEmpty) {
-            throw StateError('Active order not found: $orderId');
-          }
+  Future<BusinessEvent> recordPayment(String orderId, BusinessEvent event) =>
+      _recordOrderFinancialEvent(orderId, event, BusinessEventType.payment);
 
-          final orderRow = Map<String, dynamic>.from(orderRows.single);
-          final userId = orderRow['user_id'] as String?;
-          if (userId == null || userId.isEmpty) {
-            throw StateError('Order $orderId has no owning user.');
-          }
-          final humanOrderId = orderRow['order_id'] as String;
-          if (debt.orderId != humanOrderId) {
-            throw ArgumentError.value(
-              debt.orderId,
-              'debt.orderId',
-              'Debt must reference order $humanOrderId.',
-            );
-          }
+  @override
+  Future<BusinessEvent> issueRefund(String orderId, BusinessEvent event) =>
+      _recordOrderFinancialEvent(orderId, event, BusinessEventType.refund);
 
-          final existingDebts = await txn.query(
-            'debts',
-            columns: const ['id'],
-            where: 'user_id = ? AND order_id = ? AND is_deleted = 0',
-            whereArgs: [userId, humanOrderId],
-            limit: 1,
-          );
-          if (existingDebts.isNotEmpty) {
-            throw StateError(
-              'Order $humanOrderId already has an active debt ledger.',
-            );
-          }
-          final reusedDebtId = await txn.query(
-            'debts',
-            columns: const ['id'],
-            where: 'id = ?',
-            whereArgs: [debt.id],
-            limit: 1,
-          );
-          if (reusedDebtId.isNotEmpty) {
-            throw StateError('Debt id already exists: ${debt.id}');
-          }
-          OrderStateMachine.validate(
-            OrderStatusExtension.fromString(orderRow['status'] as String),
-            OrderStatus.utang,
-            hasOpenDebt: false,
-          );
+  @override
+  Future<BusinessEvent> reverseEvent(String orderId, BusinessEvent event) =>
+      _recordOrderFinancialEvent(orderId, event, BusinessEventType.reversal);
 
-          final changed = await txn.update(
-            'orders',
-            {'status': OrderStatus.utang.displayName},
-            where: 'id = ? AND user_id = ? AND is_deleted = 0',
-            whereArgs: [orderId, userId],
-          );
-          if (changed != 1) {
-            throw StateError('Failed to mark order $orderId as utang.');
-          }
+  @override
+  Future<BusinessEvent> recordDelivery(
+    String orderId,
+    BusinessEvent event,
+  ) => safeWriteCall(() async {
+    if (event.type != BusinessEventType.delivery) {
+      throw ArgumentError('A delivery event is required.');
+    }
+    final database = await _databaseProvider();
+    late BusinessEvent saved;
+    await database.transaction((txn) async {
+      final snapshot = await _requireOrder(txn, orderId, isDeleted: false);
+      final userId = snapshot.order['user_id'] as String;
+      _validateEventOwner(event, userId, orderId);
+      final replay = await _findEventByCommand(txn, event);
+      if (replay != null) {
+        saved = replay;
+        return;
+      }
+      _validateEventTimestamp(event, snapshot.order['order_date'] as String);
+      final current = OrderStatusExtension.fromString(
+        snapshot.order['status'] as String,
+      );
+      final hasOpenDebt = await _hasOpenDebt(txn, snapshot.order);
+      OrderStateMachine.validate(
+        current,
+        OrderStatus.delivered,
+        hasOpenDebt: hasOpenDebt,
+      );
+      final existingDelivery = await txn.query(
+        'business_events',
+        columns: const ['id'],
+        where:
+            'user_id = ? AND subject_type = ? AND subject_id = ? '
+            'AND event_type = ?',
+        whereArgs: [userId, 'order', orderId, 'delivery'],
+        limit: 1,
+      );
+      if (existingDelivery.isNotEmpty) {
+        throw StateError('Order already has a delivery event.');
+      }
+      await insertBusinessEvent(txn, event);
+      final changed = await txn.update(
+        'orders',
+        {'status': OrderStatus.delivered.displayName},
+        where: 'id = ? AND user_id = ? AND is_deleted = 0',
+        whereArgs: [orderId, userId],
+      );
+      if (changed != 1) throw StateError('Failed to deliver order: $orderId');
+      final updatedOrder = Map<String, dynamic>.from(snapshot.order)
+        ..['status'] = OrderStatus.delivered.displayName;
+      final orderDto = OrderDto.fromLocal(updatedOrder, snapshot.items);
+      await _queue.enqueue(
+        operation: 'save_order_with_event',
+        collection: 'orders',
+        userId: userId,
+        docId: orderId,
+        data: {
+          '_order': _orderOutboxPayload(orderDto),
+          '_event': BusinessEventDto.fromDomain(event).toCloud(),
+        },
+        executor: txn,
+      );
+      saved = event;
+    });
+    _queue.requestSync();
+    return saved;
+  });
 
-          final itemRows = await txn.query(
-            'order_items',
-            where: 'order_id = ?',
-            whereArgs: [orderId],
-            orderBy: 'id ASC',
+  @override
+  Future<void> markAsUtang(String orderId, CustomerDebt debt) => safeVoidCall(
+    () async {
+      _validateDebt(debt);
+      final database = await _databaseProvider();
+      await database.transaction((txn) async {
+        final orderRows = await txn.query(
+          'orders',
+          where: 'id = ? AND is_deleted = 0',
+          whereArgs: [orderId],
+          limit: 1,
+        );
+        if (orderRows.isEmpty) {
+          throw StateError('Active order not found: $orderId');
+        }
+
+        final orderRow = Map<String, dynamic>.from(orderRows.single);
+        final userId = orderRow['user_id'] as String?;
+        if (userId == null || userId.isEmpty) {
+          throw StateError('Order $orderId has no owning user.');
+        }
+        final humanOrderId = orderRow['order_id'] as String;
+        if (debt.orderId != humanOrderId) {
+          throw ArgumentError.value(
+            debt.orderId,
+            'debt.orderId',
+            'Debt must reference order $humanOrderId.',
           );
-          final updatedOrder = Map<String, dynamic>.from(orderRow)
-            ..['status'] = OrderStatus.utang.displayName;
-          final dto = OrderDto.fromLocal(
-            updatedOrder,
-            itemRows.map(Map<String, dynamic>.from).toList(),
+        }
+
+        final existingDebts = await txn.query(
+          'debts',
+          columns: const ['id'],
+          where: 'user_id = ? AND order_id = ? AND is_deleted = 0',
+          whereArgs: [userId, humanOrderId],
+          limit: 1,
+        );
+        if (existingDebts.isNotEmpty) {
+          throw StateError(
+            'Order $humanOrderId already has an active debt ledger.',
           );
-          await _queue.enqueue(
-            operation: 'save_order',
-            collection: 'orders',
-            userId: userId,
-            docId: orderId,
-            data: _orderOutboxPayload(dto),
-            executor: txn,
+        }
+        final events = await _eventsForOrder(txn, userId, orderId);
+        if (BusinessEventLedger.netCash(events).isPositive) {
+          throw StateError(
+            'Refund or reverse direct payments before converting to Utang.',
           );
-          await _insertDebt(txn, debt, humanOrderId, userId);
-        });
-        _queue.requestSync();
+        }
+        final reusedDebtId = await txn.query(
+          'debts',
+          columns: const ['id'],
+          where: 'id = ?',
+          whereArgs: [debt.id],
+          limit: 1,
+        );
+        if (reusedDebtId.isNotEmpty) {
+          throw StateError('Debt id already exists: ${debt.id}');
+        }
+        OrderStateMachine.validate(
+          OrderStatusExtension.fromString(orderRow['status'] as String),
+          OrderStatus.utang,
+          hasOpenDebt: false,
+        );
+
+        final changed = await txn.update(
+          'orders',
+          {'status': OrderStatus.utang.displayName, 'payment_method': 'utang'},
+          where: 'id = ? AND user_id = ? AND is_deleted = 0',
+          whereArgs: [orderId, userId],
+        );
+        if (changed != 1) {
+          throw StateError('Failed to mark order $orderId as utang.');
+        }
+
+        final itemRows = await txn.query(
+          'order_items',
+          where: 'order_id = ?',
+          whereArgs: [orderId],
+          orderBy: 'id ASC',
+        );
+        final updatedOrder = Map<String, dynamic>.from(orderRow)
+          ..['status'] = OrderStatus.utang.displayName
+          ..['payment_method'] = 'utang';
+        final dto = OrderDto.fromLocal(
+          updatedOrder,
+          itemRows.map(Map<String, dynamic>.from).toList(),
+        );
+        await _queue.enqueue(
+          operation: 'save_order',
+          collection: 'orders',
+          userId: userId,
+          docId: orderId,
+          data: _orderOutboxPayload(dto),
+          executor: txn,
+        );
+        await _insertDebt(txn, debt, humanOrderId, userId);
       });
+      _queue.requestSync();
+    },
+  );
 
   @override
-  Future<void> delete(String orderId) =>
-      _setDeleted(orderId, deleted: true, adjustInventory: false);
+  Future<void> deleteWithInventory(String orderId, String userId) =>
+      _setDeleted(orderId, userId, deleted: true);
 
   @override
-  Future<void> deleteWithInventory(String orderId) =>
-      _setDeleted(orderId, deleted: true, adjustInventory: true);
+  Future<void> restoreWithInventory(String orderId, String userId) =>
+      _setDeleted(orderId, userId, deleted: false);
 
   @override
-  Future<void> restore(String orderId) =>
-      _setDeleted(orderId, deleted: false, adjustInventory: false);
-
-  @override
-  Future<void> restoreWithInventory(String orderId) =>
-      _setDeleted(orderId, deleted: false, adjustInventory: true);
-
-  @override
-  Future<void> hardDelete(String orderId) => safeVoidCall(() async {
+  Future<void> hardDelete(
+    String orderId,
+    String userId,
+  ) => safeVoidCall(() async {
     final database = await _databaseProvider();
     await database.transaction((txn) async {
       final rows = await txn.query(
         'orders',
         columns: const ['user_id', 'order_id'],
-        where: 'id = ? AND is_deleted = 1',
-        whereArgs: [orderId],
+        where: 'id = ? AND user_id = ? AND is_deleted = 1',
+        whereArgs: [orderId, userId],
         limit: 1,
       );
       if (rows.isEmpty) {
@@ -375,35 +478,166 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           'Settle the linked debt before permanently deleting this order.',
         );
       }
+      final eventRows = await txn.query(
+        'business_events',
+        columns: const ['id'],
+        where: 'subject_type = ? AND subject_id = ?',
+        whereArgs: ['order', orderId],
+        limit: 1,
+      );
+      if (eventRows.isNotEmpty) {
+        throw StateError(
+          'Orders with financial or delivery events cannot be permanently deleted.',
+        );
+      }
       await _queue.enqueue(
         operation: 'delete_order',
         collection: 'orders',
         userId: rows.single['user_id'] as String,
         docId: orderId,
-        data: {'id': orderId},
+        data: {'id': orderId, 'purge_state': 'pending'},
         executor: txn,
       );
-      final deleted = await txn.delete(
+      final deleted = await txn.update(
         'orders',
-        where: 'id = ? AND is_deleted = 1',
-        whereArgs: [orderId],
+        {'purge_state': 'pending'},
+        where: 'id = ? AND user_id = ? AND is_deleted = 1 AND purge_state = ?',
+        whereArgs: [orderId, userId, 'none'],
       );
       if (deleted != 1) {
-        throw StateError('Failed to permanently delete order: $orderId');
+        throw StateError('Failed to queue order purge: $orderId');
       }
     });
     _queue.requestSync();
   });
 
+  Future<BusinessEvent> _recordOrderFinancialEvent(
+    String orderId,
+    BusinessEvent event,
+    BusinessEventType expectedType,
+  ) => safeWriteCall(() async {
+    if (event.type != expectedType) {
+      throw ArgumentError('Expected a ${expectedType.storageKey} event.');
+    }
+    final database = await _databaseProvider();
+    late BusinessEvent saved;
+    await database.transaction((txn) async {
+      final snapshot = await _requireOrder(txn, orderId, isDeleted: false);
+      final userId = snapshot.order['user_id'] as String;
+      _validateEventOwner(event, userId, orderId);
+      final replay = await _findEventByCommand(txn, event);
+      if (replay != null) {
+        saved = replay;
+        return;
+      }
+      _validateEventTimestamp(event, snapshot.order['order_date'] as String);
+      final current = OrderStatusExtension.fromString(
+        snapshot.order['status'] as String,
+      );
+      if (current == OrderStatus.cancelled) {
+        throw StateError('Cancelled orders cannot receive financial events.');
+      }
+      final linkedDebt = await txn.query(
+        'debts',
+        columns: const ['id'],
+        where: 'user_id = ? AND order_id = ? AND is_deleted = 0',
+        whereArgs: [userId, snapshot.order['order_id']],
+        limit: 1,
+      );
+      if (linkedDebt.isNotEmpty) {
+        throw StateError('Use the debt collection workflow for this order.');
+      }
+      final events = await _eventsForOrder(txn, userId, orderId);
+      final netCash = BusinessEventLedger.netCash(events);
+      final orderTotal = Money.fromCentavos(
+        (snapshot.order['customer_pay_amount_centavos'] as num).toInt(),
+      );
+
+      switch (expectedType) {
+        case BusinessEventType.payment:
+          PaymentMethod? tender;
+          for (final method in PaymentMethod.values) {
+            if (method.storageKey == event.paymentMethod) tender = method;
+          }
+          if (tender == null || tender == PaymentMethod.utang) {
+            throw ArgumentError(
+              'A valid non-Utang payment method is required.',
+            );
+          }
+          if (tender.requiresReference &&
+              (event.reference?.trim().isEmpty ?? true)) {
+            throw ArgumentError('A payment reference is required.');
+          }
+          if (netCash + event.amount! > orderTotal) {
+            throw ArgumentError('Payment exceeds the remaining order balance.');
+          }
+        case BusinessEventType.refund:
+          if (event.amount! > netCash) {
+            throw ArgumentError('Refund exceeds the collected order amount.');
+          }
+        case BusinessEventType.reversal:
+          BusinessEvent? target;
+          for (final candidate in events) {
+            if (candidate.id == event.relatedEventId) target = candidate;
+          }
+          final reversalTarget = target;
+          if (reversalTarget == null ||
+              (reversalTarget.type != BusinessEventType.payment &&
+                  reversalTarget.type != BusinessEventType.refund)) {
+            throw ArgumentError('Reversal target is missing or unsupported.');
+          }
+          final alreadyReversed = events.any(
+            (candidate) =>
+                candidate.type == BusinessEventType.reversal &&
+                candidate.relatedEventId == reversalTarget.id,
+          );
+          if (alreadyReversed) throw StateError('Event is already reversed.');
+          if (event.amount != reversalTarget.amount) {
+            throw ArgumentError('Reversal amount must match its target.');
+          }
+          final projected =
+              netCash +
+              BusinessEventLedger.cashEffect(event, {
+                for (final candidate in events) candidate.id: candidate,
+                event.id: event,
+              });
+          if (projected.isNegative || projected > orderTotal) {
+            throw StateError(
+              'Reversal would produce an invalid order balance.',
+            );
+          }
+        case BusinessEventType.delivery || BusinessEventType.collection:
+          throw StateError('Unsupported financial event type.');
+      }
+
+      await insertBusinessEvent(txn, event);
+      await _queue.enqueue(
+        operation: 'save_business_event',
+        collection: 'business_events',
+        userId: userId,
+        docId: event.id,
+        data: BusinessEventDto.fromDomain(event).toCloud(),
+        executor: txn,
+      );
+      saved = event;
+    });
+    _queue.requestSync();
+    return saved;
+  });
+
   Future<void> _setDeleted(
-    String orderId, {
+    String orderId,
+    String userId, {
     required bool deleted,
-    required bool adjustInventory,
   }) => safeVoidCall(() async {
     final database = await _databaseProvider();
     await database.transaction((txn) async {
-      final snapshot = await _requireOrder(txn, orderId, isDeleted: !deleted);
-      final userId = snapshot.order['user_id'] as String;
+      final snapshot = await _requireOrder(
+        txn,
+        orderId,
+        isDeleted: !deleted,
+        userId: userId,
+      );
       if (deleted && await _hasOpenDebt(txn, snapshot.order)) {
         throw const OpenDebtException(
           'Settle the linked debt before deleting this order.',
@@ -416,7 +650,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           (snapshot.order['stock_released_on_delete'] as num?)?.toInt() != 0;
       var stockDeducted = wasStockDeducted;
       var releaseMarker = releasedOnDelete;
-      if (adjustInventory && deleted && wasStockDeducted) {
+      if (deleted && wasStockDeducted) {
         await _adjustInventory(
           txn,
           userId,
@@ -425,7 +659,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         );
         stockDeducted = false;
         releaseMarker = true;
-      } else if (adjustInventory && !deleted && releasedOnDelete) {
+      } else if (!deleted && releasedOnDelete) {
         await _adjustInventory(
           txn,
           userId,
@@ -501,15 +735,20 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   ) async {
     final normalized = _normalizeItems(order);
     final nextNumber = await _allocateOrderNumber(txn, userId);
-    final saved = normalized.copyWith(
-      orderId: 'KNZ-${nextNumber.toString().padLeft(3, '0')}',
-    );
+    final deviceId = await _deviceId(txn);
+    final provisionalId =
+        'TMP-${deviceId.substring(0, 4)}-${nextNumber.toString().padLeft(6, '0')}';
+    final saved = normalized.copyWith(orderId: provisionalId);
     final dto = OrderDto.fromDomain(
       saved,
       userId: userId,
       stockDeducted: saved.status != OrderStatus.cancelled,
     );
-    final orderData = dto.toLocal();
+    final orderData = dto.toLocal()
+      ..['number_state'] = 'finalization_pending'
+      ..['provisional_order_id'] = provisionalId
+      ..['writer_device_id'] = deviceId
+      ..['updated_at'] = DateTime.now().toUtc().toIso8601String();
     final itemData = dto.items.map((item) => item.toLocal()).toList();
 
     final orderRow = await txn.insert('orders', orderData);
@@ -521,6 +760,23 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       }
     }
     return saved;
+  }
+
+  Future<String> _deviceId(DatabaseExecutor txn) async {
+    final rows = await txn.query(
+      'device_identity',
+      columns: const ['device_id'],
+      where: 'singleton_id = 1',
+      limit: 1,
+    );
+    if (rows.isNotEmpty) return rows.single['device_id'] as String;
+    final id = _uuid.v4().replaceAll('-', '').substring(0, 8).toUpperCase();
+    await txn.insert('device_identity', {
+      'singleton_id': 1,
+      'device_id': id,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    return id;
   }
 
   Future<Order?> _findByCommand(
@@ -609,15 +865,56 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       final paymentRow = await txn.insert('payments', payment);
       if (paymentRow <= 0) throw StateError('Debt payment was not inserted.');
     }
+    final events = <BusinessEvent>[];
+    for (final payment in normalizedDebt.payments) {
+      final event = BusinessEvent(
+        id: 'debt-collection-${payment.id}',
+        userId: userId,
+        subject: BusinessEventSubject.debt,
+        subjectId: debt.id,
+        type: BusinessEventType.collection,
+        amount: payment.amount,
+        occurredAt: payment.paidAt,
+        recordedAt: payment.paidAt,
+        paymentMethod: payment.paymentMethod,
+        reference: payment.reference,
+        reason: payment.note,
+        commandId: 'debt-collection-${payment.id}',
+        sourceType: 'debt_payment',
+        sourceId: payment.id,
+      );
+      await insertBusinessEvent(txn, event);
+      events.add(event);
+    }
     if (enqueueSnapshot) {
       await _queue.enqueue(
-        operation: 'save_debt',
+        operation: events.isEmpty ? 'save_debt' : 'save_debt_with_events',
         collection: 'debts',
         userId: userId,
         docId: debt.id,
-        data: _debtOutboxPayload(dto),
+        data: events.isEmpty
+            ? _debtOutboxPayload(dto)
+            : {
+                '_debt': _debtOutboxPayload(dto),
+                '_events': events
+                    .map(
+                      (event) => BusinessEventDto.fromDomain(event).toCloud(),
+                    )
+                    .toList(growable: false),
+              },
         executor: txn,
       );
+    } else {
+      for (final event in events) {
+        await _queue.enqueue(
+          operation: 'save_business_event',
+          collection: 'business_events',
+          userId: userId,
+          docId: event.id,
+          data: BusinessEventDto.fromDomain(event).toCloud(),
+          executor: txn,
+        );
+      }
     }
     return dto;
   }
@@ -715,11 +1012,18 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     DatabaseExecutor txn,
     String orderId, {
     required bool isDeleted,
+    String? userId,
   }) async {
+    final where = userId == null
+        ? 'id = ? AND is_deleted = ?'
+        : 'id = ? AND user_id = ? AND is_deleted = ?';
+    final whereArgs = userId == null
+        ? <Object?>[orderId, isDeleted ? 1 : 0]
+        : <Object?>[orderId, userId, isDeleted ? 1 : 0];
     final rows = await txn.query(
       'orders',
-      where: 'id = ? AND is_deleted = ?',
-      whereArgs: [orderId, isDeleted ? 1 : 0],
+      where: where,
+      whereArgs: whereArgs,
       limit: 1,
     );
     if (rows.isEmpty) {
@@ -738,6 +1042,79 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       itemRows.map((row) => Map<String, dynamic>.from(row)).toList(),
     );
   }
+
+  void _validateEventOwner(BusinessEvent event, String userId, String orderId) {
+    if (event.userId != userId ||
+        event.subject != BusinessEventSubject.order ||
+        event.subjectId != orderId) {
+      throw ArgumentError('Business event does not belong to this order.');
+    }
+  }
+
+  void _validateEventTimestamp(BusinessEvent event, String orderDate) {
+    final occurredAt = event.occurredAt;
+    if (occurredAt == null) {
+      throw ArgumentError('A native event occurrence timestamp is required.');
+    }
+    final createdAt = DateTime.parse(orderDate).toUtc();
+    if (occurredAt.toUtc().isBefore(createdAt)) {
+      throw ArgumentError('Business event cannot predate its order.');
+    }
+  }
+
+  Future<BusinessEvent?> _findEventByCommand(
+    DatabaseExecutor txn,
+    BusinessEvent requested,
+  ) async {
+    final rows = await txn.query(
+      'business_events',
+      where: 'user_id = ? AND command_id = ?',
+      whereArgs: [requested.userId, requested.commandId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final existing = BusinessEventDto.fromLocal(rows.single).toDomain();
+    if (!_sameEvent(existing, requested)) {
+      throw StateError(
+        'Business event command was reused with different data.',
+      );
+    }
+    return existing;
+  }
+
+  Future<List<BusinessEvent>> _eventsForOrder(
+    DatabaseExecutor txn,
+    String userId,
+    String orderId,
+  ) async {
+    final rows = await txn.query(
+      'business_events',
+      where: 'user_id = ? AND subject_type = ? AND subject_id = ?',
+      whereArgs: [userId, 'order', orderId],
+      orderBy: 'COALESCE(occurred_at, recorded_at) ASC, id ASC',
+    );
+    return rows
+        .map((row) => BusinessEventDto.fromLocal(row).toDomain())
+        .toList(growable: false);
+  }
+
+  bool _sameEvent(BusinessEvent left, BusinessEvent right) =>
+      left.id == right.id &&
+      left.userId == right.userId &&
+      left.subject == right.subject &&
+      left.subjectId == right.subjectId &&
+      left.type == right.type &&
+      left.amount == right.amount &&
+      left.occurredAt?.toUtc() == right.occurredAt?.toUtc() &&
+      left.recordedAt.toUtc() == right.recordedAt.toUtc() &&
+      left.paymentMethod == right.paymentMethod &&
+      left.reference == right.reference &&
+      left.relatedEventId == right.relatedEventId &&
+      left.reason == right.reason &&
+      left.commandId == right.commandId &&
+      left.provenance == right.provenance &&
+      left.sourceType == right.sourceType &&
+      left.sourceId == right.sourceId;
 
   Future<int> _allocateOrderNumber(
     DatabaseExecutor database,
@@ -928,9 +1305,32 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
           'Order item prices must be finite and non-negative.',
         );
       }
+      if (item.unitPrice > item.srpPrice) {
+        throw ArgumentError('Order item selling price cannot exceed its SRP.');
+      }
       if (item.id.isNotEmpty && !itemIds.add(item.id)) {
         throw ArgumentError('Order item ids must be unique.');
       }
+    }
+    if (order.srpTotal != order.lineSrpTotal) {
+      throw ArgumentError(
+        'Order SRP total does not match its line items: '
+        '${order.srpTotal.format()} != ${order.lineSrpTotal.format()}.',
+      );
+    }
+    if (order.totalAmount != order.lineCustomerPayTotal) {
+      throw ArgumentError(
+        'Order total does not match its line items: '
+        '${order.totalAmount.format()} != '
+        '${order.lineCustomerPayTotal.format()}.',
+      );
+    }
+    if (order.customerPayAmount != order.lineCustomerPayTotal) {
+      throw ArgumentError(
+        'Order customer-pay total does not match its line items: '
+        '${order.customerPayAmount.format()} != '
+        '${order.lineCustomerPayTotal.format()}.',
+      );
     }
   }
 

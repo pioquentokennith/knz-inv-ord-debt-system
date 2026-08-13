@@ -55,7 +55,7 @@ extension _ReportTypeExt on _ReportType {
   String get description {
     switch (this) {
       case _ReportType.salesMonthly:
-        return 'Delivered paid sales for the selected period';
+        return 'Orders delivered during the selected period';
       case _ReportType.resellerSales:
         return 'Orders flagged as reseller with discount breakdown';
       case _ReportType.resellerDetailed:
@@ -71,7 +71,7 @@ extension _ReportTypeExt on _ReportType {
       case _ReportType.accountingSummary:
         return 'Gross sales, discounts, and net revenue summary';
       case _ReportType.profitLoss:
-        return 'Recognized sales and debt collections, without double-counting credit revenue';
+        return 'Fulfilled sales and explicit cash events without double-counting';
     }
   }
 
@@ -182,6 +182,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         orders: AppState().orders,
         debts: AppState().debts,
         customOrders: AppState().customOrders,
+        businessEvents: AppState().businessEvents,
         period: AccountingPeriod(from: _dateRange?.start, to: _dateRange?.end),
       );
 
@@ -194,22 +195,29 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
     switch (_selected) {
       case _ReportType.salesMonthly:
-        final recognized = svc.recognizedSales(orders);
+        final recognized = report.recognizedOrders;
         return _PreviewStats(
           count: recognized.length,
           label: 'orders',
-          total: svc.netSales(orders),
+          total: report.netSales,
           totalLabel: 'net revenue',
         );
       case _ReportType.resellerSales:
       case _ReportType.resellerDetailed:
         final reseller = orders
-            .where((o) => o.isReseller && svc.isRecognizedSale(o))
+            .where(
+              (o) =>
+                  o.isReseller &&
+                  svc.isRecognizedSale(o, AppState().businessEvents),
+            )
             .toList();
         return _PreviewStats(
           count: reseller.length,
           label: 'reseller orders',
-          total: svc.netSales(reseller),
+          total: svc.netSales(
+            reseller,
+            businessEvents: AppState().businessEvents,
+          ),
           totalLabel: 'net revenue',
         );
       case _ReportType.outstandingDebts:
@@ -267,8 +275,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       final debts = state.debts.toList();
       final filteredDebts = _filteredDebts();
       final products = state.products.toList();
-      final accounting = AccountingService.instance;
-      final recognized = accounting.recognizedSales(orders);
+      final recognized = _accountingReport().recognizedOrders;
       const biz = AppStrings.appName;
 
       switch (_selected) {
@@ -297,6 +304,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           await ExportService.exportResellerDetailedPdf(
             reseller,
             businessName: biz,
+            businessEvents: state.businessEvents,
           );
           break;
 
@@ -344,6 +352,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   orders: orders,
                   debts: debts,
                   customOrders: state.customOrders,
+                  businessEvents: state.businessEvents,
                   paymentFrom: _dateRange?.start,
                   paymentTo: _dateRange?.end,
                 )
@@ -351,6 +360,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
                   orders: orders,
                   debts: debts,
                   customOrders: state.customOrders,
+                  businessEvents: state.businessEvents,
                   businessName: biz,
                   paymentFrom: _dateRange?.start,
                   paymentTo: _dateRange?.end,
@@ -363,6 +373,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
             orders: orders,
             debts: debts,
             customOrders: state.customOrders,
+            businessEvents: state.businessEvents,
             businessName: biz,
             paymentFrom: _dateRange?.start,
             paymentTo: _dateRange?.end,
@@ -878,6 +889,31 @@ class _ReportsScreenState extends State<ReportsScreen> {
           _PLRow(
             label: '= Net Sales',
             value: report.netSales,
+            color: AppColors.white,
+            bold: true,
+          ),
+          const Divider(color: AppColors.divider, height: 16),
+          _PLRow(
+            label: 'Direct-order payments',
+            value: report.orderPayments,
+            color: AppColors.success,
+          ),
+          _PLRow(
+            label: '− Refunds',
+            value: -report.orderRefunds,
+            color: AppColors.error,
+            showSign: true,
+          ),
+          if (!report.orderReversalEffect.isZero)
+            _PLRow(
+              label: '± Reversal corrections',
+              value: report.orderReversalEffect,
+              color: AppColors.warning,
+              showSign: true,
+            ),
+          _PLRow(
+            label: '= Net direct-order cash',
+            value: report.netOrderCash,
             color: AppColors.white,
             bold: true,
           ),

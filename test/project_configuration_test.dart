@@ -17,7 +17,7 @@ void main() {
       expect(main, isNot(contains('dotenv')));
     });
 
-    test('keeps provider credentials out of Flutter source', () {
+    test('keeps Administrator credentials out of Flutter source', () {
       final flutterSource = Directory('lib')
           .listSync(recursive: true)
           .whereType<File>()
@@ -25,10 +25,9 @@ void main() {
           .map((file) => file.readAsStringSync())
           .join('\n');
 
-      expect(flutterSource, isNot(contains('api.brevo.com')));
-      expect(flutterSource, isNot(contains('BREVO_API_KEY')));
-      expect(flutterSource, isNot(contains('OTP_SECURITY_SECRET')));
-      expect(flutterSource, isNot(contains("'api-key'")));
+      expect(flutterSource, isNot(contains('GOOGLE_APPLICATION_CREDENTIALS')));
+      expect(flutterSource, isNot(contains('BOOTSTRAP_ADMIN_UID')));
+      expect(flutterSource, isNot(contains('firebase-admin')));
     });
   });
 
@@ -55,13 +54,8 @@ void main() {
     });
 
     test('legacy custom-password Functions are removed', () {
-      final functions = _read('functions/index.js');
-
       expect(File('functions/auth_helpers.js').existsSync(), isFalse);
-      expect(functions, isNot(contains('registerAccount')));
-      expect(functions, isNot(contains('resetAccountPassword')));
-      expect(functions, isNot(contains('loginAccount')));
-      expect(functions, isNot(contains('createCustomToken')));
+      expect(File('functions/index.js').existsSync(), isFalse);
     });
 
     test('Administrator bootstrap preserves username reservations', () {
@@ -72,9 +66,8 @@ void main() {
       expect(bootstrap, contains('this username is already reserved'));
     });
 
-    test('Spark registration has no production Functions call path', () {
+    test('Spark registration has no callable Functions path', () {
       final cloudAuth = _read('lib/services/cloud_auth_service.dart');
-      final functions = _read('functions/index.js');
       final rules = _read('firestore.rules');
 
       for (final endpoint in [
@@ -83,8 +76,8 @@ void main() {
         'reviewRegistrationRequest',
       ]) {
         expect(cloudAuth, isNot(contains(endpoint)));
-        expect(functions, contains(endpoint));
       }
+      expect(File('functions/index.js').existsSync(), isFalse);
       expect(cloudAuth, isNot(contains('http.post')));
       expect(cloudAuth, contains("collection('accountAccess')"));
       expect(cloudAuth, contains("collection('_usernames')"));
@@ -119,7 +112,7 @@ void main() {
       expect(checker, contains('percentage < threshold'));
     });
 
-    test('uses locked Functions dependencies', () {
+    test('uses locked Firebase Administrator dependencies', () {
       expect(File('functions/package-lock.json').existsSync(), isTrue);
       expect(_read('.github/workflows/ci.yml'), contains('run: npm ci'));
     });

@@ -13,6 +13,7 @@ void main() {
       initializeDatabase: _succeeds,
       initializePreferences: _succeeds,
       configureLocalState: _succeeds,
+      restoreTrustedSession: _succeeds,
       initializeFirebase: _succeeds,
       initializeCrashlytics: _succeeds,
       initializeNotifications: _succeeds,

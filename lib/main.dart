@@ -62,6 +62,7 @@ AppBootstrap _createBootstrap() => AppBootstrap(
   },
   initializePreferences: LoginRateLimiter.init,
   configureLocalState: () async => AppState().configure(),
+  restoreTrustedSession: AppState().restoreTrustedDevice,
   initializeFirebase: () =>
       Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
   initializeCrashlytics: () async {
@@ -72,11 +73,16 @@ AppBootstrap _createBootstrap() => AppBootstrap(
   },
   initializeNotifications: NotificationService.instance.init,
   initializeCloudAuthentication: () async {
+    await AppState().completePendingSignOut();
     final user = FirebaseAuth.instance.currentUser;
     if (user?.isAnonymous ?? false) {
       await FirebaseAuth.instance.signOut();
     } else if (user != null) {
-      await AppState().restoreSession();
+      if (AppState().isLoggedIn) {
+        await AppState().reconcileCloudPrincipal(user.uid);
+      } else {
+        await AppState().restoreSession();
+      }
     }
   },
   startSynchronization: () async {

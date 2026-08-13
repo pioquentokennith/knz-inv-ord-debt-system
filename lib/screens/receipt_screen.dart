@@ -16,7 +16,9 @@ import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../core/app_constants.dart';
+import '../core/app_state.dart';
 import '../core/money.dart';
+import '../models/business_event_model.dart';
 import '../models/order_model.dart';
 import '../models/payment_method_model.dart';
 import '../services/accounting_service.dart';
@@ -50,6 +52,7 @@ class OrderReceiptPrinter {
   static Future<List<int>> buildBytes(
     Order order, {
     String userName = '',
+    Iterable<BusinessEvent> businessEvents = const [],
   }) async {
     final profile = await CapabilityProfile.load();
     final gen = Generator(PaperSize.mm58, profile);
@@ -117,6 +120,21 @@ class OrderReceiptPrinter {
     // ── Total ────────────────────────────────────────────────────────────────
     b += gen.emptyLines(1);
     b += gen.hr(ch: '=');
+
+    final orderEvents = businessEvents
+        .where(
+          (event) =>
+              event.subject == BusinessEventSubject.order &&
+              event.subjectId == order.id,
+        )
+        .toList(growable: false);
+    if (orderEvents.isNotEmpty) {
+      final collected = BusinessEventLedger.netCash(orderEvents);
+      final balance = (order.customerPayAmount - collected).max(Money.zero);
+      b += gen.text('COLLECTED : ${_printerMoney(collected)}');
+      b += gen.text('BALANCE   : ${_printerMoney(balance)}');
+      b += gen.hr(ch: '-');
+    }
     // Label: normal size, normal weight — stands out from items but not blocky
     b += gen.row([
       PosColumn(text: 'TOTAL', width: 5, styles: const PosStyles()),
@@ -172,8 +190,14 @@ class OrderReceiptPrinter {
 class ReceiptScreen extends StatelessWidget {
   final Order order;
   final String userName;
+  final List<BusinessEvent>? businessEvents;
 
-  const ReceiptScreen({super.key, required this.order, this.userName = ''});
+  const ReceiptScreen({
+    super.key,
+    required this.order,
+    this.userName = '',
+    this.businessEvents,
+  });
 
   // Static factory navigation method — callers never construct ReceiptScreen directly.
   // Pushes a MaterialPageRoute so the back button always returns to the calling screen.
@@ -187,6 +211,7 @@ class ReceiptScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final events = businessEvents ?? AppState().eventsForOrder(order.id);
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -214,9 +239,17 @@ class ReceiptScreen extends StatelessWidget {
         child: Column(
           children: [
             Expanded(
-              child: _OrderReceiptPreview(order: order, userName: userName),
+              child: _OrderReceiptPreview(
+                order: order,
+                userName: userName,
+                businessEvents: events,
+              ),
             ),
-            _OrderPrintPanel(order: order, userName: userName),
+            _OrderPrintPanel(
+              order: order,
+              userName: userName,
+              businessEvents: events,
+            ),
           ],
         ),
       ),
@@ -231,14 +264,24 @@ class ReceiptScreen extends StatelessWidget {
 class _OrderReceiptPreview extends StatelessWidget {
   final Order order;
   final String userName;
+  final List<BusinessEvent> businessEvents;
 
-  const _OrderReceiptPreview({required this.order, this.userName = ''});
+  const _OrderReceiptPreview({
+    required this.order,
+    this.userName = '',
+    this.businessEvents = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
     final dateFmt = DateFormat('MMM dd, yyyy  hh:mm a');
     final breakdown = AccountingService.instance.orderBreakdown(order);
     final total = breakdown.customerPayTotal;
+    final collected = BusinessEventLedger.netCash(businessEvents);
+    final balance = (total - collected).max(Money.zero);
+    final refunds = businessEvents
+        .where((event) => event.type == BusinessEventType.refund)
+        .fold(Money.zero, (sum, event) => sum + event.amount!);
 
     final statusColor = switch (order.status) {
       OrderStatus.delivered => AppColors.success,
@@ -317,6 +360,25 @@ class _OrderReceiptPreview extends StatelessWidget {
             ],
           ),
         ),
+        if (businessEvents.isNotEmpty) ...[
+          const ReceiptDivider(),
+          ReceiptSection(
+            child: Column(
+              children: [
+                ReceiptInfoRow(
+                  label: 'Net collected',
+                  value: collected.format(),
+                ),
+                if (refunds.isPositive)
+                  ReceiptInfoRow(
+                    label: 'Refunds recorded',
+                    value: refunds.format(),
+                  ),
+                ReceiptInfoRow(label: 'Balance', value: balance.format()),
+              ],
+            ),
+          ),
+        ],
         const ReceiptDivider(),
 
         // ── Items ─────────────────────────────────────────────────────
@@ -567,8 +629,13 @@ class _OrderReceiptPreview extends StatelessWidget {
 class _OrderPrintPanel extends StatefulWidget {
   final Order order;
   final String userName;
+  final List<BusinessEvent> businessEvents;
 
-  const _OrderPrintPanel({required this.order, this.userName = ''});
+  const _OrderPrintPanel({
+    required this.order,
+    this.userName = '',
+    this.businessEvents = const [],
+  });
 
   @override
   State<_OrderPrintPanel> createState() => _OrderPrintPanelState();
@@ -670,6 +737,7 @@ class _OrderPrintPanelState extends State<_OrderPrintPanel> {
       final bytes = await OrderReceiptPrinter.buildBytes(
         widget.order,
         userName: widget.userName,
+        businessEvents: widget.businessEvents,
       );
       final services = await current.device.discoverServices();
 

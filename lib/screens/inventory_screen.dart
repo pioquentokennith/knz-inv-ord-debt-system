@@ -349,8 +349,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                                         product: p,
                                                       ),
                                                 ),
-                                                onDelete: () =>
-                                                    _deleteProduct(p),
+                                                onDelete:
+                                                    AppState().isAdministrator
+                                                    ? () => _deleteProduct(p)
+                                                    : null,
                                               )
                                             : _ProductCard(
                                                 product: p,
@@ -368,8 +370,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                                                         product: p,
                                                       ),
                                                 ),
-                                                onDelete: () =>
-                                                    _deleteProduct(p),
+                                                onDelete:
+                                                    AppState().isAdministrator
+                                                    ? () => _deleteProduct(p)
+                                                    : null,
                                               ),
                                       ),
                                     ),
@@ -399,14 +403,14 @@ class _ProductCard extends StatelessWidget {
   final double stockPct;
   final VoidCallback onEdit;
   final VoidCallback onEditStock;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   const _ProductCard({
     required this.product,
     required this.stockPct,
     required this.onEdit,
     required this.onEditStock,
-    required this.onDelete,
+    this.onDelete,
   });
 
   @override
@@ -562,13 +566,15 @@ class _ProductCard extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              DarkIconButton(
-                icon: Icons.delete_outline,
-                semanticLabel: 'Delete product',
-                color: AppColors.error,
-                onPressed: onDelete,
-              ),
+              if (onDelete != null) ...[
+                const SizedBox(width: 8),
+                DarkIconButton(
+                  icon: Icons.delete_outline,
+                  semanticLabel: 'Delete product',
+                  color: AppColors.error,
+                  onPressed: onDelete!,
+                ),
+              ],
             ],
           ),
         ],
@@ -584,7 +590,7 @@ class _ProductRowWide extends StatelessWidget {
   final double stockPct;
   final VoidCallback onEdit;
   final VoidCallback onEditStock;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   const _ProductRowWide({
     required this.index,
@@ -592,7 +598,7 @@ class _ProductRowWide extends StatelessWidget {
     required this.stockPct,
     required this.onEdit,
     required this.onEditStock,
-    required this.onDelete,
+    this.onDelete,
   });
 
   @override
@@ -730,12 +736,13 @@ class _ProductRowWide extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          DarkIconButton(
-            icon: Icons.delete_outline,
-            semanticLabel: 'Delete product',
-            color: AppColors.error,
-            onPressed: onDelete,
-          ),
+          if (onDelete != null)
+            DarkIconButton(
+              icon: Icons.delete_outline,
+              semanticLabel: 'Delete product',
+              color: AppColors.error,
+              onPressed: onDelete!,
+            ),
         ],
       ),
     );

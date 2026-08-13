@@ -21,7 +21,7 @@ abstract class ProductRepository {
   Future<void> updateStock(String productId, int newQty);
 
   // Soft-deletes a product (moves to Recycle Bin; not permanently removed)
-  Future<void> delete(String productId);
+  Future<void> delete(String productId, String userId);
 
   // ── Recycle Bin operations ────────────────────────────────────────────────
 
@@ -29,8 +29,8 @@ abstract class ProductRepository {
   Future<List<Product>> getDeleted(String userId);
 
   // Restores a soft-deleted product back to the active list
-  Future<void> restore(String productId);
+  Future<void> restore(String productId, String userId);
 
   // Permanently removes a product from storage (admin-only purge)
-  Future<void> hardDelete(String productId);
+  Future<void> hardDelete(String productId, String userId);
 }

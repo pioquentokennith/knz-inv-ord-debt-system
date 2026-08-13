@@ -29,4 +29,25 @@ void main() {
     await tester.tap(find.text('RETRY'));
     expect(retried, isTrue);
   });
+
+  testWidgets('shows durable conflicts as requiring review', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: SyncStatusBanner(
+            status: SyncStatus(
+              pendingCount: 1,
+              failedCount: 0,
+              conflictCount: 1,
+              deadLetterCount: 2,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('1 sync conflict'), findsOneWidget);
+    expect(find.textContaining('2 invalid operation'), findsOneWidget);
+    expect(find.text('RETRY'), findsNothing);
+  });
 }

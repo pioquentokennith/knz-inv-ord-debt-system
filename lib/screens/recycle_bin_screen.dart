@@ -398,6 +398,11 @@ class _RecycleBinScreenState extends State<RecycleBinScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (!AppState().isAdministrator) {
+      return const Scaffold(
+        body: Center(child: Text('Administrator access is required.')),
+      );
+    }
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(

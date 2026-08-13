@@ -2,11 +2,14 @@ import 'package:sqflite/sqflite.dart';
 
 import '../core/domain_exceptions.dart';
 import '../database/database_helper.dart';
+import '../dto/business_event_dto.dart';
 import '../dto/debt_dto.dart';
+import '../models/business_event_model.dart';
 import '../models/debt_model.dart';
 import 'base_repository.dart';
 import 'debt_repository.dart';
 import 'firestore_sync.dart';
+import 'local_business_event_repository.dart';
 import 'sync_queue.dart';
 
 /// SQLite-backed debt repository with persisted accrual and payment allocation.
@@ -61,12 +64,27 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
           throw StateError('Debt payment was not inserted.');
         }
       }
+      final events = <BusinessEvent>[];
+      for (final payment in debt.payments) {
+        final event = _collectionEvent(userId, debt.id, payment);
+        await insertBusinessEvent(txn, event);
+        events.add(event);
+      }
       await _queue.enqueue(
-        operation: 'save_debt',
+        operation: events.isEmpty ? 'save_debt' : 'save_debt_with_events',
         collection: 'debts',
         userId: userId,
         docId: debt.id,
-        data: _outboxPayload(dto),
+        data: events.isEmpty
+            ? _outboxPayload(dto)
+            : {
+                '_debt': _outboxPayload(dto),
+                '_events': events
+                    .map(
+                      (event) => BusinessEventDto.fromDomain(event).toCloud(),
+                    )
+                    .toList(growable: false),
+              },
         executor: txn,
       );
     });
@@ -110,24 +128,55 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
             orderBy: 'paid_at ASC, id ASC',
           );
           final owner = await _ownerFor(txn, debtId);
+          final event = _collectionEvent(owner, debtId, allocation.payment);
+          await insertBusinessEvent(txn, event);
           final fullDto = DebtDto.fromLocal(
             DebtDto.fromDomain(updatedDebt, userId: owner).toLocal(),
             allPayments.map(Map<String, dynamic>.from).toList(),
           );
           await _queue.enqueue(
-            operation: 'save_debt',
+            operation: 'apply_debt_payment',
             collection: 'debts',
             userId: owner,
             docId: debtId,
-            data: _outboxPayload(fullDto),
+            data: {
+              '_debt': _outboxPayload(fullDto),
+              '_payment': PaymentDto.fromDomain(
+                allocation.payment,
+                debtId,
+              ).toCloud(),
+              '_event': BusinessEventDto.fromDomain(event).toCloud(),
+            },
             executor: txn,
           );
         });
         _queue.requestSync();
       });
 
+  BusinessEvent _collectionEvent(
+    String userId,
+    String debtId,
+    PaymentRecord payment,
+  ) => BusinessEvent(
+    id: 'debt-collection-${payment.id}',
+    userId: userId,
+    subject: BusinessEventSubject.debt,
+    subjectId: debtId,
+    type: BusinessEventType.collection,
+    amount: payment.amount,
+    occurredAt: payment.paidAt,
+    recordedAt: payment.paidAt,
+    paymentMethod: payment.paymentMethod,
+    reference: payment.reference,
+    reason: payment.note,
+    commandId: 'debt-collection-${payment.id}',
+    sourceType: 'debt_payment',
+    sourceId: payment.id,
+  );
+
   @override
-  Future<void> delete(String debtId) => _setDeleted(debtId, deleted: true);
+  Future<void> delete(String debtId, String userId) =>
+      _setDeleted(debtId, userId, deleted: true);
 
   @override
   Future<List<CustomerDebt>> getDeleted(String userId) => safeCall(() async {
@@ -136,15 +185,18 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   });
 
   @override
-  Future<void> restore(String debtId) => _setDeleted(debtId, deleted: false);
+  Future<void> restore(String debtId, String userId) =>
+      _setDeleted(debtId, userId, deleted: false);
 
   @override
-  Future<void> hardDelete(String debtId) => safeVoidCall(() async {
+  Future<void> hardDelete(
+    String debtId,
+    String userId,
+  ) => safeVoidCall(() async {
     final database = await _databaseProvider();
     await database.transaction((txn) async {
-      final debt = await _loadOne(txn, debtId, isDeleted: true);
+      final debt = await _loadOne(txn, debtId, isDeleted: true, userId: userId);
       _requireSettled(debt);
-      final userId = await _ownerFor(txn, debtId);
       await _queue.enqueue(
         operation: 'delete_debt',
         collection: 'debts',
@@ -153,61 +205,70 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
         data: {'id': debtId},
         executor: txn,
       );
-      if (await txn.delete(
+      if (await txn.update(
             'debts',
-            where: 'id = ? AND is_deleted = 1',
-            whereArgs: [debtId],
+            {'purge_state': 'pending'},
+            where:
+                'id = ? AND user_id = ? AND is_deleted = 1 AND purge_state = ?',
+            whereArgs: [debtId, userId, 'none'],
           ) !=
           1) {
-        throw StateError('Failed to permanently delete debt: $debtId');
+        throw StateError('Failed to queue debt purge: $debtId');
       }
     });
     _queue.requestSync();
   });
 
-  Future<void> _setDeleted(String debtId, {required bool deleted}) =>
-      safeVoidCall(() async {
-        final database = await _databaseProvider();
-        await database.transaction((txn) async {
-          final debt = await _loadOne(txn, debtId, isDeleted: !deleted);
-          _requireSettled(debt);
-          final userId = await _ownerFor(txn, debtId);
-          final deletedAt = deleted ? _now().toIso8601String() : null;
-          if (await txn.update(
-                'debts',
-                {'is_deleted': deleted ? 1 : 0, 'deleted_at': deletedAt},
-                where: 'id = ? AND is_deleted = ?',
-                whereArgs: [debtId, deleted ? 0 : 1],
-              ) !=
-              1) {
-            throw StateError('Debt state changed before it could be updated.');
-          }
-          final payments = await txn.query(
-            'payments',
-            where: 'debt_id = ?',
-            whereArgs: [debtId],
-            orderBy: 'paid_at ASC, id ASC',
-          );
-          final payload = {
-            ...DebtDto.fromDomain(debt, userId: userId).toLocal(),
-            'is_deleted': deleted ? 1 : 0,
-            'deleted_at': deletedAt,
-          };
-          final dto = DebtDto.fromLocal(
-            payload,
-            payments.map(Map<String, dynamic>.from).toList(),
-          );
-          await _queue.enqueue(
-            operation: deleted ? 'soft_delete_debt' : 'save_debt',
-            collection: 'debts',
-            userId: userId,
-            docId: debtId,
-            data: _outboxPayload(dto),
-            executor: txn,
-          );
-        });
-        _queue.requestSync();
-      });
+  Future<void> _setDeleted(
+    String debtId,
+    String userId, {
+    required bool deleted,
+  }) => safeVoidCall(() async {
+    final database = await _databaseProvider();
+    await database.transaction((txn) async {
+      final debt = await _loadOne(
+        txn,
+        debtId,
+        isDeleted: !deleted,
+        userId: userId,
+      );
+      _requireSettled(debt);
+      final deletedAt = deleted ? _now().toIso8601String() : null;
+      if (await txn.update(
+            'debts',
+            {'is_deleted': deleted ? 1 : 0, 'deleted_at': deletedAt},
+            where: 'id = ? AND is_deleted = ?',
+            whereArgs: [debtId, deleted ? 0 : 1],
+          ) !=
+          1) {
+        throw StateError('Debt state changed before it could be updated.');
+      }
+      final payments = await txn.query(
+        'payments',
+        where: 'debt_id = ?',
+        whereArgs: [debtId],
+        orderBy: 'paid_at ASC, id ASC',
+      );
+      final payload = {
+        ...DebtDto.fromDomain(debt, userId: userId).toLocal(),
+        'is_deleted': deleted ? 1 : 0,
+        'deleted_at': deletedAt,
+      };
+      final dto = DebtDto.fromLocal(
+        payload,
+        payments.map(Map<String, dynamic>.from).toList(),
+      );
+      await _queue.enqueue(
+        operation: deleted ? 'soft_delete_debt' : 'save_debt',
+        collection: 'debts',
+        userId: userId,
+        docId: debtId,
+        data: _outboxPayload(dto),
+        executor: txn,
+      );
+    });
+    _queue.requestSync();
+  });
 
   Future<List<CustomerDebt>> _accrueAndLoad(
     Database database,
@@ -283,11 +344,18 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     DatabaseExecutor database,
     String debtId, {
     required bool isDeleted,
+    String? userId,
   }) async {
+    final where = userId == null
+        ? 'id = ? AND is_deleted = ?'
+        : 'id = ? AND user_id = ? AND is_deleted = ?';
+    final whereArgs = userId == null
+        ? <Object?>[debtId, isDeleted ? 1 : 0]
+        : <Object?>[debtId, userId, isDeleted ? 1 : 0];
     final rows = await database.query(
       'debts',
-      where: 'id = ? AND is_deleted = ?',
-      whereArgs: [debtId, isDeleted ? 1 : 0],
+      where: where,
+      whereArgs: whereArgs,
       limit: 1,
     );
     if (rows.isEmpty) {

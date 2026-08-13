@@ -187,6 +187,7 @@ class _ProductDialogState extends State<ProductDialog> {
           stockQty: stock,
           minStockLevel: minStock,
           imagePath: _imagePath,
+          clearImage: _imagePath == null,
         );
         await AppState().updateProduct(updated);
         if (mounted) {

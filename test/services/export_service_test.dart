@@ -17,6 +17,7 @@ void main() {
         orders: fixture.orders,
         debts: fixture.debts,
         customOrders: fixture.customOrders,
+        businessEvents: fixture.businessEvents,
         period: AccountingPeriod(
           from: fixture.periodFrom,
           to: fixture.periodTo,
@@ -34,9 +35,9 @@ void main() {
           row.first.toString(): row.last.toString(),
       };
 
-      expect(values['Gross Sales (PHP)'], '400.00');
+      expect(values['Gross Sales (PHP)'], '700.00');
       expect(values['Discounts (PHP)'], '70.00');
-      expect(values['Net Sales (PHP)'], '330.00');
+      expect(values['Net Sales (PHP)'], '630.00');
       expect(values['Debt Collections (PHP)'], '100.00');
       expect(values['Custom Order Receipts (PHP)'], '120.00');
       expect(values['Total Cash Received (PHP)'], '550.00');
@@ -68,6 +69,7 @@ void main() {
         orders: fixture.orders,
         debts: fixture.debts,
         customOrders: fixture.customOrders,
+        businessEvents: fixture.businessEvents,
         businessName: 'Fixture Business',
         paymentFrom: fixture.periodFrom,
         paymentTo: fixture.periodTo,

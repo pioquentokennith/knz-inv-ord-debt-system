@@ -23,6 +23,7 @@ import '../dialogs/export_dialog.dart';
 import '../models/order_model.dart';
 import '../models/debt_model.dart';
 import '../models/custom_order_model.dart';
+import '../models/business_event_model.dart';
 import '../models/payment_method_model.dart';
 import '../models/reseller_accounting_summary.dart';
 import '../services/accounting_service.dart';
@@ -140,12 +141,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     List<Order> orders,
     List<CustomerDebt> debts,
     List<CustomOrder> customOrders,
+    List<BusinessEvent> businessEvents,
     DateTime month,
   ) => AccountingService.instance
       .summarize(
         orders: orders,
         debts: debts,
         customOrders: customOrders,
+        businessEvents: businessEvents,
         period: AccountingPeriod(
           from: DateTime(month.year, month.month),
           to: DateTime(month.year, month.month + 1, 0),
@@ -258,12 +261,14 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               orders,
               state.debts,
               state.customOrders,
+              state.businessEvents,
               now,
             );
             final lastMonth = _revenueForMonth(
               orders,
               state.debts,
               state.customOrders,
+              state.businessEvents,
               DateTime(now.year, now.month - 1),
             );
             final momPct = lastMonth.isPositive

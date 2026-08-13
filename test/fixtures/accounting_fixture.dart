@@ -1,5 +1,6 @@
 import 'package:knz_scent_admin/core/money.dart';
 import 'package:knz_scent_admin/models/custom_order_model.dart';
+import 'package:knz_scent_admin/models/business_event_model.dart';
 import 'package:knz_scent_admin/models/debt_model.dart';
 import 'package:knz_scent_admin/models/order_model.dart';
 import 'package:knz_scent_admin/models/payment_method_model.dart';
@@ -98,6 +99,44 @@ class AccountingFixture {
         createdAt: DateTime.utc(2026, 4, 20),
       ),
     ];
+
+    businessEvents = [
+      _event(
+        'paid-delivery',
+        'paid',
+        BusinessEventType.delivery,
+        0,
+        DateTime.utc(2026, 5, 1),
+      ),
+      _event(
+        'paid-payment',
+        'paid',
+        BusinessEventType.payment,
+        18000,
+        DateTime.utc(2026, 5, 1),
+      ),
+      _event(
+        'reseller-delivery',
+        'reseller',
+        BusinessEventType.delivery,
+        0,
+        DateTime.utc(2026, 5, 31, 23, 59, 59),
+      ),
+      _event(
+        'reseller-payment',
+        'reseller',
+        BusinessEventType.payment,
+        15000,
+        DateTime.utc(2026, 5, 31, 23, 59, 59),
+      ),
+      _event(
+        'utang-delivery',
+        'utang',
+        BusinessEventType.delivery,
+        0,
+        DateTime.utc(2026, 5, 15),
+      ),
+    ];
   }
 
   final DateTime periodFrom;
@@ -105,6 +144,30 @@ class AccountingFixture {
   late final List<Order> orders;
   late final List<CustomerDebt> debts;
   late final List<CustomOrder> customOrders;
+  late final List<BusinessEvent> businessEvents;
+
+  static BusinessEvent _event(
+    String id,
+    String orderId,
+    BusinessEventType type,
+    int amount,
+    DateTime occurredAt,
+  ) => BusinessEvent(
+    id: id,
+    userId: 'owner-1',
+    subject: BusinessEventSubject.order,
+    subjectId: orderId,
+    type: type,
+    amount: type == BusinessEventType.delivery
+        ? null
+        : Money.fromCentavos(amount),
+    occurredAt: occurredAt,
+    recordedAt: occurredAt,
+    paymentMethod: type == BusinessEventType.payment
+        ? 'cash_on_delivery'
+        : null,
+    commandId: id,
+  );
 
   static Order _order({
     required String id,

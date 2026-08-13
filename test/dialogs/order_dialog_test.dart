@@ -6,7 +6,7 @@ import 'package:knz_scent_admin/models/payment_method_model.dart';
 
 void main() {
   testWidgets(
-    'new order supports all statuses and keeps Utang payment aligned',
+    'new order requires explicit delivery and keeps Utang payment aligned',
     (tester) async {
       tester.view.physicalSize = const Size(400, 1000);
       tester.view.devicePixelRatio = 1;
@@ -22,7 +22,9 @@ void main() {
       );
       expect(
         statusDropdown.items!.map((item) => item.value),
-        orderedEquals(OrderStatus.values),
+        orderedEquals(
+          OrderStatus.values.where((status) => status != OrderStatus.delivered),
+        ),
       );
 
       statusDropdown.onChanged!(OrderStatus.utang);

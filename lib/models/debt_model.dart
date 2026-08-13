@@ -237,10 +237,6 @@ class CustomerDebt extends BaseModel {
   Money get accruedInterest => _interestOutstanding;
   Money get totalWithInterest => totalOutstanding;
   Money get totalOutstanding => _principalOutstanding + _interestOutstanding;
-  DebtBalance get currentBalance => DebtBalance(
-    principalOutstanding: _principalOutstanding,
-    interestOutstanding: _interestOutstanding,
-  );
 
   CustomerDebt accrueTo(DateTime timestamp) {
     final target = timestamp.toUtc();
@@ -267,9 +263,6 @@ class CustomerDebt extends BaseModel {
       lastAccrualTimestamp: _lastAccrualTimestamp.add(period * periods),
     );
   }
-
-  DebtBalance balanceAt(DateTime timestamp) =>
-      accrueTo(timestamp).currentBalance;
 
   DebtPaymentResult allocatePayment(PaymentRecord payment) {
     if (_payments.any((existing) => existing.id == payment.id)) {
@@ -369,17 +362,6 @@ class CustomerDebt extends BaseModel {
     dueDate: DateTime.tryParse(map['dueDate'] as String? ?? ''),
     status: DebtStatusExtension.fromString(map['status'] as String?),
   );
-}
-
-class DebtBalance {
-  const DebtBalance({
-    required this.principalOutstanding,
-    required this.interestOutstanding,
-  });
-
-  final Money principalOutstanding;
-  final Money interestOutstanding;
-  Money get totalOutstanding => principalOutstanding + interestOutstanding;
 }
 
 class DebtPaymentResult {

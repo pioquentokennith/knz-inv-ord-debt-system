@@ -58,17 +58,6 @@ abstract class BaseRepository {
     }
   }
 
-  /// Reports an auxiliary write but still propagates failure. Callers may show a
-  /// separate diagnostics message after their primary local commit succeeds.
-  Future<void> bestEffortCall(Future<void> Function() action) async {
-    try {
-      await action();
-    } catch (e, stackTrace) {
-      _onError(e, stackTrace);
-      rethrow;
-    }
-  }
-
   /// Error hook — logs in debug, reports to Crashlytics in production.
   // Single error-handling point for all repository operations
   void _onError(Object error, StackTrace stackTrace) {

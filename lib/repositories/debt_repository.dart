@@ -17,7 +17,7 @@ abstract class DebtRepository {
   Future<void> addPayment(String debtId, PaymentRecord payment);
 
   // Soft-deletes a debt (moves to Recycle Bin)
-  Future<void> delete(String debtId);
+  Future<void> delete(String debtId, String userId);
 
   // ── Recycle Bin operations ────────────────────────────────────────────────
 
@@ -25,8 +25,8 @@ abstract class DebtRepository {
   Future<List<CustomerDebt>> getDeleted(String userId);
 
   // Restores a soft-deleted debt back to the active list
-  Future<void> restore(String debtId);
+  Future<void> restore(String debtId, String userId);
 
   // Permanently removes a debt and its payments from storage (admin-only purge)
-  Future<void> hardDelete(String debtId);
+  Future<void> hardDelete(String debtId, String userId);
 }

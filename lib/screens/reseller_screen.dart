@@ -211,23 +211,24 @@ class _ResellerCard extends StatelessWidget {
                 }
               },
               itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.edit_outlined,
-                        color: AppColors.whiteSecondary,
-                        size: 18,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        'Edit',
-                        style: TextStyle(color: AppColors.whiteSecondary),
-                      ),
-                    ],
+                if (AppState().isAdministrator)
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.edit_outlined,
+                          color: AppColors.whiteSecondary,
+                          size: 18,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'Edit',
+                          style: TextStyle(color: AppColors.whiteSecondary),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
                 const PopupMenuItem(
                   value: 'delete',
                   child: Row(

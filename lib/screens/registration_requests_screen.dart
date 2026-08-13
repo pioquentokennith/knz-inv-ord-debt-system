@@ -46,7 +46,19 @@ class _RegistrationRequestsScreenState
   }
 
   Future<void> _review(Map<String, dynamic> request) async {
-    var decision = 'approved';
+    final currentStatus = request['status'] as String? ?? 'pending';
+    final decisions = switch (currentStatus) {
+      'approved' => const {'suspended': 'Suspend'},
+      'suspended' => const {'approved': 'Reactivate'},
+      'pending' => const {
+        'approved': 'Approve',
+        'rejected': 'Reject',
+        'suspended': 'Suspend',
+      },
+      _ => const <String, String>{},
+    };
+    if (decisions.isEmpty) return;
+    var decision = decisions.keys.first;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -58,13 +70,16 @@ class _RegistrationRequestsScreenState
               DropdownButtonFormField<String>(
                 initialValue: decision,
                 decoration: const InputDecoration(labelText: 'Decision'),
-                items: const [
-                  DropdownMenuItem(value: 'approved', child: Text('Approve')),
-                  DropdownMenuItem(value: 'rejected', child: Text('Reject')),
-                  DropdownMenuItem(value: 'suspended', child: Text('Suspend')),
-                ],
+                items: decisions.entries
+                    .map(
+                      (entry) => DropdownMenuItem(
+                        value: entry.key,
+                        child: Text(entry.value),
+                      ),
+                    )
+                    .toList(growable: false),
                 onChanged: (value) =>
-                    setDialogState(() => decision = value ?? 'rejected'),
+                    setDialogState(() => decision = value ?? decision),
               ),
               const SizedBox(height: 12),
               const Text('Approved registrations receive the Staff role.'),
@@ -101,7 +116,7 @@ class _RegistrationRequestsScreenState
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Registration Requests'),
+        title: const Text('Account Access'),
         actions: [
           IconButton(onPressed: _load, icon: const Icon(Icons.refresh)),
         ],
@@ -111,7 +126,7 @@ class _RegistrationRequestsScreenState
           : _error != null
           ? Center(child: Text(_error!))
           : _requests.isEmpty
-          ? const Center(child: Text('No pending requests.'))
+          ? const Center(child: Text('No account records.'))
           : ListView.separated(
               padding: const EdgeInsets.all(20),
               itemCount: _requests.length,
@@ -120,16 +135,30 @@ class _RegistrationRequestsScreenState
                 final request = _requests[index];
                 return Card(
                   child: ListTile(
-                    leading: const Icon(Icons.person_add_alt_1),
+                    leading: Icon(
+                      request['status'] == 'approved'
+                          ? Icons.verified_user_outlined
+                          : request['status'] == 'suspended'
+                          ? Icons.person_off_outlined
+                          : Icons.person_add_alt_1,
+                    ),
                     title: Text(request['name'] as String? ?? 'Unnamed'),
                     subtitle: Text(
-                      '${request['email'] ?? ''}\n@${request['username'] ?? ''} • Firebase email verified',
+                      '${request['email'] ?? ''}\n@${request['username'] ?? ''} • ${request['status'] ?? 'pending'}',
                     ),
                     isThreeLine: true,
-                    trailing: FilledButton(
-                      onPressed: () => _review(request),
-                      child: const Text('Review'),
-                    ),
+                    trailing: request['status'] == 'rejected'
+                        ? null
+                        : FilledButton(
+                            onPressed: () => _review(request),
+                            child: Text(
+                              request['status'] == 'approved'
+                                  ? 'Suspend'
+                                  : request['status'] == 'suspended'
+                                  ? 'Reactivate'
+                                  : 'Review',
+                            ),
+                          ),
                   ),
                 );
               },

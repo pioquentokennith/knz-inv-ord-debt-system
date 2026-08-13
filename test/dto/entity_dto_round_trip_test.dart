@@ -68,10 +68,14 @@ void main() {
 
     final dto = ProductDto.fromLocal((await source.query('products')).single);
     final cloud = dto.toCloud();
+    expect(cloud['image_path'], isNull);
     final incoming = ProductDto.fromCloud(cloud, userId: userId);
     await restored.insert('products', incoming.toLocal());
 
-    expect((await restored.query('products')).single, dto.toLocal());
+    expect(
+      (await restored.query('products')).single,
+      _withSyncDefaults({...dto.toLocal(), 'image_path': null}),
+    );
     expect(incoming.toDomain().price.centavos, 12345);
   });
 
@@ -119,7 +123,10 @@ void main() {
       await restored.insert('order_items', item.toLocal());
     }
 
-    expect((await restored.query('orders')).single, dto.toLocal());
+    expect(
+      (await restored.query('orders')).single,
+      _withSyncDefaults(dto.toLocal(), order: true),
+    );
     expect(await restored.query('order_items'), [dto.items.single.toLocal()]);
     final domain = incoming.toDomain();
     expect(domain.paymentMethod, PaymentMethod.gcash);
@@ -196,7 +203,10 @@ void main() {
       await restored.insert('payments', row.toLocal());
     }
 
-    expect((await restored.query('debts')).single, dto.toLocal());
+    expect(
+      (await restored.query('debts')).single,
+      _withSyncDefaults(dto.toLocal()),
+    );
     expect(await restored.query('payments'), [dto.payments.single.toLocal()]);
     expect(incoming.toDomain().interestRateBasisPoints, 1000);
     expect(incoming.toDomain().dueDate, DateTime.utc(2026, 1, 15));
@@ -240,7 +250,10 @@ void main() {
     final dto = ResellerDto.fromLocal((await source.query('resellers')).single);
     final incoming = ResellerDto.fromCloud(dto.toCloud(), userId: userId);
     await restored.insert('resellers', incoming.toLocal());
-    expect((await restored.query('resellers')).single, dto.toLocal());
+    expect(
+      (await restored.query('resellers')).single,
+      _withSyncDefaults(dto.toLocal()),
+    );
   });
 
   test(
@@ -284,7 +297,10 @@ void main() {
         await restored.insert('custom_order_payments', row.toLocal());
       }
 
-      expect((await restored.query('custom_orders')).single, dto.toLocal());
+      expect(
+        (await restored.query('custom_orders')).single,
+        _withSyncDefaults(dto.toLocal()),
+      );
       expect(await restored.query('custom_order_payments'), [
         dto.payments.single.toLocal(),
       ]);
@@ -382,6 +398,21 @@ void main() {
     );
   });
 }
+
+Map<String, dynamic> _withSyncDefaults(
+  Map<String, dynamic> data, {
+  bool order = false,
+}) => {
+  ...data,
+  'revision': 0,
+  'base_revision': 0,
+  'updated_at': null,
+  'writer_device_id': null,
+  'tombstone_revision': 0,
+  'purge_state': 'none',
+  if (order) 'number_state': 'legacy',
+  if (order) 'provisional_order_id': null,
+};
 
 Future<void> _insertOrderParent(Database database) =>
     database.insert('orders', {

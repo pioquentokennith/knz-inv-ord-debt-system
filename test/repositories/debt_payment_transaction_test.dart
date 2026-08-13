@@ -103,8 +103,16 @@ void main() {
       expect(payment['principal_applied_centavos'], 9000);
       final queued = await database.query('sync_queue', orderBy: 'id');
       final payload = jsonDecode(queued.last['data'] as String);
-      expect(payload['principal_outstanding_centavos'], 1000);
-      expect(payload['_payments'].single['interest_applied_centavos'], 1000);
+      expect(payload['_debt']['principal_outstanding_centavos'], 1000);
+      expect(
+        payload['_debt']['_payments'].single['interest_applied_centavos'],
+        1000,
+      );
+      expect(payload['_payment']['interest_applied_centavos'], 1000);
+      expect(payload['_event']['event_type'], 'collection');
+      final event = (await database.query('business_events')).single;
+      expect(event['subject_type'], 'debt');
+      expect(event['amount_centavos'], 10000);
     },
   );
 

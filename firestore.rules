@@ -52,7 +52,7 @@ service cloud.firestore {
         && request.auth.uid == uid
         && data.keys().hasOnly([
           'uid', 'email', 'username', 'name', 'role', 'status', 'active',
-          'createdAt', 'updatedAt'
+          'createdAt', 'updatedAt', 'accessGeneration'
         ])
         && data.uid == uid
         && data.email == request.auth.token.email
@@ -63,6 +63,7 @@ service cloud.firestore {
         && data.active == false
         && data.createdAt == request.time
         && data.updatedAt == request.time
+        && data.accessGeneration == 0
         && profile.uid == uid
         && profile.email == data.email
         && profile.username == data.username
@@ -140,15 +141,24 @@ service cloud.firestore {
       ).data;
       return administrator()
         && request.auth.uid != uid
-        && resource.data.status == 'pending'
         && resource.data.role == 'Staff'
-        && resource.data.active == false
         && data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'active', 'role', 'reviewedBy', 'reviewedAt', 'updatedAt'
+          'status', 'active', 'role', 'reviewedBy', 'reviewedAt', 'updatedAt',
+          'accessGeneration'
         ])
-        && data.status in ['approved', 'rejected', 'suspended']
+        && (
+          (resource.data.status == 'pending'
+            && data.status in ['approved', 'rejected', 'suspended'])
+          || (resource.data.status == 'approved' && data.status == 'suspended')
+          || (resource.data.status == 'suspended' && data.status == 'approved')
+        )
         && data.active == (data.status == 'approved')
         && data.role == 'Staff'
+        && data.accessGeneration == (
+          ('accessGeneration' in resource.data)
+            ? resource.data.accessGeneration + 1
+            : 1
+        )
         && data.reviewedBy == request.auth.uid
         && data.reviewedAt == request.time
         && data.updatedAt == request.time
@@ -168,14 +178,19 @@ service cloud.firestore {
       ).data;
       return administrator()
         && request.auth.uid != uid
-        && resource.data.account_status == 'pending'
         && resource.data.role == 'Staff'
-        && resource.data.is_active == false
         && data.diff(resource.data).affectedKeys().hasOnly([
           'role', 'account_status', 'is_active', 'updated_at'
         ])
         && data.role == 'Staff'
-        && data.account_status in ['approved', 'rejected', 'suspended']
+        && (
+          (resource.data.account_status == 'pending'
+            && data.account_status in ['approved', 'rejected', 'suspended'])
+          || (resource.data.account_status == 'approved'
+            && data.account_status == 'suspended')
+          || (resource.data.account_status == 'suspended'
+            && data.account_status == 'approved')
+        )
         && data.is_active == (data.account_status == 'approved')
         && data.updated_at is string
         && reviewedAccess.uid == data.uid
@@ -202,6 +217,130 @@ service cloud.firestore {
         && resource.data.user_id == uid
         && resource.data.id is string
         && resource.data.id == documentId;
+    }
+
+    function validBusinessUpdate(uid, documentId) {
+      return approvedActive(uid)
+        && validOwnedDocument(uid, documentId)
+        && validRevisionUpdate()
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'is_deleted', 'deleted_at'
+          ])
+          || administrator()
+        );
+    }
+
+    function validRevisionCreate() {
+      return !('revision' in request.resource.data)
+        || (
+          request.resource.data.revision == 1
+          && request.resource.data.base_revision == 0
+          && request.resource.data.writer_device_id is string
+          && request.resource.data.writer_device_id.size() > 0
+          && request.resource.data.updated_at is string
+        );
+    }
+
+    function validRevisionUpdate() {
+      let before = ('revision' in resource.data) ? resource.data.revision : 0;
+      return !('revision' in request.resource.data)
+        || (
+          request.resource.data.base_revision == before
+          && request.resource.data.revision == before + 1
+          && request.resource.data.writer_device_id is string
+          && request.resource.data.writer_device_id.size() > 0
+          && request.resource.data.updated_at is string
+        );
+    }
+
+    function administratorDelete(uid, documentId) {
+      return administrator()
+        && request.auth.uid == uid
+        && existingOwnedDocument(uid, documentId);
+    }
+
+    function validBusinessEvent(uid, eventId) {
+      let data = request.resource.data;
+      let financial = data.event_type in [
+        'payment', 'refund', 'reversal', 'collection'
+      ];
+      let orderEvent = data.event_type in [
+        'payment', 'delivery', 'refund', 'reversal'
+      ];
+      return validOwnedDocument(uid, eventId)
+        && data.keys().hasOnly([
+          'id', 'user_id', 'subject_type', 'subject_id', 'event_type',
+          'amount_centavos', 'occurred_at', 'recorded_at', 'payment_method',
+          'reference', 'related_event_id', 'reason', 'command_id',
+          'provenance', 'source_type', 'source_id', 'schema_version'
+        ])
+        && data.subject_id is string
+        && data.subject_id.size() > 0
+        && data.event_type in [
+          'payment', 'delivery', 'refund', 'reversal', 'collection'
+        ]
+        && data.subject_type in ['order', 'debt', 'custom_order']
+        && (
+          (orderEvent && data.subject_type == 'order')
+          || (
+            data.event_type == 'collection'
+            && data.subject_type in ['debt', 'custom_order']
+          )
+        )
+        && (
+          (financial && data.amount_centavos is int && data.amount_centavos > 0)
+          || (data.event_type == 'delivery' && data.amount_centavos == null)
+        )
+        && (
+          (data.provenance == 'legacy_unknown' && data.occurred_at == null)
+          || (data.provenance != 'legacy_unknown' && data.occurred_at is string)
+        )
+        && data.recorded_at is string
+        && (
+          data.event_type != 'payment'
+          || (
+            data.payment_method in [
+              'credit_debit_card', 'gcash', 'maya', 'cash_on_delivery'
+            ]
+            && (
+              data.payment_method == 'cash_on_delivery'
+              || (data.reference is string && data.reference.size() > 0)
+            )
+          )
+        )
+        && data.command_id is string
+        && data.command_id.size() > 0
+        && data.provenance in [
+          'native', 'legacy_exact', 'legacy_inferred', 'legacy_unknown'
+        ]
+        && (
+          (
+            data.event_type == 'reversal'
+            && data.related_event_id is string
+            && data.related_event_id.size() > 0
+            && data.reason is string
+            && data.reason.size() > 0
+          )
+          || (
+            data.event_type != 'reversal'
+            && data.related_event_id == null
+          )
+        )
+        && (
+          data.event_type != 'refund'
+          || (data.reason is string && data.reason.size() > 0)
+        )
+        && (
+          (data.source_type == null && data.source_id == null)
+          || (
+            data.source_type is string
+            && data.source_type.size() > 0
+            && data.source_id is string
+            && data.source_id.size() > 0
+          )
+        )
+        && data.schema_version == 1;
     }
 
     function knownOrderStatus(status) {
@@ -237,6 +376,108 @@ service cloud.firestore {
         || (before == 'Utang' && after == 'Delivered');
     }
 
+    function validOrderCounter(uid, counterId) {
+      let data = request.resource.data;
+      return approvedActive(uid)
+        && counterId == 'orders'
+        && data.keys().hasOnly(['id', 'user_id', 'last_value'])
+        && data.id == counterId
+        && data.user_id == uid
+        && data.last_value is int
+        && data.last_value > 0
+        && (
+          !exists(/databases/$(database)/documents/users/$(uid)/counters/$(counterId))
+          || data.last_value == resource.data.last_value + 1
+        );
+    }
+
+    function validOrderCommand(uid, commandId) {
+      let data = request.resource.data;
+      let order = getAfter(
+        /databases/$(database)/documents/users/$(uid)/orders/$(data.order_doc_id)
+      );
+      let counter = getAfter(
+        /databases/$(database)/documents/users/$(uid)/counters/orders
+      );
+      return approvedActive(uid)
+        && data.keys().hasOnly([
+          'id', 'user_id', 'order_doc_id', 'canonical_order_id',
+          'sequence_value'
+        ])
+        && data.id == commandId
+        && data.user_id == uid
+        && data.order_doc_id is string
+        && data.canonical_order_id is string
+        && data.canonical_order_id.matches('^KNZ-[0-9]{6}$')
+        && data.sequence_value is int
+        && data.sequence_value > 0
+        && order.data.order_id == data.canonical_order_id
+        && order.data.command_id == commandId
+        && counter.data.last_value == data.sequence_value;
+    }
+
+    function validPaymentCommand(uid, commandId) {
+      let data = request.resource.data;
+      return approvedActive(uid)
+        && data.keys().hasOnly([
+          'id', 'user_id', 'parent_id', 'payment_id', 'event_id',
+          'resulting_revision'
+        ])
+        && data.id == commandId
+        && data.user_id == uid
+        && data.parent_id is string
+        && data.parent_id.size() > 0
+        && data.payment_id is string
+        && data.payment_id.size() > 0
+        && data.event_id is string
+        && data.event_id.size() > 0
+        && data.resulting_revision is int
+        && data.resulting_revision > 0;
+    }
+
+    function validDebtPayment(uid, debtId, paymentId) {
+      let data = request.resource.data;
+      let parent = getAfter(
+        /databases/$(database)/documents/users/$(uid)/debts/$(debtId)
+      );
+      return approvedActive(uid)
+        && data.keys().hasOnly([
+          'id', 'debt_id', 'amount_centavos', 'interest_applied_centavos',
+          'principal_applied_centavos', 'paid_at', 'payment_method',
+          'reference', 'note', 'schema_version'
+        ])
+        && data.id == paymentId
+        && data.debt_id == debtId
+        && data.amount_centavos is int
+        && data.amount_centavos > 0
+        && data.interest_applied_centavos is int
+        && data.interest_applied_centavos >= 0
+        && data.principal_applied_centavos is int
+        && data.principal_applied_centavos >= 0
+        && data.amount_centavos
+          == data.interest_applied_centavos + data.principal_applied_centavos
+        && data.paid_at is string
+        && parent.data.user_id == uid;
+    }
+
+    function validCustomOrderPayment(uid, orderId, paymentId) {
+      let data = request.resource.data;
+      let parent = getAfter(
+        /databases/$(database)/documents/users/$(uid)/custom_orders/$(orderId)
+      );
+      return approvedActive(uid)
+        && data.keys().hasOnly([
+          'id', 'custom_order_id', 'amount_centavos', 'paid_at', 'note',
+          'schema_version'
+        ])
+        && data.id == paymentId
+        && data.custom_order_id == orderId
+        && data.amount_centavos is int
+        && data.amount_centavos > 0
+        && data.paid_at is string
+        && parent.data.user_id == uid;
+    }
+
     match /accountAccess/{uid} {
       allow read: if nativeUser()
         && (request.auth.uid == uid || administrator());
@@ -259,67 +500,97 @@ service cloud.firestore {
 
       match /products/{documentId} {
         allow read: if approvedActive(uid);
-        allow create, update: if approvedActive(uid)
-          && validOwnedDocument(uid, documentId);
-        allow delete: if approvedActive(uid)
-          && existingOwnedDocument(uid, documentId);
+        allow create: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId)
+          && validRevisionCreate();
+        allow update: if validBusinessUpdate(uid, documentId);
+        allow delete: if administratorDelete(uid, documentId);
       }
 
       match /orders/{documentId} {
         allow read: if approvedActive(uid);
         allow create: if approvedActive(uid)
           && validOwnedDocument(uid, documentId)
-          && validOrderDocument();
-        allow update: if approvedActive(uid)
-          && validOwnedDocument(uid, documentId)
+          && validOrderDocument()
+          && validRevisionCreate();
+        allow update: if validBusinessUpdate(uid, documentId)
           && validOrderDocument()
           && validOrderTransition();
-        allow delete: if approvedActive(uid)
-          && existingOwnedDocument(uid, documentId);
+        allow delete: if administratorDelete(uid, documentId);
       }
 
       match /debts/{documentId} {
         allow read: if approvedActive(uid);
-        allow create, update: if approvedActive(uid)
-          && validOwnedDocument(uid, documentId);
-        allow delete: if approvedActive(uid)
-          && existingOwnedDocument(uid, documentId);
+        allow create: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId)
+          && validRevisionCreate();
+        allow update: if validBusinessUpdate(uid, documentId);
+        allow delete: if administratorDelete(uid, documentId);
+
+        match /payments/{paymentId} {
+          allow read: if approvedActive(uid);
+          allow create: if validDebtPayment(uid, documentId, paymentId);
+          allow update, delete: if false;
+        }
       }
 
       match /activity_logs/{documentId} {
         allow read: if approvedActive(uid);
-        allow create, update: if approvedActive(uid)
-          && validOwnedDocument(uid, documentId);
-        allow delete: if approvedActive(uid)
-          && existingOwnedDocument(uid, documentId);
+        allow create: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId)
+          && validRevisionCreate();
+        allow update, delete: if false;
       }
 
       match /resellers/{documentId} {
         allow read: if approvedActive(uid);
-        allow create, update: if approvedActive(uid)
-          && validOwnedDocument(uid, documentId);
-        allow delete: if approvedActive(uid)
-          && existingOwnedDocument(uid, documentId);
+        allow create: if approvedActive(uid)
+          && validOwnedDocument(uid, documentId)
+          && validRevisionCreate();
+        allow update: if validBusinessUpdate(uid, documentId);
+        allow delete: if administratorDelete(uid, documentId);
       }
 
       match /custom_orders/{documentId} {
         allow read: if approvedActive(uid);
-        allow create, update: if approvedActive(uid)
+        allow create: if approvedActive(uid)
           && validOwnedDocument(uid, documentId);
-        allow delete: if approvedActive(uid)
-          && existingOwnedDocument(uid, documentId);
+        allow update: if validBusinessUpdate(uid, documentId);
+        allow delete: if administratorDelete(uid, documentId);
+
+        match /payments/{paymentId} {
+          allow read: if approvedActive(uid);
+          allow create: if validCustomOrderPayment(uid, documentId, paymentId);
+          allow update, delete: if false;
+        }
+      }
+
+      match /business_events/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create: if approvedActive(uid)
+          && validBusinessEvent(uid, documentId);
+        allow update, delete: if false;
+      }
+
+      match /counters/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create, update: if validOrderCounter(uid, documentId);
+        allow delete: if false;
+      }
+
+      match /order_commands/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create: if validOrderCommand(uid, documentId);
+        allow update, delete: if false;
+      }
+
+      match /payment_commands/{documentId} {
+        allow read: if approvedActive(uid);
+        allow create: if validPaymentCommand(uid, documentId);
+        allow update, delete: if false;
       }
     }
 
-    match /_otpChallenges/{document} {
-      allow read, write: if false;
-    }
-    match /_otpRateLimits/{document} {
-      allow read, write: if false;
-    }
-    match /_otpTokenUses/{document} {
-      allow read, write: if false;
-    }
     match /_authAccounts/{document} {
       allow read, write: if false;
     }

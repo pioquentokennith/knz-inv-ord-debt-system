@@ -21,6 +21,7 @@ AppBootstrap _bootstrap({
     initializeDatabase: database ?? _succeeds,
     initializePreferences: preferences ?? _succeeds,
     configureLocalState: localState ?? _succeeds,
+    restoreTrustedSession: _succeeds,
     initializeFirebase: firebase ?? _succeeds,
     initializeCrashlytics: crashlytics ?? _succeeds,
     initializeNotifications: notifications ?? _succeeds,

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:knz_scent_admin/database/database_helper.dart';
+import 'package:knz_scent_admin/core/domain_exceptions.dart';
 import 'package:knz_scent_admin/repositories/sync_queue.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -134,6 +135,182 @@ void main() {
         _insertOutbox(database, key: 'same-key', documentId: 'document-2'),
         throwsA(isA<DatabaseException>()),
       );
+    });
+
+    test('failed remote purge preserves the local tombstone', () async {
+      await database.insert('products', {
+        'id': 'product-1',
+        'name': 'Rose',
+        'category': 'Eau de Parfum',
+        'price_centavos': 10000,
+        'stock_qty': 0,
+        'min_stock_level': 1,
+        'created_at': DateTime.utc(2026).toIso8601String(),
+        'user_id': 'user-1',
+        'is_deleted': 1,
+        'purge_state': 'pending',
+      });
+      final rowId = await _insertOutbox(
+        database,
+        key: 'purge-failure',
+        documentId: 'product-1',
+      );
+      await database.update(
+        'sync_queue',
+        {'operation': 'delete_product'},
+        where: 'id = ?',
+        whereArgs: [rowId],
+      );
+      final processor = OutboxProcessor(
+        databaseProvider: () async => database,
+        dispatch: (_) => throw StateError('permission denied'),
+        now: () => DateTime.utc(2026),
+      );
+
+      expect((await processor.processUser('user-1')).succeeded, isFalse);
+      expect(await database.query('products'), hasLength(1));
+    });
+
+    test(
+      'confirmed remote purge removes tombstone and outbox atomically',
+      () async {
+        await database.insert('products', {
+          'id': 'product-1',
+          'name': 'Rose',
+          'category': 'Eau de Parfum',
+          'price_centavos': 10000,
+          'stock_qty': 0,
+          'min_stock_level': 1,
+          'created_at': DateTime.utc(2026).toIso8601String(),
+          'user_id': 'user-1',
+          'is_deleted': 1,
+          'purge_state': 'pending',
+        });
+        final rowId = await _insertOutbox(
+          database,
+          key: 'purge-success',
+          documentId: 'product-1',
+        );
+        await database.update(
+          'sync_queue',
+          {'operation': 'delete_product'},
+          where: 'id = ?',
+          whereArgs: [rowId],
+        );
+        final processor = OutboxProcessor(
+          databaseProvider: () async => database,
+          dispatch: (_) async {},
+          now: () => DateTime.utc(2026),
+        );
+
+        expect((await processor.processUser('user-1')).succeeded, isTrue);
+        expect(await database.query('products'), isEmpty);
+        expect(await database.query('sync_queue'), isEmpty);
+      },
+    );
+
+    test('permanent poison row does not block unrelated aggregate', () async {
+      await _insertOutbox(database, key: 'poison', documentId: 'bad-product');
+      await _insertOutbox(database, key: 'healthy', documentId: 'good-product');
+      final dispatched = <String>[];
+      final processor = OutboxProcessor(
+        databaseProvider: () async => database,
+        dispatch: (row) async {
+          final id = row['doc_id'] as String;
+          if (id == 'bad-product')
+            throw const FormatException('invalid payload');
+          dispatched.add(id);
+        },
+        now: () => DateTime.utc(2026),
+      );
+
+      final result = await processor.processUser('user-1');
+
+      expect(result.completedCount, 1);
+      expect(dispatched, ['good-product']);
+      expect(await database.query('sync_queue'), isEmpty);
+      expect(await database.query('dead_letters'), hasLength(1));
+    });
+
+    test(
+      'revision conflict persists while unrelated aggregate continues',
+      () async {
+        final rowId = await _insertOutbox(
+          database,
+          key: 'conflict',
+          documentId: 'product-1',
+        );
+        await database.update(
+          'sync_queue',
+          {'aggregate_key': 'products:product-1', 'expected_revision': 2},
+          where: 'id = ?',
+          whereArgs: [rowId],
+        );
+        await _insertOutbox(database, key: 'other', documentId: 'product-2');
+        final processor = OutboxProcessor(
+          databaseProvider: () async => database,
+          dispatch: (row) async {
+            if (row['doc_id'] == 'product-1') {
+              throw const SyncConflictException(
+                'stale revision',
+                remoteRevision: 3,
+                remoteData: {'revision': 3},
+              );
+            }
+          },
+          now: () => DateTime.utc(2026),
+        );
+
+        final result = await processor.processUser('user-1');
+
+        expect(result.completedCount, 1);
+        expect(
+          (await database.query('sync_conflicts')).single['remote_revision'],
+          3,
+        );
+        expect(
+          (await database.query('sync_queue')).single['status'],
+          'conflict',
+        );
+      },
+    );
+
+    test('successful dispatch acknowledges local entity revision', () async {
+      await database.insert('products', {
+        'id': 'product-1',
+        'name': 'Rose',
+        'category': 'Eau de Parfum',
+        'price_centavos': 10000,
+        'stock_qty': 2,
+        'min_stock_level': 1,
+        'created_at': DateTime.utc(2026).toIso8601String(),
+        'user_id': 'user-1',
+      });
+      final rowId = await _insertOutbox(
+        database,
+        key: 'revision-success',
+        documentId: 'product-1',
+      );
+      await database.update(
+        'sync_queue',
+        {
+          'collection': 'products',
+          'resulting_revision': 1,
+          'aggregate_key': 'products:product-1',
+        },
+        where: 'id = ?',
+        whereArgs: [rowId],
+      );
+      final processor = OutboxProcessor(
+        databaseProvider: () async => database,
+        dispatch: (_) async {},
+      );
+
+      await processor.processUser('user-1');
+
+      final product = (await database.query('products')).single;
+      expect(product['revision'], 1);
+      expect(product['base_revision'], 1);
     });
   });
 

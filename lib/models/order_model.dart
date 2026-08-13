@@ -131,16 +131,6 @@ class OrderItem extends BaseModel {
   // Computed subtotal — derived from price and quantity, never stored separately
   Money get subtotal => _unitPrice * _quantity;
 
-  // Returns a new OrderItem with an updated quantity (used when editing order items)
-  OrderItem copyWith({int? quantity}) => OrderItem(
-    id: id,
-    productId: _productId,
-    productName: _productName,
-    unitPrice: _unitPrice,
-    srpPrice: _srpPrice,
-    quantity: quantity ?? _quantity,
-  );
-
   // Serializes to a map for SQLite order_items table or Firestore array element
   @override
   Map<String, dynamic> toMap() => {
@@ -293,9 +283,6 @@ class Order extends BaseModel {
   bool get isReseller => _isReseller;
   Money get deductionPerItem => _deductionPerItem;
 
-  /// The net amount the customer actually pays after discount.
-  /// Falls back to totalAmount if no discount was applied.
-  Money get discountedTotal => _discountedTotal ?? _totalAmount;
   Money? get storedDiscountedTotal => _discountedTotal;
   String get orderType => _orderType;
 
@@ -311,18 +298,21 @@ class Order extends BaseModel {
   // Total number of units ordered across all line items
   int get quantity => _items.fold(0, (sum, i) => sum + i.quantity);
 
-  // The discount amount in currency (SRP - net) — reseller order-level discount.
-  // NOTE: discountedTotal falls back to totalAmount when null, so for orders where
-  // totalAmount IS the net (saved after discount), discountAmount will be 0.
-  // Use totalDiscountAmount (item-level) for accurate discount reporting.
-  Money get discountAmount => srpTotal - customerPayAmount;
+  /// Canonical gross total represented by the persisted line items.
+  Money get lineSrpTotal => _items.fold(
+    Money.zero,
+    (sum, item) => sum + item.srpPrice * item.quantity,
+  );
+
+  /// Canonical amount payable represented by the persisted line items.
+  Money get lineCustomerPayTotal =>
+      _items.fold(Money.zero, (sum, item) => sum + item.subtotal);
 
   /// Per-item deduction discount: sum of (srpPrice - unitPrice) × qty across all items.
   /// This is the authoritative discount figure because:
   ///   • order_dialog saves totalAmount = net price (already discounted)
-  ///   • discountedTotal is null for those orders → discountAmount = 0
-  ///   • But srpPrice and unitPrice are always saved correctly
-  ///   • So (srpPrice - unitPrice) × qty correctly recovers the deduction
+  ///   • srpPrice and unitPrice are saved separately
+  ///   • (srpPrice - unitPrice) × qty recovers the deduction
   ///
   /// LEGACY FALLBACK: For orders restored from Firestore before srp_price was
   /// included in the cloud restore, srpPrice falls back to unitPrice making the
@@ -351,16 +341,8 @@ class Order extends BaseModel {
     // Use stored srpPrice directly (= _srpPrice ?? _unitPrice).
     // For legacy orders: srpPrice == unitPrice == 220 (the true SRP, no item discount tracked).
     // For new orders: srpPrice=220, unitPrice=170. Both are correct as-is.
-    return _storedSrpTotal ??
-        _items.fold(
-          Money.zero,
-          (sum, item) => sum + item.srpPrice * item.quantity,
-        );
+    return _storedSrpTotal ?? lineSrpTotal;
   }
-
-  /// Net amount = totalAmount, which IS the net (after all discounts applied at order time).
-  /// totalAmount is always saved as the final amount the customer pays.
-  Money get netAfterAllDiscounts => customerPayAmount;
 
   /// The amount the customer actually pays.
   /// For reseller orders: discountedTotal (saved as net). Falls back to totalAmount.

@@ -334,14 +334,15 @@ class _CustomOrderCard extends StatelessWidget {
                   builder: (_) => CustomOrderDialog(existing: order),
                 ),
               ),
-              const SizedBox(width: 8),
-              // Delete button
-              _IconBtn(
-                icon: Icons.delete_outline,
-                color: AppColors.error,
-                tooltip: 'Delete',
-                onTap: () => _confirmDelete(context),
-              ),
+              if (AppState().isAdministrator) ...[
+                const SizedBox(width: 8),
+                _IconBtn(
+                  icon: Icons.delete_outline,
+                  color: AppColors.error,
+                  tooltip: 'Delete',
+                  onTap: () => _confirmDelete(context),
+                ),
+              ],
             ],
           ),
         ],

@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../repositories/sync_queue.dart';
 import 'app_bootstrap.dart';
 import 'app_constants.dart';
+import 'app_state.dart';
 
 class StartupGate extends StatefulWidget {
   const StartupGate({
@@ -17,13 +21,33 @@ class StartupGate extends StatefulWidget {
   State<StartupGate> createState() => _StartupGateState();
 }
 
-class _StartupGateState extends State<StartupGate> {
+class _StartupGateState extends State<StartupGate> with WidgetsBindingObserver {
   late Future<void> _requiredInitialization;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _requiredInitialization = widget.bootstrap.initializeRequired();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final appState = AppState();
+    final uid = appState.currentUser?.id;
+    if (state != AppLifecycleState.resumed ||
+        !appState.isLoggedIn ||
+        uid == null) {
+      return;
+    }
+    unawaited(appState.reconcileCloudPrincipal(uid));
+    SyncQueue.instance.requestSync();
   }
 
   void _retry() {

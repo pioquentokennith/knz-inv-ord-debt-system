@@ -143,8 +143,8 @@ void main() {
       final queuedRows = await database.query('sync_queue');
       final operations = queuedRows.map((row) => row['operation']).toList();
       expect(operations, [
-        'save_custom_order',
-        'save_custom_order',
+        'save_custom_order_with_events',
+        'apply_custom_order_payment',
         'soft_delete_custom_order',
         'save_custom_order',
       ]);
@@ -159,6 +159,13 @@ void main() {
       expect(tombstone['_payments'][1]['amount_centavos'], 5000);
       expect((await database.query('custom_orders')).single['is_deleted'], 0);
       expect(await database.query('custom_order_payments'), hasLength(2));
+      final events = await database.query(
+        'business_events',
+        orderBy: 'occurred_at',
+      );
+      expect(events, hasLength(2));
+      expect(events.first['event_type'], 'collection');
+      expect(events.last['amount_centavos'], 5000);
     },
   );
 

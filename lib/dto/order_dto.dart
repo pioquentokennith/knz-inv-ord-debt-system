@@ -141,6 +141,30 @@ class OrderDto {
         'Order customer-pay amount must match its authoritative total.',
       );
     }
+    if (items.isEmpty) {
+      throw const FormatException('Order must contain at least one line item.');
+    }
+    final lineSrpTotal = items.fold<int>(
+      0,
+      (sum, item) => sum + item.srpPriceCentavos * item.quantity,
+    );
+    final lineCustomerPayTotal = items.fold<int>(
+      0,
+      (sum, item) => sum + item.unitPriceCentavos * item.quantity,
+    );
+    if (srpTotalCentavos != lineSrpTotal) {
+      throw const FormatException(
+        'Order SRP total does not match its line items.',
+      );
+    }
+    if (totalAmountCentavos != lineCustomerPayTotal) {
+      throw const FormatException('Order total does not match its line items.');
+    }
+    if (customerPayAmountCentavos != lineCustomerPayTotal) {
+      throw const FormatException(
+        'Order customer-pay total does not match its line items.',
+      );
+    }
     if (!OrderStatus.values
         .map((value) => value.displayName)
         .contains(status)) {
@@ -373,4 +397,8 @@ class OrderDto {
     orderType: orderType,
     commandId: commandId,
   );
+
+  static void validateDomain(Order order) {
+    OrderDto.fromDomain(order, userId: 'validation-owner');
+  }
 }

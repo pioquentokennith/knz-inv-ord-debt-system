@@ -259,35 +259,42 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                         builder: (_) =>
                                             EditStockDialog(product: p),
                                       ),
-                                      onDelete: () async {
-                                        final confirm = await showConfirmDialog(
-                                          context,
-                                          title: 'Delete Product',
-                                          message:
-                                              'Remove "${p.name}" from inventory? It can be restored from the Recycle Bin.',
-                                          confirmLabel: 'Delete',
-                                          confirmColor: AppColors.error,
-                                          icon: Icons.delete_outline_rounded,
-                                        );
-                                        if (!confirm || !context.mounted)
-                                          return;
-                                        try {
-                                          await AppState().deleteProduct(p.id);
-                                          if (context.mounted) {
-                                            KnzToast.info(
-                                              context,
-                                              '"${p.name}" moved to Recycle Bin.',
-                                            );
-                                          }
-                                        } catch (_) {
-                                          if (context.mounted) {
-                                            KnzToast.error(
-                                              context,
-                                              'The product could not be deleted. Please try again.',
-                                            );
-                                          }
-                                        }
-                                      },
+                                      onDelete: AppState().isAdministrator
+                                          ? () async {
+                                              final confirm =
+                                                  await showConfirmDialog(
+                                                    context,
+                                                    title: 'Delete Product',
+                                                    message:
+                                                        'Remove "${p.name}" from inventory? It can be restored from the Recycle Bin.',
+                                                    confirmLabel: 'Delete',
+                                                    confirmColor:
+                                                        AppColors.error,
+                                                    icon: Icons
+                                                        .delete_outline_rounded,
+                                                  );
+                                              if (!confirm || !context.mounted)
+                                                return;
+                                              try {
+                                                await AppState().deleteProduct(
+                                                  p.id,
+                                                );
+                                                if (context.mounted) {
+                                                  KnzToast.info(
+                                                    context,
+                                                    '"${p.name}" moved to Recycle Bin.',
+                                                  );
+                                                }
+                                              } catch (_) {
+                                                if (context.mounted) {
+                                                  KnzToast.error(
+                                                    context,
+                                                    'The product could not be deleted. Please try again.',
+                                                  );
+                                                }
+                                              }
+                                            }
+                                          : null,
                                     ),
                                   ),
                                 ),
@@ -358,7 +365,7 @@ class _ProductCard extends StatefulWidget {
   final NumberFormat currency;
   final VoidCallback onEdit;
   final VoidCallback onEditStock;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
 
   const _ProductCard({
     required this.product,
@@ -366,7 +373,7 @@ class _ProductCard extends StatefulWidget {
     required this.currency,
     required this.onEdit,
     required this.onEditStock,
-    required this.onDelete,
+    this.onDelete,
   });
 
   @override
@@ -694,18 +701,19 @@ class _ProductCardState extends State<_ProductCard>
                           ),
                         ),
                         const SizedBox(width: 4),
-                        DarkIconButton(
-                          icon: Icons.edit_outlined,
-                          semanticLabel: 'Edit product',
-                          color: AppColors.gold,
-                          onPressed: widget.onEdit,
-                        ),
+                        if (widget.onDelete != null)
+                          DarkIconButton(
+                            icon: Icons.edit_outlined,
+                            semanticLabel: 'Edit product',
+                            color: AppColors.gold,
+                            onPressed: widget.onEdit,
+                          ),
                         const SizedBox(width: 4),
                         DarkIconButton(
                           icon: Icons.delete_outline,
                           semanticLabel: 'Delete product',
                           color: AppColors.error,
-                          onPressed: widget.onDelete,
+                          onPressed: widget.onDelete!,
                         ),
                       ],
                     ),

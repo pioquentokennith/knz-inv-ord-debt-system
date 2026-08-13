@@ -39,7 +39,17 @@ class OpenDebtException extends DomainException {
   const OpenDebtException(String message) : super('open_debt', message);
 }
 
-class SyncOperationException extends DomainException {
-  const SyncOperationException(String message)
-    : super('sync_operation_failed', message);
+class SyncConflictException implements Exception {
+  const SyncConflictException(
+    this.message, {
+    required this.remoteRevision,
+    this.remoteData,
+  });
+
+  final String message;
+  final int remoteRevision;
+  final Map<String, dynamic>? remoteData;
+
+  @override
+  String toString() => message;
 }

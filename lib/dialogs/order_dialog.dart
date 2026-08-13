@@ -74,23 +74,17 @@ class _OrderDialogState extends State<OrderDialog> {
     super.dispose();
   }
 
-  // Computed total: sum of (customPrice * qty) across all cart entries
-  Money get _cartTotal =>
-      _cart.fold(Money.zero, (sum, e) => sum + e.customPrice * e.qty);
+  Money get _cartSrpTotal =>
+      _cart.fold(Money.zero, (sum, entry) => sum + entry.srp * entry.qty);
 
-  // Discounted total when a reseller is selected (fixed ₱ deduction per item)
-  Money get _discountedCartTotal {
-    if (_selectedReseller == null) return _cartTotal;
-    final deduction = _selectedReseller!.deductionPerItem;
-    // Sum: (customPrice - deduction) × qty, clamped so price never goes below 0
-    return _cart.fold(
-      Money.zero,
-      (sum, e) =>
-          sum +
-          (e.customPrice - deduction).max(Money.zero).min(e.customPrice) *
-              e.qty,
-    );
-  }
+  Money _effectiveUnitPrice(_CartEntry entry) => _selectedReseller == null
+      ? entry.customPrice
+      : _selectedReseller!.discountedPrice(entry.srp);
+
+  Money get _cartNetTotal => _cart.fold(
+    Money.zero,
+    (sum, entry) => sum + _effectiveUnitPrice(entry) * entry.qty,
+  );
 
   Money get _deductionPerItem =>
       _selectedReseller?.deductionPerItem ?? Money.zero;
@@ -195,11 +189,9 @@ class _OrderDialogState extends State<OrderDialog> {
       final state = AppState();
 
       // ── Confirmation prompt ───────────────────────────────────────────────
-      final displayTotal = _selectedReseller != null
-          ? _discountedCartTotal
-          : _cartTotal;
+      final displayTotal = _cartNetTotal;
       final resellerNote = _selectedReseller != null
-          ? ' (after −₱${_deductionPerItem.toStringAsFixed(0)}/item discount)'
+          ? ' (after ${_deductionPerItem.format()}/item discount)'
           : '';
       final interestNote =
           _paymentMethod == PaymentMethod.utang &&
@@ -223,27 +215,26 @@ class _OrderDialogState extends State<OrderDialog> {
       _commandId ??= const Uuid().v4();
       // ── END Confirmation ──────────────────────────────────────────────────
 
-      // For reseller orders: apply the fixed deduction to unitPrice so that
-      //   item.unitPrice = srp - deductionPerItem (e.g. 220 - 50 = 170)  ← net selling price
-      //   item.srpPrice  = srp (e.g. 220)                                 ← catalog price
-      // This ensures itemDiscountAmount = (srpPrice - unitPrice) * qty is always correct.
-      // The discount field is hidden for resellers so e.customPrice == e.srp (no manual discount).
-      final resellerDeduction =
-          _selectedReseller?.deductionPerItem ?? Money.zero;
       final items = _cart
           .map(
             (e) => OrderItem(
               id: const Uuid().v4(),
               productId: e.product.id,
               productName: e.product.name,
-              unitPrice: resellerDeduction > 0
-                  ? (e.srp - resellerDeduction).max(Money.zero).min(e.srp)
-                  : e.customPrice, // non-reseller: use manually entered discounted price
+              unitPrice: _effectiveUnitPrice(e),
               srpPrice: e.srp, // always original catalog price
               quantity: e.qty,
             ),
           )
           .toList();
+      final lineSrpTotal = items.fold(
+        Money.zero,
+        (sum, item) => sum + item.srpPrice * item.quantity,
+      );
+      final lineNetTotal = items.fold(
+        Money.zero,
+        (sum, item) => sum + item.subtotal,
+      );
 
       // The readable KNZ number is allocated by SQLite inside the create
       // transaction. This placeholder is never persisted.
@@ -254,17 +245,16 @@ class _OrderDialogState extends State<OrderDialog> {
           : _status;
       // Customer-pay total is authoritative; SRP remains separately available on
       // the order and line items for discount and receipt reference.
-      final savedTotal = displayTotal;
       final savedDiscountedTotal = _selectedReseller != null
-          ? _discountedCartTotal
+          ? lineNetTotal
           : null;
       final order = Order(
         id: const Uuid().v4(),
         orderId: orderId,
         customerName: customer,
         items: items,
-        totalAmount: savedTotal,
-        srpTotal: _cartTotal,
+        totalAmount: lineNetTotal,
+        srpTotal: lineSrpTotal,
         status: effectiveStatus,
         orderDate: DateTime.now(),
         notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
@@ -864,6 +854,7 @@ class _OrderDialogState extends State<OrderDialog> {
                       ..._cart.asMap().entries.map((entry) {
                         final i = entry.key;
                         final e = entry.value;
+                        final effectivePrice = _effectiveUnitPrice(e);
                         return Column(
                           children: [
                             Padding(
@@ -886,7 +877,7 @@ class _OrderDialogState extends State<OrderDialog> {
                                             fontSize: 13,
                                           ),
                                         ),
-                                        if (e.srp != e.customPrice) ...[
+                                        if (e.srp != effectivePrice) ...[
                                           // Show SRP and deduction when discounted
                                           Row(
                                             children: [
@@ -908,7 +899,7 @@ class _OrderDialogState extends State<OrderDialog> {
                                                 ),
                                               ),
                                               Text(
-                                                (e.srp - e.customPrice)
+                                                (e.srp - effectivePrice)
                                                     .format(),
                                                 style: const TextStyle(
                                                   color: AppColors.error,
@@ -920,7 +911,7 @@ class _OrderDialogState extends State<OrderDialog> {
                                           ),
                                         ],
                                         Text(
-                                          '${e.customPrice.format()} × ${e.qty} = ${(e.customPrice * e.qty).format()}',
+                                          '${effectivePrice.format()} × ${e.qty} = ${(effectivePrice * e.qty).format()}',
                                           style: const TextStyle(
                                             color: AppColors.whiteTertiary,
                                             fontSize: 11,
@@ -1024,7 +1015,7 @@ class _OrderDialogState extends State<OrderDialog> {
                               ),
                             ),
                             Text(
-                              _cartTotal.format(),
+                              _cartNetTotal.format(),
                               style: const TextStyle(
                                 color: AppColors.gold,
                                 fontWeight: FontWeight.w700,
@@ -1045,6 +1036,7 @@ class _OrderDialogState extends State<OrderDialog> {
                 label: 'STATUS',
                 value: _status,
                 items: OrderStatus.values
+                    .where((status) => status != OrderStatus.delivered)
                     .map(
                       (s) => DropdownMenuItem(
                         value: s,
@@ -1129,9 +1121,9 @@ class _OrderDialogState extends State<OrderDialog> {
                             ],
                             onChanged: (r) => setState(() {
                               _selectedReseller = r;
-                              // Clear any manual discount when a reseller is
-                              // selected — the field is now hidden and its
-                              // value would otherwise silently affect pricing.
+                              // Existing manual prices remain available if the
+                              // user switches back, but reseller mode derives
+                              // every active line price directly from SRP.
                               _pickedPriceCtrl.clear();
                             }),
                           ),
@@ -1155,14 +1147,14 @@ class _OrderDialogState extends State<OrderDialog> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(
-                                'SRP:  ${_cartTotal.format()}',
+                                'SRP:  ${_cartSrpTotal.format()}',
                                 style: const TextStyle(
                                   color: AppColors.whiteSecondary,
                                   fontSize: 13,
                                 ),
                               ),
                               Text(
-                                'NET: ${_discountedCartTotal.format()}',
+                                'NET: ${_cartNetTotal.format()}',
                                 style: const TextStyle(
                                   color: AppColors.gold,
                                   fontWeight: FontWeight.w700,

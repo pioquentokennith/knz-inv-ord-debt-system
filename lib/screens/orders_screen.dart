@@ -19,6 +19,7 @@ import '../models/order_state_machine.dart';
 import '../widgets/shared_widgets.dart';
 import '../dialogs/order_dialog.dart';
 import '../dialogs/mark_as_utang_dialog.dart'; // ← FIX 5 import
+import '../dialogs/order_activity_dialog.dart';
 import 'receipt_screen.dart';
 import '../dialogs/export_dialog.dart';
 
@@ -85,7 +86,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     var updated = 0;
     try {
       for (final order in deliverable) {
-        await AppState().updateOrderStatus(order.id, OrderStatus.delivered);
+        await AppState().recordOrderDelivery(order.id);
         updated++;
       }
       if (mounted) {
@@ -174,6 +175,8 @@ class _OrdersScreenState extends State<OrdersScreen> {
     try {
       if (result == OrderStatus.utang && mounted) {
         MarkAsUtangDialog.show(context, order);
+      } else if (result == OrderStatus.delivered) {
+        await AppState().recordOrderDelivery(order.id);
       } else {
         await AppState().updateOrderStatus(order.id, result);
         if (mounted) {
@@ -556,16 +559,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                                       dateFmt: dateFmt,
                                                       onUpdate: () =>
                                                           _updateStatus(o),
-                                                      onDelete: () =>
-                                                          _deleteOrder(o),
+                                                      onDelete:
+                                                          AppState()
+                                                              .isAdministrator
+                                                          ? () =>
+                                                                _deleteOrder(o)
+                                                          : null,
                                                       onReceipt: () =>
                                                           ReceiptScreen.show(
                                                             context,
                                                             o,
                                                             userName: userName,
                                                           ),
-                                                      onUtang: () =>
-                                                          MarkAsUtangDialog.show(
+                                                      onActivity: () =>
+                                                          OrderActivityDialog.show(
                                                             context,
                                                             o,
                                                           ),
@@ -576,16 +583,20 @@ class _OrdersScreenState extends State<OrdersScreen> {
                                                       dateFmt: dateFmt,
                                                       onUpdate: () =>
                                                           _updateStatus(o),
-                                                      onDelete: () =>
-                                                          _deleteOrder(o),
+                                                      onDelete:
+                                                          AppState()
+                                                              .isAdministrator
+                                                          ? () =>
+                                                                _deleteOrder(o)
+                                                          : null,
                                                       onReceipt: () =>
                                                           ReceiptScreen.show(
                                                             context,
                                                             o,
                                                             userName: userName,
                                                           ),
-                                                      onUtang: () =>
-                                                          MarkAsUtangDialog.show(
+                                                      onActivity: () =>
+                                                          OrderActivityDialog.show(
                                                             context,
                                                             o,
                                                           ),
@@ -618,18 +629,18 @@ class _OrderCard extends StatelessWidget {
   final NumberFormat currency;
   final DateFormat dateFmt;
   final VoidCallback onUpdate;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
   final VoidCallback onReceipt;
-  final VoidCallback onUtang;
+  final VoidCallback onActivity;
 
   const _OrderCard({
     required this.order,
     required this.currency,
     required this.dateFmt,
     required this.onUpdate,
-    required this.onDelete,
+    this.onDelete,
     required this.onReceipt,
-    required this.onUtang,
+    required this.onActivity,
   });
 
   @override
@@ -652,12 +663,13 @@ class _OrderCard extends StatelessWidget {
               const Spacer(),
               OrderStatusBadge(status: order.status),
               const SizedBox(width: 8),
-              DarkIconButton(
-                icon: Icons.delete_outline,
-                semanticLabel: 'Delete order',
-                color: AppColors.error,
-                onPressed: onDelete,
-              ),
+              if (onDelete != null)
+                DarkIconButton(
+                  icon: Icons.delete_outline,
+                  semanticLabel: 'Delete order',
+                  color: AppColors.error,
+                  onPressed: onDelete!,
+                ),
             ],
           ),
           const SizedBox(height: 6),
@@ -742,6 +754,28 @@ class _OrderCard extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: OutlinedButton.icon(
+                  onPressed: onActivity,
+                  icon: const Icon(
+                    Icons.account_balance_wallet_outlined,
+                    size: 14,
+                    color: AppColors.whiteSecondary,
+                  ),
+                  label: const Text(
+                    'Activity',
+                    style: TextStyle(
+                      color: AppColors.whiteSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: AppColors.cardBorder),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
                   onPressed: onReceipt,
                   icon: const Icon(
                     Icons.receipt_outlined,
@@ -749,7 +783,7 @@ class _OrderCard extends StatelessWidget {
                     color: AppColors.whiteSecondary,
                   ),
                   label: const Text(
-                    'Receipt',
+                    'Summary',
                     style: TextStyle(
                       color: AppColors.whiteSecondary,
                       fontSize: 12,
@@ -774,18 +808,18 @@ class _OrderRowWide extends StatelessWidget {
   final NumberFormat currency;
   final DateFormat dateFmt;
   final VoidCallback onUpdate;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
   final VoidCallback onReceipt;
-  final VoidCallback onUtang;
+  final VoidCallback onActivity;
 
   const _OrderRowWide({
     required this.order,
     required this.currency,
     required this.dateFmt,
     required this.onUpdate,
-    required this.onDelete,
+    this.onDelete,
     required this.onReceipt,
-    required this.onUtang,
+    required this.onActivity,
   });
 
   @override
@@ -847,11 +881,18 @@ class _OrderRowWide extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
+          if (onDelete != null)
+            DarkIconButton(
+              icon: Icons.edit_outlined,
+              semanticLabel: 'Update order status',
+              color: AppColors.gold,
+              onPressed: onUpdate,
+            ),
           DarkIconButton(
-            icon: Icons.edit_outlined,
-            semanticLabel: 'Update order status',
+            icon: Icons.account_balance_wallet_outlined,
+            semanticLabel: 'Open order activity',
             color: AppColors.gold,
-            onPressed: onUpdate,
+            onPressed: onActivity,
           ),
           DarkIconButton(
             icon: Icons.receipt_outlined,
@@ -863,7 +904,7 @@ class _OrderRowWide extends StatelessWidget {
             icon: Icons.delete_outline,
             semanticLabel: 'Delete order',
             color: AppColors.error,
-            onPressed: onDelete,
+            onPressed: onDelete!,
           ),
         ],
       ),

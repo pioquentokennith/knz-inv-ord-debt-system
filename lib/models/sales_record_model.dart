@@ -12,7 +12,6 @@ import '../core/money.dart';
 
 class SalesRecord {
   // ── Private fields (Encapsulation) ────────────────────────────────────────
-  final String _itemId; // order_items.id  (unique per row)
   final String _orderId; // human-readable e.g. "KNZ-042"
   final String _itemName; // product_name (denormalized)
   final Money _srp; // srp_price — original catalog price
@@ -25,7 +24,6 @@ class SalesRecord {
   final int _discountBasisPoints;
 
   const SalesRecord({
-    required String itemId,
     required String orderId,
     required String itemName,
     required Money srp,
@@ -36,8 +34,7 @@ class SalesRecord {
     required Money totalSales,
     required bool isReseller,
     required int discountBasisPoints,
-  }) : _itemId = itemId,
-       _orderId = orderId,
+  }) : _orderId = orderId,
        _itemName = itemName,
        _srp = srp,
        _discountedPrice = discountedPrice,
@@ -49,7 +46,6 @@ class SalesRecord {
        _discountBasisPoints = discountBasisPoints;
 
   // ── Public read-only getters ──────────────────────────────────────────────
-  String get itemId => _itemId;
   String get orderId => _orderId;
   String get itemName => _itemName;
   Money get srp => _srp;
@@ -59,46 +55,8 @@ class SalesRecord {
   DateTime get datePurchased => _datePurchased;
   Money get totalSales => _totalSales;
   bool get isReseller => _isReseller;
-  int get discountBasisPoints => _discountBasisPoints;
   double get discountPercent => _discountBasisPoints / 100;
 
   /// Convenience: the raw discount amount for this line (SRP - discounted) × qty
   Money get discountAmount => (_srp - _discountedPrice) * _quantity;
-
-  /// Builds a SalesRecord from a flat SQL JOIN row.
-  /// Expects columns from the join of orders + order_items.
-  factory SalesRecord.fromJoinMap(Map<String, dynamic> map) {
-    final discountedPrice = Money.fromCentavos(
-      map['unit_price_centavos'] as int? ?? 0,
-    );
-    // `discount_percent` is a legacy column name that now stores a fixed peso
-    // deduction. Applying it as a percentage double-discounted reseller rows.
-    // The line item's SRP/net pair is the authoritative representation.
-    final srp = map['srp_price_centavos'] == null
-        ? discountedPrice
-        : Money.fromCentavos(map['srp_price_centavos'] as int);
-    final discountBasisPoints = srp.isPositive && discountedPrice < srp
-        ? roundRatioHalfUp(
-            (srp - discountedPrice).centavos * 10000,
-            srp.centavos,
-          )
-        : 0;
-    final qty = map['quantity'] as int? ?? 1;
-
-    return SalesRecord(
-      itemId: map['item_id'] as String? ?? '',
-      orderId: map['order_id_hr'] as String? ?? '', // human-readable
-      itemName: map['product_name'] as String? ?? '',
-      srp: srp,
-      discountedPrice: discountedPrice,
-      quantity: qty,
-      customerName: map['customer_name'] as String? ?? '',
-      datePurchased: map['order_date'] != null
-          ? DateTime.tryParse(map['order_date'] as String) ?? DateTime.now()
-          : DateTime.now(),
-      totalSales: discountedPrice * qty,
-      isReseller: (map['is_reseller'] as int? ?? 0) == 1,
-      discountBasisPoints: discountBasisPoints,
-    );
-  }
 }

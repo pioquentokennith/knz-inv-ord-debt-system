@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:knz_scent_admin/core/money.dart';
 import 'package:knz_scent_admin/models/custom_order_model.dart';
+import 'package:knz_scent_admin/models/business_event_model.dart';
 import 'package:knz_scent_admin/models/debt_model.dart';
 import 'package:knz_scent_admin/models/order_model.dart';
 import 'package:knz_scent_admin/models/payment_method_model.dart';
@@ -33,7 +34,32 @@ void main() {
         paymentMethod: paymentMethod,
       );
 
-  test('cash basis recognizes delivered orders but not new credit sales', () {
+  BusinessEvent event(
+    String id,
+    String orderId,
+    BusinessEventType type, {
+    int? amount,
+    String? relatedEventId,
+    String? reason,
+    DateTime? occurredAt,
+  }) => BusinessEvent(
+    id: id,
+    userId: 'owner',
+    subject: BusinessEventSubject.order,
+    subjectId: orderId,
+    type: type,
+    amount: amount == null ? null : Money.fromCentavos(amount),
+    occurredAt: occurredAt ?? date,
+    recordedAt: occurredAt ?? date,
+    paymentMethod: type == BusinessEventType.payment
+        ? PaymentMethod.cashOnDelivery.storageKey
+        : null,
+    relatedEventId: relatedEventId,
+    reason: reason,
+    commandId: id,
+  );
+
+  test('delivery events recognize sales without implying payment', () {
     final orders = [
       order('delivered', OrderStatus.delivered),
       order('utang', OrderStatus.utang),
@@ -42,13 +68,59 @@ void main() {
       order('cancelled', OrderStatus.cancelled),
     ];
 
-    expect(service.recognizedSales(orders).length, 1);
-    expect(service.grossSales(orders).centavos, 10000);
-    expect(service.totalDiscounts(orders).centavos, 1000);
-    expect(service.netSales(orders).centavos, 9000);
+    final events = [
+      event('delivery-event', 'delivered', BusinessEventType.delivery),
+    ];
+
+    expect(service.recognizedSales(orders, events).length, 1);
+    final report = service.summarize(
+      orders: orders,
+      debts: const [],
+      businessEvents: events,
+    );
+    expect(report.grossSales.centavos, 10000);
+    expect(report.discounts.centavos, 1000);
+    expect(report.netSales.centavos, 9000);
+    expect(report.cashReceived, Money.zero);
   });
 
-  test('settled delivered credit stays excluded from order revenue', () {
+  test('canonical order headers reconcile gross, discount, and net', () {
+    final discounted = Order(
+      id: 'discounted',
+      orderId: 'KNZ-001',
+      customerName: 'Customer',
+      items: [
+        OrderItem(
+          id: 'item-discounted',
+          productId: 'product-1',
+          productName: 'Scent',
+          unitPrice: const Money.fromCentavos(17000),
+          srpPrice: const Money.fromCentavos(20000),
+          quantity: 2,
+        ),
+      ],
+      totalAmount: const Money.fromCentavos(34000),
+      srpTotal: const Money.fromCentavos(40000),
+      status: OrderStatus.delivered,
+      orderDate: date,
+      paymentMethod: PaymentMethod.cashOnDelivery,
+    );
+
+    final report = service.summarize(
+      orders: [discounted],
+      debts: const [],
+      businessEvents: [
+        event('discounted-delivery', discounted.id, BusinessEventType.delivery),
+      ],
+    );
+
+    expect(report.grossSales, const Money.fromCentavos(40000));
+    expect(report.discounts, const Money.fromCentavos(6000));
+    expect(report.netSales, const Money.fromCentavos(34000));
+    expect(report.grossSales - report.discounts, report.netSales);
+  });
+
+  test('delivered credit is sold once and collected only through debt', () {
     final settledCredit = order(
       'settled-utang',
       OrderStatus.delivered,
@@ -70,9 +142,94 @@ void main() {
       payments: [collection],
     );
 
-    expect(service.isRecognizedSale(settledCredit), isFalse);
-    expect(service.netSales([settledCredit]), Money.zero);
-    expect(service.debtCollections([debt]), const Money.fromCentavos(9000));
+    final events = [
+      event('credit-delivery', settledCredit.id, BusinessEventType.delivery),
+    ];
+    expect(service.isRecognizedSale(settledCredit, events), isTrue);
+    final report = service.summarize(
+      orders: [settledCredit],
+      debts: [debt],
+      businessEvents: events,
+    );
+    expect(report.netSales, const Money.fromCentavos(9000));
+    expect(report.netOrderCash, Money.zero);
+    expect(report.debtCollections, const Money.fromCentavos(9000));
+    expect(report.cashReceived, const Money.fromCentavos(9000));
+  });
+
+  test('payments refunds and reversals produce signed order cash', () {
+    final paidOrder = order('event-order', OrderStatus.delivered);
+    final events = [
+      event('delivery', paidOrder.id, BusinessEventType.delivery),
+      event('payment', paidOrder.id, BusinessEventType.payment, amount: 9000),
+      event(
+        'refund',
+        paidOrder.id,
+        BusinessEventType.refund,
+        amount: 2000,
+        reason: 'Returned item',
+      ),
+      event(
+        'refund-reversal',
+        paidOrder.id,
+        BusinessEventType.reversal,
+        amount: 2000,
+        relatedEventId: 'refund',
+        reason: 'Refund entered in error',
+      ),
+    ];
+
+    final report = service.summarize(
+      orders: [paidOrder],
+      debts: const [],
+      businessEvents: events,
+    );
+
+    expect(report.orderPayments, const Money.fromCentavos(9000));
+    expect(report.orderRefunds, const Money.fromCentavos(2000));
+    expect(report.orderReversalEffect, const Money.fromCentavos(2000));
+    expect(report.netOrderCash, const Money.fromCentavos(9000));
+    expect(report.cashReceived, const Money.fromCentavos(9000));
+  });
+
+  test('collection events replace projections without double counting', () {
+    final payment = PaymentRecord(
+      id: 'debt-payment',
+      amount: const Money.fromCentavos(2500),
+      principalApplied: const Money.fromCentavos(2500),
+      paidAt: date,
+    );
+    final debt = CustomerDebt(
+      id: 'debt',
+      customerName: 'Customer',
+      orderId: 'KNZ-001',
+      principalOriginal: const Money.fromCentavos(5000),
+      principalOutstanding: const Money.fromCentavos(2500),
+      createdAt: date,
+      payments: [payment],
+    );
+    final collection = BusinessEvent(
+      id: 'debt-collection',
+      userId: 'owner',
+      subject: BusinessEventSubject.debt,
+      subjectId: debt.id,
+      type: BusinessEventType.collection,
+      amount: payment.amount,
+      occurredAt: payment.paidAt,
+      recordedAt: payment.paidAt,
+      commandId: 'debt-collection',
+      sourceType: 'debt_payment',
+      sourceId: payment.id,
+    );
+
+    final report = service.summarize(
+      orders: const [],
+      debts: [debt],
+      businessEvents: [collection],
+    );
+
+    expect(report.debtCollections, const Money.fromCentavos(2500));
+    expect(report.cashReceived, const Money.fromCentavos(2500));
   });
 
   test(
@@ -118,16 +275,19 @@ void main() {
       orders: fixture.orders,
       debts: fixture.debts,
       customOrders: fixture.customOrders,
+      businessEvents: fixture.businessEvents,
       period: AccountingPeriod(from: fixture.periodFrom, to: fixture.periodTo),
     );
 
     expect(report.recognizedOrders.map((order) => order.id), [
       'paid',
       'reseller',
+      'utang',
     ]);
-    expect(report.grossSales, const Money.fromCentavos(40000));
+    expect(report.grossSales, const Money.fromCentavos(70000));
     expect(report.discounts, const Money.fromCentavos(7000));
-    expect(report.netSales, const Money.fromCentavos(33000));
+    expect(report.netSales, const Money.fromCentavos(63000));
+    expect(report.orderPayments, const Money.fromCentavos(33000));
     expect(report.debtCollections, const Money.fromCentavos(10000));
     expect(report.debtPrincipalCollections, const Money.fromCentavos(8000));
     expect(report.debtInterestCollections, const Money.fromCentavos(2000));
@@ -136,7 +296,7 @@ void main() {
     expect(report.receivablesPrincipal, const Money.fromCentavos(22000));
     expect(report.receivablesInterest, const Money.fromCentavos(3000));
     expect(report.receivables, const Money.fromCentavos(25000));
-    expect(report.itemsSold, 3);
+    expect(report.itemsSold, 4);
     expect(
       report.resellerSummaries.single.netRevenue,
       const Money.fromCentavos(15000),
@@ -149,10 +309,11 @@ void main() {
       orders: fixture.orders,
       debts: fixture.debts,
       customOrders: fixture.customOrders,
+      businessEvents: fixture.businessEvents,
       period: AccountingPeriod(from: fixture.periodFrom, to: fixture.periodTo),
     );
 
-    expect(report.recognizedOrders.length, 2);
+    expect(report.recognizedOrders.length, 3);
     expect(report.customOrderPayments.length, 2);
     expect(report.customOrderPayments.map((row) => row.payment.id), [
       'custom-initial',

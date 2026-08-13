@@ -7,6 +7,7 @@
 
 import '../models/order_model.dart';
 import '../models/debt_model.dart';
+import '../models/business_event_model.dart';
 import '../repositories/order_repository.dart';
 
 /// Abstract contract for order business logic (Abstraction).
@@ -30,16 +31,21 @@ abstract class IOrderService {
   // Updates only the status field of an existing order
   Future<void> updateStatus(String orderId, OrderStatus status);
 
+  Future<BusinessEvent> recordPayment(String orderId, BusinessEvent event);
+  Future<BusinessEvent> recordDelivery(String orderId, BusinessEvent event);
+  Future<BusinessEvent> issueRefund(String orderId, BusinessEvent event);
+  Future<BusinessEvent> reverseEvent(String orderId, BusinessEvent event);
+
   // Atomically changes an existing active order to utang and creates its debt.
   Future<void> markAsUtang(String orderId, CustomerDebt debt);
 
   // Soft-deletes an order (moves it to the Recycle Bin)
-  Future<void> deleteOrder(String orderId);
+  Future<void> deleteOrder(String orderId, String userId);
 
   // ── Recycle Bin operations ────────────────────────────────────────────────
   Future<List<Order>> getDeleted(String userId); // Returns soft-deleted orders
-  Future<void> restoreOrder(String orderId); // Un-deletes an order
-  Future<void> hardDeleteOrder(String orderId); // Permanent purge
+  Future<void> restoreOrder(String orderId, String userId);
+  Future<void> hardDeleteOrder(String orderId, String userId);
 }
 
 /// Concrete implementation — all business logic for orders.
@@ -76,6 +82,30 @@ class OrderService implements IOrderService {
   }
 
   @override
+  Future<BusinessEvent> recordPayment(String orderId, BusinessEvent event) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.recordPayment(orderId, event);
+  }
+
+  @override
+  Future<BusinessEvent> recordDelivery(String orderId, BusinessEvent event) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.recordDelivery(orderId, event);
+  }
+
+  @override
+  Future<BusinessEvent> issueRefund(String orderId, BusinessEvent event) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.issueRefund(orderId, event);
+  }
+
+  @override
+  Future<BusinessEvent> reverseEvent(String orderId, BusinessEvent event) {
+    _requireNonBlank(orderId, 'orderId');
+    return _orderRepo.reverseEvent(orderId, event);
+  }
+
+  @override
   Future<void> markAsUtang(String orderId, CustomerDebt debt) {
     _requireNonBlank(orderId, 'orderId');
     return _orderRepo.markAsUtang(orderId, debt);
@@ -83,9 +113,9 @@ class OrderService implements IOrderService {
 
   // Delegates soft-delete to the repository
   @override
-  Future<void> deleteOrder(String orderId) {
+  Future<void> deleteOrder(String orderId, String userId) {
     _requireNonBlank(orderId, 'orderId');
-    return _orderRepo.deleteWithInventory(orderId);
+    return _orderRepo.deleteWithInventory(orderId, userId);
   }
 
   // Delegates Recycle Bin operations to the repository
@@ -94,15 +124,15 @@ class OrderService implements IOrderService {
       _orderRepo.getDeleted(userId);
 
   @override
-  Future<void> restoreOrder(String orderId) {
+  Future<void> restoreOrder(String orderId, String userId) {
     _requireNonBlank(orderId, 'orderId');
-    return _orderRepo.restoreWithInventory(orderId);
+    return _orderRepo.restoreWithInventory(orderId, userId);
   }
 
   @override
-  Future<void> hardDeleteOrder(String orderId) {
+  Future<void> hardDeleteOrder(String orderId, String userId) {
     _requireNonBlank(orderId, 'orderId');
-    return _orderRepo.hardDelete(orderId);
+    return _orderRepo.hardDelete(orderId, userId);
   }
 
   void _requireNonBlank(String value, String name) {

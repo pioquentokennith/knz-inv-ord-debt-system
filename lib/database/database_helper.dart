@@ -16,6 +16,7 @@ import 'package:path/path.dart';
 
 import '../core/money.dart';
 import '../dto/activity_log_dto.dart';
+import '../dto/business_event_dto.dart';
 import '../dto/custom_order_dto.dart';
 import '../dto/debt_dto.dart';
 import '../dto/order_dto.dart';
@@ -27,7 +28,7 @@ class DatabaseHelper {
   DatabaseHelper._(); // Private constructor prevents direct instantiation
   static final DatabaseHelper instance = DatabaseHelper._(); // Shared instance
   static Database? _db; // Cached opened database; null until first access
-  static const schemaVersion = 14;
+  static const schemaVersion = 17;
 
   // Lazy getter — opens the database on first access, reuses it thereafter
   Future<Database> get database async {
@@ -89,7 +90,13 @@ class DatabaseHelper {
         user_id TEXT NOT NULL,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT,
-        schema_version INTEGER NOT NULL DEFAULT 1
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 0,
+        base_revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT,
+        writer_device_id TEXT,
+        tombstone_revision INTEGER NOT NULL DEFAULT 0,
+        purge_state TEXT NOT NULL DEFAULT 'none'
       )
     ''');
 
@@ -118,6 +125,14 @@ class DatabaseHelper {
         stock_released_on_delete INTEGER NOT NULL DEFAULT 0,
         command_id TEXT,
         schema_version INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 0,
+        base_revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT,
+        writer_device_id TEXT,
+        tombstone_revision INTEGER NOT NULL DEFAULT 0,
+        purge_state TEXT NOT NULL DEFAULT 'none',
+        number_state TEXT NOT NULL DEFAULT 'legacy',
+        provisional_order_id TEXT,
         UNIQUE (user_id, order_id)
       )
     ''');
@@ -156,7 +171,13 @@ class DatabaseHelper {
         last_accrual_timestamp TEXT NOT NULL,
         due_date TEXT,
         status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'paid')),
-        schema_version INTEGER NOT NULL DEFAULT 1
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 0,
+        base_revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT,
+        writer_device_id TEXT,
+        tombstone_revision INTEGER NOT NULL DEFAULT 0,
+        purge_state TEXT NOT NULL DEFAULT 'none'
       )
     ''');
 
@@ -206,7 +227,14 @@ class DatabaseHelper {
         last_error TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
         idempotency_key TEXT NOT NULL UNIQUE,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        operation_id TEXT,
+        aggregate_key TEXT,
+        expected_revision INTEGER,
+        resulting_revision INTEGER,
+        device_id TEXT,
+        error_class TEXT,
+        conflict_id INTEGER
       )
     ''');
 
@@ -228,7 +256,13 @@ class DatabaseHelper {
         created_at TEXT NOT NULL,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT,
-        schema_version INTEGER NOT NULL DEFAULT 1
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 0,
+        base_revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT,
+        writer_device_id TEXT,
+        tombstone_revision INTEGER NOT NULL DEFAULT 0,
+        purge_state TEXT NOT NULL DEFAULT 'none'
       )
     ''');
 
@@ -248,7 +282,13 @@ class DatabaseHelper {
         created_at TEXT NOT NULL,
         is_deleted INTEGER NOT NULL DEFAULT 0,
         deleted_at TEXT,
-        schema_version INTEGER NOT NULL DEFAULT 1
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        revision INTEGER NOT NULL DEFAULT 0,
+        base_revision INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT,
+        writer_device_id TEXT,
+        tombstone_revision INTEGER NOT NULL DEFAULT 0,
+        purge_state TEXT NOT NULL DEFAULT 'none'
       )
     ''');
 
@@ -263,6 +303,11 @@ class DatabaseHelper {
         FOREIGN KEY (custom_order_id) REFERENCES custom_orders (id) ON DELETE CASCADE
       )
     ''');
+
+    await _createBusinessEventsSchema(db);
+
+    await _createTrustedDeviceSchema(db);
+    await _createSynchronizationSchema(db);
 
     // ── v5/v6 indexes ─────────────────────────────────────────────────────
     await db.execute(
@@ -570,6 +615,9 @@ class DatabaseHelper {
     if (oldVersion < 14) {
       await migrateToV14(db);
     }
+    if (oldVersion < 15) {
+      await migrateToV15(db);
+    }
 
     for (final statement in [
       'CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id, is_deleted)',
@@ -581,6 +629,10 @@ class DatabaseHelper {
       'CREATE INDEX IF NOT EXISTS idx_resellers_user ON resellers(user_id, is_deleted)',
       'CREATE INDEX IF NOT EXISTS idx_custom_orders_user ON custom_orders(user_id, is_deleted)',
       'CREATE INDEX IF NOT EXISTS idx_custom_order_payments_order ON custom_order_payments(custom_order_id)',
+      'CREATE INDEX IF NOT EXISTS idx_business_events_user_time ON business_events(user_id, occurred_at, recorded_at)',
+      'CREATE INDEX IF NOT EXISTS idx_business_events_subject ON business_events(user_id, subject_type, subject_id, occurred_at)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_business_events_user_command ON business_events(user_id, command_id)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_business_events_source ON business_events(user_id, source_type, source_id) WHERE source_type IS NOT NULL AND source_id IS NOT NULL',
       'CREATE INDEX IF NOT EXISTS idx_sync_queue_due ON sync_queue(next_attempt_at, created_at)',
       'CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(user_id, status, id)',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_sync_queue_idempotency ON sync_queue(idempotency_key)',
@@ -628,6 +680,12 @@ class DatabaseHelper {
     if (oldVersion < 9) {
       await migrateUsersToV9(db);
     }
+    if (oldVersion < 16) {
+      await migrateToV16(db);
+    }
+    if (oldVersion < 17) {
+      await migrateToV17(db);
+    }
 
     await _verifySchema(db);
   }
@@ -635,6 +693,452 @@ class DatabaseHelper {
   /// Adds explicit optional due dates without assigning dates to legacy debts.
   static Future<void> migrateToV14(DatabaseExecutor db) =>
       _addColumnIfMissing(db, 'debts', 'due_date', 'due_date TEXT');
+
+  static Future<void> migrateToV16(DatabaseExecutor db) =>
+      _createTrustedDeviceSchema(db);
+
+  static Future<void> migrateToV17(DatabaseExecutor db) async {
+    for (final table in const [
+      'products',
+      'orders',
+      'debts',
+      'resellers',
+      'custom_orders',
+    ]) {
+      await _addColumnIfMissing(
+        db,
+        table,
+        'revision',
+        'revision INTEGER NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        table,
+        'base_revision',
+        'base_revision INTEGER NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(db, table, 'updated_at', 'updated_at TEXT');
+      await _addColumnIfMissing(
+        db,
+        table,
+        'writer_device_id',
+        'writer_device_id TEXT',
+      );
+      await _addColumnIfMissing(
+        db,
+        table,
+        'tombstone_revision',
+        'tombstone_revision INTEGER NOT NULL DEFAULT 0',
+      );
+      await _addColumnIfMissing(
+        db,
+        table,
+        'purge_state',
+        "purge_state TEXT NOT NULL DEFAULT 'none'",
+      );
+    }
+    await _addColumnIfMissing(
+      db,
+      'orders',
+      'number_state',
+      "number_state TEXT NOT NULL DEFAULT 'legacy'",
+    );
+    await _addColumnIfMissing(
+      db,
+      'orders',
+      'provisional_order_id',
+      'provisional_order_id TEXT',
+    );
+    await _addColumnIfMissing(
+      db,
+      'sync_queue',
+      'operation_id',
+      'operation_id TEXT',
+    );
+    await _addColumnIfMissing(
+      db,
+      'sync_queue',
+      'aggregate_key',
+      'aggregate_key TEXT',
+    );
+    await _addColumnIfMissing(
+      db,
+      'sync_queue',
+      'expected_revision',
+      'expected_revision INTEGER',
+    );
+    await _addColumnIfMissing(
+      db,
+      'sync_queue',
+      'resulting_revision',
+      'resulting_revision INTEGER',
+    );
+    await _addColumnIfMissing(db, 'sync_queue', 'device_id', 'device_id TEXT');
+    await _addColumnIfMissing(
+      db,
+      'sync_queue',
+      'error_class',
+      'error_class TEXT',
+    );
+    await _addColumnIfMissing(
+      db,
+      'sync_queue',
+      'conflict_id',
+      'conflict_id INTEGER',
+    );
+    await _createSynchronizationSchema(db);
+    await db.execute(
+      'UPDATE sync_queue SET operation_id = idempotency_key '
+      'WHERE operation_id IS NULL',
+    );
+    await db.execute(
+      "UPDATE sync_queue SET aggregate_key = collection || ':' || doc_id "
+      'WHERE aggregate_key IS NULL',
+    );
+  }
+
+  static Future<void> _createSynchronizationSchema(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS device_identity (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        device_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sync_conflicts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL,
+        collection TEXT NOT NULL,
+        doc_id TEXT NOT NULL,
+        aggregate_key TEXT NOT NULL,
+        local_revision INTEGER NOT NULL,
+        remote_revision INTEGER NOT NULL,
+        local_data TEXT NOT NULL,
+        remote_data TEXT,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL,
+        resolved_at TEXT,
+        UNIQUE (user_id, aggregate_key, status)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sync_cursors (
+        user_id TEXT NOT NULL,
+        collection TEXT NOT NULL,
+        cursor_value TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, collection)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS dead_letters (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        queue_row_id INTEGER,
+        user_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        aggregate_key TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        error_class TEXT NOT NULL,
+        last_error TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sync_conflicts_user_status '
+      'ON sync_conflicts(user_id, status, created_at)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_sync_queue_aggregate '
+      'ON sync_queue(user_id, aggregate_key, id)',
+    );
+  }
+
+  static Future<void> _createTrustedDeviceSchema(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS device_auth_grants (
+        uid TEXT PRIMARY KEY,
+        state TEXT NOT NULL CHECK (state IN ('enabled', 'revoked')),
+        generation INTEGER NOT NULL CHECK (generation > 0),
+        enrolled_at TEXT NOT NULL,
+        last_verified_at TEXT NOT NULL,
+        access_generation INTEGER NOT NULL DEFAULT 1 CHECK (access_generation > 0),
+        profile_digest TEXT NOT NULL,
+        revoked_at TEXT,
+        revocation_reason TEXT,
+        FOREIGN KEY (uid) REFERENCES users (firebase_uid) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS auth_runtime_state (
+        singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+        last_active_uid TEXT,
+        pending_firebase_signout_uid TEXT,
+        operation_generation INTEGER NOT NULL DEFAULT 0 CHECK (operation_generation >= 0)
+      )
+    ''');
+    await db.insert('auth_runtime_state', {
+      'singleton_id': 1,
+      'operation_generation': 0,
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
+  /// Adds immutable business events and preserves exact legacy collections.
+  static Future<void> migrateToV15(DatabaseExecutor db) async {
+    await _createBusinessEventsSchema(db);
+    final migrationTime = DateTime.now().toUtc().toIso8601String();
+
+    Future<void> insertEvent(Map<String, dynamic> event) async {
+      final dto = BusinessEventDto.fromLocal(event);
+      final inserted = await db.insert(
+        'business_events',
+        dto.toLocal(),
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      if (inserted == 0) return;
+      await db.insert('sync_queue', {
+        'operation': 'save_business_event',
+        'collection': 'business_events',
+        'user_id': dto.userId,
+        'doc_id': dto.id,
+        'data': jsonEncode(dto.toCloud()),
+        'created_at': migrationTime,
+        'attempt_count': 0,
+        'next_attempt_at': null,
+        'last_attempt_at': null,
+        'last_error': null,
+        'status': 'pending',
+        'idempotency_key': 'business-event:${dto.userId}:${dto.id}',
+        'updated_at': migrationTime,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+
+    for (final row in await db.query(
+      'orders',
+      where: 'status = ?',
+      whereArgs: ['Delivered'],
+    )) {
+      final id = row['id'] as String;
+      final userId = row['user_id'] as String;
+      final orderDate = row['order_date'] as String;
+      await insertEvent({
+        'id': 'legacy-order-delivery-$id',
+        'user_id': userId,
+        'subject_type': 'order',
+        'subject_id': id,
+        'event_type': 'delivery',
+        'amount_centavos': null,
+        'occurred_at': orderDate,
+        'recorded_at': orderDate,
+        'payment_method': null,
+        'reference': null,
+        'related_event_id': null,
+        'reason': null,
+        'command_id': 'legacy-order-delivery-$id',
+        'provenance': 'legacy_inferred',
+        'source_type': 'order_delivery',
+        'source_id': id,
+        'schema_version': 1,
+      });
+
+      final linkedDebt = await db.query(
+        'debts',
+        columns: const ['id'],
+        where: 'user_id = ? AND order_id = ?',
+        whereArgs: [userId, row['order_id']],
+        limit: 1,
+      );
+      final method = row['payment_method'] as String?;
+      final amount = (row['customer_pay_amount_centavos'] as num).toInt();
+      if (linkedDebt.isEmpty && method != 'utang' && amount > 0) {
+        await insertEvent({
+          'id': 'legacy-order-payment-$id',
+          'user_id': userId,
+          'subject_type': 'order',
+          'subject_id': id,
+          'event_type': 'payment',
+          'amount_centavos': amount,
+          'occurred_at': orderDate,
+          'recorded_at': orderDate,
+          'payment_method': method,
+          'reference': row['payment_reference'],
+          'related_event_id': null,
+          'reason': null,
+          'command_id': 'legacy-order-payment-$id',
+          'provenance': 'legacy_inferred',
+          'source_type': 'order_payment',
+          'source_id': id,
+          'schema_version': 1,
+        });
+      }
+    }
+
+    final debtPayments = await db.rawQuery('''
+      SELECT p.*, d.user_id
+      FROM payments p
+      INNER JOIN debts d ON d.id = p.debt_id
+    ''');
+    for (final row in debtPayments) {
+      final paymentId = row['id'] as String;
+      final userId = row['user_id'] as String;
+      final paidAt = row['paid_at'] as String;
+      await insertEvent({
+        'id': 'legacy-debt-collection-$paymentId',
+        'user_id': userId,
+        'subject_type': 'debt',
+        'subject_id': row['debt_id'],
+        'event_type': 'collection',
+        'amount_centavos': row['amount_centavos'],
+        'occurred_at': paidAt,
+        'recorded_at': paidAt,
+        'payment_method': row['payment_method'],
+        'reference': row['reference'],
+        'related_event_id': null,
+        'reason': row['note'],
+        'command_id': 'legacy-debt-collection-$paymentId',
+        'provenance': 'legacy_exact',
+        'source_type': 'debt_payment',
+        'source_id': paymentId,
+        'schema_version': 1,
+      });
+    }
+
+    final customPayments = await db.rawQuery('''
+      SELECT p.*, o.user_id
+      FROM custom_order_payments p
+      INNER JOIN custom_orders o ON o.id = p.custom_order_id
+    ''');
+    for (final row in customPayments) {
+      final paymentId = row['id'] as String;
+      final userId = row['user_id'] as String;
+      final paidAt = row['paid_at'] as String;
+      await insertEvent({
+        'id': 'legacy-custom-collection-$paymentId',
+        'user_id': userId,
+        'subject_type': 'custom_order',
+        'subject_id': row['custom_order_id'],
+        'event_type': 'collection',
+        'amount_centavos': row['amount_centavos'],
+        'occurred_at': paidAt,
+        'recorded_at': paidAt,
+        'payment_method': null,
+        'reference': null,
+        'related_event_id': null,
+        'reason': row['note'],
+        'command_id': 'legacy-custom-collection-$paymentId',
+        'provenance': 'legacy_exact',
+        'source_type': 'custom_payment',
+        'source_id': paymentId,
+        'schema_version': 1,
+      });
+    }
+
+    final customOrders = await db.query('custom_orders');
+    for (final row in customOrders) {
+      final id = row['id'] as String;
+      final paid = (row['deposit_paid_centavos'] as num).toInt();
+      final sumRows = await db.rawQuery(
+        'SELECT COALESCE(SUM(amount_centavos), 0) AS total '
+        'FROM custom_order_payments WHERE custom_order_id = ?',
+        [id],
+      );
+      final attributed = (sumRows.single['total'] as num).toInt();
+      final residual = paid - attributed;
+      if (residual <= 0) continue;
+      final userId = row['user_id'] as String;
+      await insertEvent({
+        'id': 'legacy-custom-opening-$id',
+        'user_id': userId,
+        'subject_type': 'custom_order',
+        'subject_id': id,
+        'event_type': 'collection',
+        'amount_centavos': residual,
+        'occurred_at': null,
+        'recorded_at': row['created_at'],
+        'payment_method': null,
+        'reference': null,
+        'related_event_id': null,
+        'reason': 'Legacy unattributed collection',
+        'command_id': 'legacy-custom-opening-$id',
+        'provenance': 'legacy_unknown',
+        'source_type': 'custom_opening_balance',
+        'source_id': id,
+        'schema_version': 1,
+      });
+    }
+  }
+
+  static Future<void> _createBusinessEventsSchema(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS business_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        subject_type TEXT NOT NULL CHECK (subject_type IN ('order', 'debt', 'custom_order')),
+        subject_id TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('payment', 'delivery', 'refund', 'reversal', 'collection')),
+        amount_centavos INTEGER CHECK (amount_centavos IS NULL OR amount_centavos > 0),
+        occurred_at TEXT,
+        recorded_at TEXT NOT NULL,
+        payment_method TEXT,
+        reference TEXT,
+        related_event_id TEXT,
+        reason TEXT,
+        command_id TEXT NOT NULL,
+        provenance TEXT NOT NULL CHECK (provenance IN ('native', 'legacy_exact', 'legacy_inferred', 'legacy_unknown')),
+        source_type TEXT,
+        source_id TEXT,
+        schema_version INTEGER NOT NULL DEFAULT 1,
+        CHECK (
+          (event_type = 'delivery' AND amount_centavos IS NULL)
+          OR (event_type != 'delivery' AND amount_centavos > 0)
+        ),
+        CHECK (
+          (event_type = 'collection' AND subject_type IN ('debt', 'custom_order'))
+          OR (event_type != 'collection' AND subject_type = 'order')
+        ),
+        CHECK (
+          (event_type = 'reversal' AND related_event_id IS NOT NULL)
+          OR (event_type != 'reversal' AND related_event_id IS NULL)
+        ),
+        CHECK ((source_type IS NULL) = (source_id IS NULL)),
+        FOREIGN KEY (related_event_id) REFERENCES business_events (id) ON DELETE RESTRICT
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_business_events_user_time '
+      'ON business_events(user_id, occurred_at, recorded_at)',
+    );
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_business_events_subject '
+      'ON business_events(user_id, subject_type, subject_id, occurred_at)',
+    );
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_business_events_user_command '
+      'ON business_events(user_id, command_id)',
+    );
+    await db.execute(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_business_events_source '
+      'ON business_events(user_id, source_type, source_id) '
+      'WHERE source_type IS NOT NULL AND source_id IS NOT NULL',
+    );
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_business_events_no_update
+      BEFORE UPDATE ON business_events
+      BEGIN
+        SELECT RAISE(ABORT, 'business events are immutable');
+      END
+    ''');
+    await db.execute('''
+      CREATE TRIGGER IF NOT EXISTS trg_business_events_no_delete
+      BEFORE DELETE ON business_events
+      BEGIN
+        SELECT RAISE(ABORT, 'business events are immutable');
+      END
+    ''');
+  }
 
   /// Adds monotonic readable order sequences and reconciles the previous stock
   /// behavior where active cancelled orders still held inventory.
@@ -1730,6 +2234,14 @@ class DatabaseHelper {
         'stock_released_on_delete',
         'command_id',
         'schema_version',
+        'revision',
+        'base_revision',
+        'updated_at',
+        'writer_device_id',
+        'tombstone_revision',
+        'purge_state',
+        'number_state',
+        'provisional_order_id',
       },
       'order_items': {
         'id',
@@ -1739,7 +2251,19 @@ class DatabaseHelper {
         'srp_price_centavos',
         'schema_version',
       },
-      'products': {'id', 'user_id', 'price_centavos', 'schema_version'},
+      'products': {
+        'id',
+        'user_id',
+        'price_centavos',
+        'image_path',
+        'schema_version',
+        'revision',
+        'base_revision',
+        'updated_at',
+        'writer_device_id',
+        'tombstone_revision',
+        'purge_state',
+      },
       'debts': {
         'id',
         'order_id',
@@ -1755,6 +2279,12 @@ class DatabaseHelper {
         'due_date',
         'status',
         'schema_version',
+        'revision',
+        'base_revision',
+        'updated_at',
+        'writer_device_id',
+        'tombstone_revision',
+        'purge_state',
       },
       'payments': {
         'id',
@@ -1782,6 +2312,13 @@ class DatabaseHelper {
         'status',
         'idempotency_key',
         'updated_at',
+        'operation_id',
+        'aggregate_key',
+        'expected_revision',
+        'resulting_revision',
+        'device_id',
+        'error_class',
+        'conflict_id',
       },
       'order_sequences': {'user_id', 'last_value'},
       'resellers': {
@@ -1791,6 +2328,12 @@ class DatabaseHelper {
         'deleted_at',
         'deduction_per_item_centavos',
         'schema_version',
+        'revision',
+        'base_revision',
+        'updated_at',
+        'writer_device_id',
+        'tombstone_revision',
+        'purge_state',
       },
       'custom_orders': {
         'id',
@@ -1800,6 +2343,12 @@ class DatabaseHelper {
         'agreed_price_centavos',
         'deposit_paid_centavos',
         'schema_version',
+        'revision',
+        'base_revision',
+        'updated_at',
+        'writer_device_id',
+        'tombstone_revision',
+        'purge_state',
       },
       'custom_order_payments': {
         'id',
@@ -1809,6 +2358,25 @@ class DatabaseHelper {
         'note',
         'schema_version',
       },
+      'business_events': {
+        'id',
+        'user_id',
+        'subject_type',
+        'subject_id',
+        'event_type',
+        'amount_centavos',
+        'occurred_at',
+        'recorded_at',
+        'payment_method',
+        'reference',
+        'related_event_id',
+        'reason',
+        'command_id',
+        'provenance',
+        'source_type',
+        'source_id',
+        'schema_version',
+      },
       'activity_logs': {
         'id',
         'message',
@@ -1816,6 +2384,53 @@ class DatabaseHelper {
         'timestamp',
         'user_id',
         'schema_version',
+      },
+      'device_auth_grants': {
+        'uid',
+        'state',
+        'generation',
+        'enrolled_at',
+        'last_verified_at',
+        'access_generation',
+        'profile_digest',
+        'revoked_at',
+        'revocation_reason',
+      },
+      'auth_runtime_state': {
+        'singleton_id',
+        'last_active_uid',
+        'pending_firebase_signout_uid',
+        'operation_generation',
+      },
+      'device_identity': {'singleton_id', 'device_id', 'created_at'},
+      'sync_conflicts': {
+        'id',
+        'user_id',
+        'collection',
+        'doc_id',
+        'aggregate_key',
+        'local_revision',
+        'remote_revision',
+        'local_data',
+        'remote_data',
+        'reason',
+        'status',
+        'created_at',
+        'resolved_at',
+      },
+      'sync_cursors': {'user_id', 'collection', 'cursor_value', 'updated_at'},
+      'dead_letters': {
+        'id',
+        'queue_row_id',
+        'user_id',
+        'operation',
+        'aggregate_key',
+        'payload',
+        'error_class',
+        'last_error',
+        'attempt_count',
+        'created_at',
+        'resolved_at',
       },
     };
 
@@ -1846,6 +2461,10 @@ class DatabaseHelper {
       },
       'payments': {'amount_centavos': 'INTEGER', 'schema_version': 'INTEGER'},
       'custom_order_payments': {
+        'amount_centavos': 'INTEGER',
+        'schema_version': 'INTEGER',
+      },
+      'business_events': {
         'amount_centavos': 'INTEGER',
         'schema_version': 'INTEGER',
       },
@@ -1935,6 +2554,12 @@ class DatabaseHelper {
       'resellers': {'idx_resellers_user'},
       'custom_orders': {'idx_custom_orders_user'},
       'custom_order_payments': {'idx_custom_order_payments_order'},
+      'business_events': {
+        'idx_business_events_user_time',
+        'idx_business_events_subject',
+        'idx_business_events_user_command',
+        'idx_business_events_source',
+      },
       'sync_queue': {
         'idx_sync_queue_due',
         'idx_sync_queue_status',

@@ -101,7 +101,9 @@ class _UtangScreenState extends State<UtangScreen> {
                         debt: filtered[i],
                         currency: currency,
                         onPay: () => _showPaymentDialog(filtered[i]),
-                        onDelete: () => _confirmDelete(filtered[i]),
+                        onDelete: state.isAdministrator
+                            ? () => _confirmDelete(filtered[i])
+                            : null,
                         onReceipt: () =>
                             _showUtangReceipt(filtered[i], userName),
                       ),
@@ -382,14 +384,14 @@ class _DebtCard extends StatefulWidget {
   final CustomerDebt debt;
   final NumberFormat currency;
   final VoidCallback onPay;
-  final VoidCallback onDelete;
+  final VoidCallback? onDelete;
   final VoidCallback onReceipt;
 
   const _DebtCard({
     required this.debt,
     required this.currency,
     required this.onPay,
-    required this.onDelete,
+    this.onDelete,
     required this.onReceipt,
   });
 
@@ -648,27 +650,28 @@ class _DebtCardState extends State<_DebtCard> {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        GestureDetector(
-                          onTap: widget.onDelete,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 7,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.error.withValues(alpha: 0.08),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: AppColors.error.withValues(alpha: 0.3),
+                        if (widget.onDelete != null)
+                          GestureDetector(
+                            onTap: widget.onDelete,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.error.withValues(alpha: 0.08),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: AppColors.error.withValues(alpha: 0.3),
+                                ),
+                              ),
+                              child: const Icon(
+                                Icons.delete_outline,
+                                color: AppColors.error,
+                                size: 16,
                               ),
                             ),
-                            child: const Icon(
-                              Icons.delete_outline,
-                              color: AppColors.error,
-                              size: 16,
-                            ),
                           ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 8),

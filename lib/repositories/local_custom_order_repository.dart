@@ -6,10 +6,13 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../database/database_helper.dart';
+import '../dto/business_event_dto.dart';
 import '../dto/custom_order_dto.dart';
+import '../models/business_event_model.dart';
 import '../models/custom_order_model.dart';
 import 'base_repository.dart';
 import 'firestore_sync.dart';
+import 'local_business_event_repository.dart';
 import 'sync_queue.dart';
 
 class LocalCustomOrderRepository extends BaseRepository {
@@ -86,14 +89,31 @@ class LocalCustomOrderRepository extends BaseRepository {
       for (final payment in dto.payments) {
         await txn.insert('custom_order_payments', payment.toLocal());
       }
+      final events = <BusinessEvent>[];
+      for (final payment in order.payments) {
+        final event = _collectionEvent(order.userId, order.id, payment);
+        await insertBusinessEvent(txn, event);
+        events.add(event);
+      }
       final cloud = dto.toCloud();
       cloud['_payments'] = cloud.remove('payments');
       await _queue.enqueue(
-        operation: 'save_custom_order',
+        operation: events.isEmpty
+            ? 'save_custom_order'
+            : 'save_custom_order_with_events',
         collection: 'custom_orders',
         userId: order.userId,
         docId: order.id,
-        data: cloud,
+        data: events.isEmpty
+            ? cloud
+            : {
+                '_custom_order': cloud,
+                '_events': events
+                    .map(
+                      (event) => BusinessEventDto.fromDomain(event).toCloud(),
+                    )
+                    .toList(growable: false),
+              },
         executor: txn,
       );
     });
@@ -115,17 +135,37 @@ class LocalCustomOrderRepository extends BaseRepository {
       if (changed != 1) {
         throw StateError('Active custom order not found: ${order.id}');
       }
-      await _persistPayments(txn, dto);
+      final events = await _persistPayments(txn, dto, order.userId);
       final cloud = dto.toCloud();
       cloud['_payments'] = cloud.remove('payments');
-      await _queue.enqueue(
-        operation: 'save_custom_order',
-        collection: 'custom_orders',
-        userId: order.userId,
-        docId: order.id,
-        data: cloud,
-        executor: txn,
-      );
+      if (events.isEmpty) {
+        await _queue.enqueue(
+          operation: 'save_custom_order',
+          collection: 'custom_orders',
+          userId: order.userId,
+          docId: order.id,
+          data: cloud,
+          executor: txn,
+        );
+      } else {
+        for (final event in events) {
+          final payment = dto.payments.singleWhere(
+            (candidate) => candidate.id == event.sourceId,
+          );
+          await _queue.enqueue(
+            operation: 'apply_custom_order_payment',
+            collection: 'custom_orders',
+            userId: order.userId,
+            docId: order.id,
+            data: {
+              '_custom_order': cloud,
+              '_payment': payment.toCloud(),
+              '_event': BusinessEventDto.fromDomain(event).toCloud(),
+            },
+            executor: txn,
+          );
+        }
+      }
     });
     _queue.requestSync();
   });
@@ -255,12 +295,15 @@ class LocalCustomOrderRepository extends BaseRepository {
         data: {'id': id, 'user_id': userId},
         executor: txn,
       );
-      final changed = await txn.delete(
+      final changed = await txn.update(
         'custom_orders',
-        where: 'id = ? AND user_id = ? AND is_deleted = 1',
-        whereArgs: [id, userId],
+        {'purge_state': 'pending'},
+        where: 'id = ? AND user_id = ? AND is_deleted = 1 AND purge_state = ?',
+        whereArgs: [id, userId, 'none'],
       );
-      if (changed != 1) throw StateError('Deleted custom order not found: $id');
+      if (changed != 1) {
+        throw StateError('Custom-order purge could not be queued: $id');
+      }
     });
     _queue.requestSync();
   });
@@ -297,9 +340,10 @@ class LocalCustomOrderRepository extends BaseRepository {
     );
   }
 
-  Future<void> _persistPayments(
+  Future<List<BusinessEvent>> _persistPayments(
     DatabaseExecutor database,
     CustomOrderDto dto,
+    String userId,
   ) async {
     final existing = await database.query(
       'custom_order_payments',
@@ -317,8 +361,32 @@ class LocalCustomOrderRepository extends BaseRepository {
         throw StateError('Custom-order payment history is immutable.');
       }
     }
+    final events = <BusinessEvent>[];
     for (final payment in desired.values) {
       await database.insert('custom_order_payments', payment.toLocal());
+      final event = _collectionEvent(userId, dto.id, payment.toDomain());
+      await insertBusinessEvent(database, event);
+      events.add(event);
     }
+    return events;
   }
+
+  BusinessEvent _collectionEvent(
+    String userId,
+    String customOrderId,
+    CustomOrderPayment payment,
+  ) => BusinessEvent(
+    id: 'custom-collection-${payment.id}',
+    userId: userId,
+    subject: BusinessEventSubject.customOrder,
+    subjectId: customOrderId,
+    type: BusinessEventType.collection,
+    amount: payment.amount,
+    occurredAt: payment.paidAt,
+    recordedAt: payment.paidAt,
+    reason: payment.note,
+    commandId: 'custom-collection-${payment.id}',
+    sourceType: 'custom_payment',
+    sourceId: payment.id,
+  );
 }

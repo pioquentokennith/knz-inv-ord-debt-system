@@ -1,6 +1,7 @@
 import '../models/user_model.dart';
 import '../repositories/user_repository.dart';
 import 'cloud_auth_service.dart';
+import 'trusted_device_service.dart';
 
 class AuthResult {
   const AuthResult({
@@ -30,20 +31,29 @@ abstract class IAuthService {
   Future<void> deferRegistration();
   Future<void> sendPasswordReset(String email);
   Future<AuthResult> restoreSession();
+  Future<AuthResult> restoreTrustedDevice();
+  Future<AuthResult> revalidateAccess(String uid);
+  Future<void> completePendingSignOut();
+  Future<void> revokeAccess(String uid, String reason);
   Future<void> logout();
 }
 
 class AuthService implements IAuthService {
-  AuthService(this._repo, {ICloudAuthService? cloudAuth})
-    : _cloudAuth = cloudAuth ?? CloudAuthService.instance;
+  AuthService(
+    this._repo, {
+    ICloudAuthService? cloudAuth,
+    TrustedDeviceService? trustedDevice,
+  }) : _cloudAuth = cloudAuth ?? CloudAuthService.instance,
+       _trustedDevice = trustedDevice ?? TrustedDeviceService(_repo);
 
   final UserRepository _repo;
   final ICloudAuthService _cloudAuth;
+  final TrustedDeviceService _trustedDevice;
 
   @override
   Future<AuthResult> login(String email, String password) async {
     final result = await _cloudAuth.login(email, password);
-    return _resolve(result);
+    return _resolve(result, enrollDevice: true);
   }
 
   @override
@@ -87,15 +97,42 @@ class AuthService implements IAuthService {
   Future<AuthResult> restoreSession() async {
     final result = await _cloudAuth.restoreSession();
     if (result.mayUseOfflineCache && result.uid != null) {
-      final cached = await _repo.getByFirebaseUid(result.uid!);
-      if (cached?.canAccess ?? false) {
-        return AuthResult(status: 'approved', user: cached);
+      final trusted = await _trustedDevice.restore(expectedUid: result.uid);
+      if (trusted != null) {
+        return AuthResult(status: 'offline', user: trusted);
       }
     }
-    return _resolve(result);
+    return _resolve(result, enrollDevice: result.canAccess);
   }
 
-  Future<AuthResult> _resolve(CloudAuthResult result) async {
+  @override
+  Future<AuthResult> restoreTrustedDevice() async {
+    final user = await _trustedDevice.restore();
+    return user == null
+        ? const AuthResult(status: 'signed_out')
+        : AuthResult(status: 'offline', user: user);
+  }
+
+  @override
+  Future<AuthResult> revalidateAccess(String uid) async {
+    final result = await _cloudAuth.revalidateAccess(uid);
+    if (result.status == 'offline') {
+      return const AuthResult(status: 'offline');
+    }
+    if (!result.canAccess) {
+      return AuthResult(
+        status: result.status,
+        message: result.error,
+        diagnosticCode: result.diagnosticCode,
+      );
+    }
+    return _resolve(result, enrollDevice: true);
+  }
+
+  Future<AuthResult> _resolve(
+    CloudAuthResult result, {
+    bool enrollDevice = false,
+  }) async {
     if (!result.canAccess) {
       return AuthResult(
         status: result.status,
@@ -115,10 +152,14 @@ class AuthService implements IAuthService {
       createdAt: result.createdAt ?? DateTime.now(),
     );
     try {
-      return AuthResult(
-        status: result.status,
-        user: await _repo.cacheAuthorizedProfile(user),
-      );
+      final cached = await _repo.cacheAuthorizedProfile(user);
+      if (enrollDevice) {
+        await _trustedDevice.enroll(
+          cached,
+          accessGeneration: result.accessGeneration,
+        );
+      }
+      return AuthResult(status: result.status, user: cached);
     } on StateError catch (error) {
       await _cloudAuth.signOut();
       return AuthResult(status: 'migration_required', message: error.message);
@@ -126,5 +167,33 @@ class AuthService implements IAuthService {
   }
 
   @override
-  Future<void> logout() => _cloudAuth.signOut();
+  Future<void> logout() async {
+    final uid =
+        await _trustedDevice.pendingFirebaseSignOutUid ??
+        _cloudAuth.currentUid ??
+        await _trustedDevice.activeUid;
+    if (uid != null) await _trustedDevice.beginSignOut(uid);
+    await _cloudAuth.signOut();
+    if (_cloudAuth.isAvailable && _cloudAuth.currentUid == null) {
+      await _trustedDevice.completeSignOut();
+    }
+  }
+
+  @override
+  Future<void> completePendingSignOut() async {
+    if (await _trustedDevice.pendingFirebaseSignOutUid == null) return;
+    await _cloudAuth.signOut();
+    if (_cloudAuth.isAvailable && _cloudAuth.currentUid == null) {
+      await _trustedDevice.completeSignOut();
+    }
+  }
+
+  @override
+  Future<void> revokeAccess(String uid, String reason) async {
+    await _trustedDevice.beginSignOut(uid, reason: reason);
+    await _cloudAuth.signOut();
+    if (_cloudAuth.isAvailable && _cloudAuth.currentUid == null) {
+      await _trustedDevice.completeSignOut();
+    }
+  }
 }

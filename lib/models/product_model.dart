@@ -159,6 +159,7 @@ class Product extends BaseModel {
     int? stockQty,
     int? minStockLevel,
     String? imagePath,
+    bool clearImage = false,
     DateTime? createdAt,
   }) {
     return Product(
@@ -169,7 +170,7 @@ class Product extends BaseModel {
       price: price ?? _price,
       stockQty: stockQty ?? _stockQty,
       minStockLevel: minStockLevel ?? _minStockLevel,
-      imagePath: imagePath ?? _imagePath,
+      imagePath: clearImage ? null : imagePath ?? _imagePath,
       createdAt: createdAt ?? _createdAt,
     );
   }

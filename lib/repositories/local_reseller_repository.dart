@@ -201,27 +201,15 @@ class LocalResellerRepository extends BaseRepository {
         data: {'id': id, 'user_id': userId},
         executor: txn,
       );
-      final changed = await txn.delete(
+      final changed = await txn.update(
         'resellers',
-        where: 'id = ? AND user_id = ? AND is_deleted = 1',
-        whereArgs: [id, userId],
+        {'purge_state': 'pending'},
+        where: 'id = ? AND user_id = ? AND is_deleted = 1 AND purge_state = ?',
+        whereArgs: [id, userId, 'none'],
       );
-      if (changed != 1) throw StateError('Deleted reseller not found: $id');
+      if (changed != 1)
+        throw StateError('Reseller purge could not be queued: $id');
     });
     _queue.requestSync();
   });
-
-  /// Finds a reseller by name (case-insensitive, active only). Returns null if not found.
-  Future<Reseller?> findByName(String userId, String name) => safeCall(
-    () async {
-      final database = await _databaseProvider();
-      final rows = await database.query(
-        'resellers',
-        where: 'user_id = ? AND is_deleted = 0 AND LOWER(name) = LOWER(?)',
-        whereArgs: [userId, name],
-        limit: 1,
-      );
-      return rows.isEmpty ? null : ResellerDto.fromLocal(rows.first).toDomain();
-    },
-  );
 }

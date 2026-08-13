@@ -107,9 +107,9 @@ class CustomOrderDto {
       0,
       (sum, payment) => sum + payment.amountCentavos,
     );
-    if (payments.isNotEmpty && ledgerTotal != depositPaidCentavos) {
+    if (ledgerTotal > depositPaidCentavos) {
       throw const FormatException(
-        'Custom-order payment ledger does not match the deposit total.',
+        'Custom-order payment ledger exceeds the deposit total.',
       );
     }
     if (!CustomOrderStatus.values

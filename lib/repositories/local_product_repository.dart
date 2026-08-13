@@ -10,6 +10,8 @@
 //   • hardDelete() — permanently removes a product (admin purge only)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import 'dart:io';
+
 import 'package:sqflite/sqflite.dart';
 
 import '../database/database_helper.dart';
@@ -100,41 +102,42 @@ class LocalProductRepository extends BaseRepository
 
   // Restores a soft-deleted product back to the active list and re-syncs to Firestore
   @override
-  Future<void> restore(String productId) => safeVoidCall(() async {
-    final database = await _databaseProvider();
-    await database.transaction((txn) async {
-      final rows = await txn.query(
-        'products',
-        where: 'id = ? AND is_deleted = 1',
-        whereArgs: [productId],
-      );
-      if (rows.isEmpty) {
-        throw StateError('Deleted product $productId was not found.');
-      }
-      final data = Map<String, dynamic>.from(rows.first)
-        ..['is_deleted'] = 0
-        ..['deleted_at'] = null;
-      final dto = ProductDto.fromLocal(data);
-      final changed = await txn.update(
-        'products',
-        {'is_deleted': 0, 'deleted_at': null},
-        where: 'id = ? AND is_deleted = 1',
-        whereArgs: [productId],
-      );
-      if (changed != 1) {
-        throw StateError('Product $productId was not restored.');
-      }
-      await _queue.enqueue(
-        operation: 'save_product',
-        collection: 'products',
-        userId: data['user_id'] as String,
-        docId: productId,
-        data: dto.toCloud(),
-        executor: txn,
-      );
-    });
-    _queue.requestSync();
-  });
+  Future<void> restore(String productId, String userId) =>
+      safeVoidCall(() async {
+        final database = await _databaseProvider();
+        await database.transaction((txn) async {
+          final rows = await txn.query(
+            'products',
+            where: 'id = ? AND user_id = ? AND is_deleted = 1',
+            whereArgs: [productId, userId],
+          );
+          if (rows.isEmpty) {
+            throw StateError('Deleted product $productId was not found.');
+          }
+          final data = Map<String, dynamic>.from(rows.first)
+            ..['is_deleted'] = 0
+            ..['deleted_at'] = null;
+          final dto = ProductDto.fromLocal(data);
+          final changed = await txn.update(
+            'products',
+            {'is_deleted': 0, 'deleted_at': null},
+            where: 'id = ? AND user_id = ? AND is_deleted = 1',
+            whereArgs: [productId, userId],
+          );
+          if (changed != 1) {
+            throw StateError('Product $productId was not restored.');
+          }
+          await _queue.enqueue(
+            operation: 'save_product',
+            collection: 'products',
+            userId: data['user_id'] as String,
+            docId: productId,
+            data: dto.toCloud(),
+            executor: txn,
+          );
+        });
+        _queue.requestSync();
+      });
 
   // Inserts a new product into SQLite and syncs to Firestore
   @override
@@ -164,6 +167,7 @@ class LocalProductRepository extends BaseRepository
   Future<void> update(Product product) => safeVoidCall(() async {
     _validateProduct(product);
     final database = await _databaseProvider();
+    String? previousImagePath;
     await database.transaction((txn) async {
       final rows = await txn.query(
         'products',
@@ -174,6 +178,7 @@ class LocalProductRepository extends BaseRepository
         throw StateError('Product ${product.id} was not found.');
       }
       final userId = rows.first['user_id'] as String;
+      previousImagePath = rows.first['image_path'] as String?;
       final dto = ProductDto.fromDomain(product, userId: userId);
       final data = dto.toLocal();
       final changed = await txn.update(
@@ -194,8 +199,17 @@ class LocalProductRepository extends BaseRepository
         executor: txn,
       );
     });
+    if (previousImagePath != null && previousImagePath != product.imagePath) {
+      await _deleteLocalImage(previousImagePath);
+    }
     _queue.requestSync();
   });
+
+  Future<void> _deleteLocalImage(String? imagePath) async {
+    if (imagePath == null || imagePath.isEmpty) return;
+    final file = File(imagePath);
+    if (await file.exists()) await file.delete();
+  }
 
   // Updates only the stock_qty column for a single product (called after order creation)
   @override
@@ -237,14 +251,17 @@ class LocalProductRepository extends BaseRepository
 
   // Soft-deletes a product: sets is_deleted=1 and records deleted_at timestamp
   @override
-  Future<void> delete(String productId) => safeVoidCall(() async {
+  Future<void> delete(
+    String productId,
+    String userId,
+  ) => safeVoidCall(() async {
     final database = await _databaseProvider();
     final now = DateTime.now().toUtc().toIso8601String();
     await database.transaction((txn) async {
       final rows = await txn.query(
         'products',
-        where: 'id = ? AND is_deleted = 0',
-        whereArgs: [productId],
+        where: 'id = ? AND user_id = ? AND is_deleted = 0',
+        whereArgs: [productId, userId],
       );
       if (rows.isEmpty) throw StateError('Product $productId was not found.');
       final tombstone = Map<String, dynamic>.from(rows.first)
@@ -254,8 +271,8 @@ class LocalProductRepository extends BaseRepository
       final changed = await txn.update(
         'products',
         {'is_deleted': 1, 'deleted_at': now},
-        where: 'id = ? AND is_deleted = 0',
-        whereArgs: [productId],
+        where: 'id = ? AND user_id = ? AND is_deleted = 0',
+        whereArgs: [productId, userId],
       );
       if (changed != 1) throw StateError('Product $productId was not deleted.');
       await _queue.enqueue(
@@ -272,31 +289,35 @@ class LocalProductRepository extends BaseRepository
 
   // Permanently removes a product from SQLite and Firestore — no recovery possible
   @override
-  Future<void> hardDelete(String productId) => safeVoidCall(() async {
+  Future<void> hardDelete(
+    String productId,
+    String userId,
+  ) => safeVoidCall(() async {
     final database = await _databaseProvider();
     await database.transaction((txn) async {
       final rows = await txn.query(
         'products',
-        where: 'id = ? AND is_deleted = 1',
-        whereArgs: [productId],
+        where: 'id = ? AND user_id = ? AND is_deleted = 1',
+        whereArgs: [productId, userId],
       );
       if (rows.isEmpty) {
         throw StateError('Deleted product $productId was not found.');
       }
-      final changed = await txn.delete(
+      final changed = await txn.update(
         'products',
-        where: 'id = ? AND is_deleted = 1',
-        whereArgs: [productId],
+        {'purge_state': 'pending'},
+        where: 'id = ? AND user_id = ? AND is_deleted = 1 AND purge_state = ?',
+        whereArgs: [productId, userId, 'none'],
       );
       if (changed != 1) {
-        throw StateError('Product $productId was not permanently deleted.');
+        throw StateError('Product $productId could not be queued for purge.');
       }
       await _queue.enqueue(
         operation: 'delete_product',
         collection: 'products',
         userId: rows.first['user_id'] as String,
         docId: productId,
-        data: {'id': productId},
+        data: {'id': productId, 'purge_state': 'pending'},
         executor: txn,
       );
     });

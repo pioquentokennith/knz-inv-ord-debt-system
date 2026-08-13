@@ -157,6 +157,96 @@ void main() {
       expect(await upgraded.query('orders'), hasLength(2));
     },
   );
+
+  test('v14 migration backfills exact and inferred business events', () async {
+    final databasePath = path.join(testDirectory.path, 'events_v14.db');
+    final fixture = await databaseFactoryFfi.openDatabase(databasePath);
+    await _createRecentFixture(fixture, 14);
+    final order = (await fixture.query('orders')).single;
+    final debt = (await fixture.query('debts')).single;
+    final custom = (await fixture.query('custom_orders')).single;
+    final occurredAt = DateTime.utc(2026, 2, 2).toIso8601String();
+    await fixture.update(
+      'orders',
+      {'status': 'Delivered', 'payment_method': 'cash_on_delivery'},
+      where: 'id = ?',
+      whereArgs: [order['id']],
+    );
+    await fixture.update(
+      'debts',
+      {'order_id': 'KNZ-OTHER'},
+      where: 'id = ?',
+      whereArgs: [debt['id']],
+    );
+    await fixture.insert('payments', {
+      'id': 'legacy-debt-payment',
+      'debt_id': debt['id'],
+      'amount_centavos': 1000,
+      'interest_applied_centavos': 0,
+      'principal_applied_centavos': 1000,
+      'paid_at': occurredAt,
+      'payment_method': 'Cash',
+      'reference': null,
+      'note': null,
+    });
+    await fixture.update(
+      'custom_orders',
+      {'deposit_paid_centavos': 1500},
+      where: 'id = ?',
+      whereArgs: [custom['id']],
+    );
+    await fixture.insert('custom_order_payments', {
+      'id': 'legacy-custom-payment',
+      'custom_order_id': custom['id'],
+      'amount_centavos': 1500,
+      'paid_at': occurredAt,
+      'note': null,
+      'schema_version': 1,
+    });
+    await fixture.execute('PRAGMA user_version = 14');
+    await fixture.close();
+
+    final upgraded = await DatabaseHelper.openDatabaseForTesting(
+      databasePath,
+      factory: databaseFactoryFfi,
+    );
+    addTearDown(upgraded.close);
+    final events = await upgraded.query(
+      'business_events',
+      orderBy: 'event_type, id',
+    );
+
+    expect(events, hasLength(4));
+    expect(events.map((row) => row['event_type']).toSet(), {
+      'delivery',
+      'payment',
+      'collection',
+    });
+    expect(
+      events.where((row) => row['event_type'] == 'collection'),
+      hasLength(2),
+    );
+    expect(
+      events
+          .where((row) => row['event_type'] == 'payment')
+          .single['provenance'],
+      'legacy_inferred',
+    );
+    expect(
+      events
+          .where((row) => row['source_type'] == 'debt_payment')
+          .single['provenance'],
+      'legacy_exact',
+    );
+    expect(
+      await upgraded.query(
+        'sync_queue',
+        where: 'operation = ?',
+        whereArgs: ['save_business_event'],
+      ),
+      hasLength(4),
+    );
+  });
 }
 
 Future<void> _createLegacyFixture(Database db, int version) async {
@@ -476,6 +566,9 @@ Future<void> _createRecentFixture(
   if (version < 14) {
     await db.execute('ALTER TABLE debts DROP COLUMN due_date');
   }
+  if (version < 15) {
+    await db.execute('DROP TABLE business_events');
+  }
   await db.insert('products', {
     'id': 'product-1',
     'name': 'Rose',
@@ -605,6 +698,19 @@ Future<void> _expectCompleteSchema(Database db) async {
       'amount_centavos',
       'schema_version',
     },
+    'business_events': {
+      'id',
+      'user_id',
+      'subject_type',
+      'subject_id',
+      'event_type',
+      'amount_centavos',
+      'occurred_at',
+      'recorded_at',
+      'command_id',
+      'provenance',
+      'schema_version',
+    },
   }.entries) {
     expect(await _columns(db, entry.key), containsAll(entry.value));
   }
@@ -674,4 +780,16 @@ Future<void> _expectCompleteSchema(Database db) async {
       ),
     ),
   );
+  final eventIndexes = await db.rawQuery('PRAGMA index_list(business_events)');
+  for (final name in const [
+    'idx_business_events_user_time',
+    'idx_business_events_subject',
+    'idx_business_events_user_command',
+    'idx_business_events_source',
+  ]) {
+    expect(
+      eventIndexes,
+      contains(predicate<Map<String, Object?>>((row) => row['name'] == name)),
+    );
+  }
 }

@@ -26,6 +26,11 @@ class OrderStateMachine {
   };
 
   static void validateInitial(OrderStatus status, {required bool hasDebt}) {
+    if (status == OrderStatus.delivered) {
+      throw const InvalidOrderTransitionException(
+        'New orders must record delivery through the delivery workflow.',
+      );
+    }
     if (status == OrderStatus.utang && !hasDebt) {
       throw InvalidOrderTransitionException(
         'A new Utang order requires a debt ledger.',

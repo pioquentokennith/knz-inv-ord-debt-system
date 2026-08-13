@@ -6,7 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:knz_scent_admin/core/domain_exceptions.dart';
 import 'package:knz_scent_admin/core/money.dart';
 import 'package:knz_scent_admin/database/database_helper.dart';
+import 'package:knz_scent_admin/dto/business_event_dto.dart';
 import 'package:knz_scent_admin/models/debt_model.dart';
+import 'package:knz_scent_admin/models/business_event_model.dart';
 import 'package:knz_scent_admin/models/order_model.dart';
 import 'package:knz_scent_admin/repositories/local_order_repository.dart';
 import 'package:knz_scent_admin/repositories/order_repository.dart';
@@ -52,11 +54,30 @@ class _TestOutbox implements SyncOutbox {
   void requestSync() {}
 }
 
+class _FailingOutbox extends _TestOutbox {
+  @override
+  Future<int> enqueue({
+    required String operation,
+    required String collection,
+    required String userId,
+    required String docId,
+    required Map<String, dynamic> data,
+    DatabaseExecutor? executor,
+  }) => throw StateError('simulated event outbox failure');
+}
+
 Order _order({
   required String id,
   String? commandId,
   int quantity = 1,
   OrderStatus status = OrderStatus.pending,
+  int unitPriceCentavos = 10000,
+  int? srpPriceCentavos,
+  int? totalCentavos,
+  int? srpTotalCentavos,
+  int? discountedTotalCentavos,
+  bool isReseller = false,
+  int deductionPerItemCentavos = 0,
 }) => Order(
   id: id,
   orderId: 'PENDING',
@@ -66,14 +87,63 @@ Order _order({
       id: 'item-$id',
       productId: 'product-1',
       productName: 'Rose',
-      unitPrice: const Money.fromCentavos(10000),
+      unitPrice: Money.fromCentavos(unitPriceCentavos),
+      srpPrice: srpPriceCentavos == null
+          ? null
+          : Money.fromCentavos(srpPriceCentavos),
       quantity: quantity,
     ),
   ],
-  totalAmount: Money.fromCentavos(10000 * quantity),
+  totalAmount: Money.fromCentavos(
+    totalCentavos ?? unitPriceCentavos * quantity,
+  ),
+  srpTotal: srpTotalCentavos == null
+      ? null
+      : Money.fromCentavos(srpTotalCentavos),
   status: status,
   orderDate: DateTime.utc(2026),
+  isReseller: isReseller,
+  deductionPerItem: Money.fromCentavos(deductionPerItemCentavos),
+  discountedTotal: discountedTotalCentavos == null
+      ? null
+      : Money.fromCentavos(discountedTotalCentavos),
   commandId: commandId ?? 'command-$id',
+);
+
+BusinessEvent _delivery(String orderId, {String? id}) {
+  final eventId = id ?? 'delivery-$orderId';
+  return BusinessEvent(
+    id: eventId,
+    userId: 'user-1',
+    subject: BusinessEventSubject.order,
+    subjectId: orderId,
+    type: BusinessEventType.delivery,
+    occurredAt: DateTime.utc(2026, 1, 2),
+    recordedAt: DateTime.utc(2026, 1, 2),
+    commandId: eventId,
+  );
+}
+
+BusinessEvent _financialEvent({
+  required String id,
+  required String orderId,
+  required BusinessEventType type,
+  required int amountCentavos,
+  String? relatedEventId,
+  String? reason,
+}) => BusinessEvent(
+  id: id,
+  userId: 'user-1',
+  subject: BusinessEventSubject.order,
+  subjectId: orderId,
+  type: type,
+  amount: Money.fromCentavos(amountCentavos),
+  occurredAt: DateTime.utc(2026, 1, 2),
+  recordedAt: DateTime.utc(2026, 1, 2),
+  paymentMethod: type == BusinessEventType.payment ? 'cash_on_delivery' : null,
+  relatedEventId: relatedEventId,
+  reason: reason,
+  commandId: id,
 );
 
 CustomerDebt _debt(String id) => CustomerDebt(
@@ -193,7 +263,7 @@ void main() {
       debt: _debt('debt-1'),
     );
 
-    expect(saved.order.orderId, 'KNZ-001');
+    expect(saved.order.orderId, matches(r'^TMP-[A-F0-9]{4}-000001$'));
     expect(saved.created, isTrue);
     expect(await database.query('orders'), hasLength(1));
     expect(await database.query('order_items'), hasLength(1));
@@ -204,6 +274,114 @@ void main() {
       expectedStock: 4,
       expectedDebtCount: 1,
     );
+  });
+
+  test(
+    'persists reconciled discounted headers, lines, and outbox data',
+    () async {
+      final repo = repository();
+
+      await repo.addWithInventory(
+        _order(
+          id: 'discounted-order',
+          quantity: 2,
+          unitPriceCentavos: 17000,
+          srpPriceCentavos: 20000,
+          totalCentavos: 34000,
+          srpTotalCentavos: 40000,
+          discountedTotalCentavos: 34000,
+          isReseller: true,
+          deductionPerItemCentavos: 3000,
+        ),
+        'user-1',
+      );
+
+      final orderRow = (await database.query('orders')).single;
+      expect(orderRow['total_amount_centavos'], 34000);
+      expect(orderRow['srp_total_centavos'], 40000);
+      expect(orderRow['customer_pay_amount_centavos'], 34000);
+      expect(orderRow['discounted_total_centavos'], 34000);
+
+      final itemRow = (await database.query('order_items')).single;
+      expect(itemRow['unit_price_centavos'], 17000);
+      expect(itemRow['srp_price_centavos'], 20000);
+      expect(itemRow['quantity'], 2);
+
+      final queueRow = (await database.query('sync_queue')).single;
+      final payload =
+          jsonDecode(queueRow['data'] as String) as Map<String, dynamic>;
+      final cloudOrder = payload['_order'] as Map<String, dynamic>;
+      expect(cloudOrder['total_amount_centavos'], 34000);
+      expect(cloudOrder['srp_total_centavos'], 40000);
+      expect(cloudOrder['customer_pay_amount_centavos'], 34000);
+      final cloudItem =
+          (cloudOrder['_items'] as List<dynamic>).single
+              as Map<String, dynamic>;
+      expect(cloudItem['unit_price_centavos'], 17000);
+      expect(cloudItem['srp_price_centavos'], 20000);
+    },
+  );
+
+  test('rejects an SRP header mismatch before writing anything', () async {
+    final repo = repository();
+
+    await expectLater(
+      repo.addWithInventory(
+        _order(
+          id: 'bad-srp',
+          unitPriceCentavos: 9000,
+          srpPriceCentavos: 10000,
+          totalCentavos: 9000,
+          srpTotalCentavos: 9999,
+        ),
+        'user-1',
+      ),
+      throwsArgumentError,
+    );
+
+    await _expectRejectedOrderLeavesNoWrites(database);
+  });
+
+  test('rejects a net header mismatch before writing anything', () async {
+    final repo = repository();
+
+    await expectLater(
+      repo.addWithInventory(
+        _order(
+          id: 'bad-net',
+          unitPriceCentavos: 9000,
+          srpPriceCentavos: 10000,
+          totalCentavos: 8999,
+          srpTotalCentavos: 10000,
+        ),
+        'user-1',
+      ),
+      throwsArgumentError,
+    );
+
+    await _expectRejectedOrderLeavesNoWrites(database);
+  });
+
+  test('rejects a discounted customer-pay mismatch before writing', () async {
+    final repo = repository();
+
+    await expectLater(
+      repo.addWithInventory(
+        _order(
+          id: 'bad-discounted-net',
+          unitPriceCentavos: 9000,
+          srpPriceCentavos: 10000,
+          totalCentavos: 9000,
+          srpTotalCentavos: 10000,
+          discountedTotalCentavos: 8999,
+          isReseller: true,
+        ),
+        'user-1',
+      ),
+      throwsArgumentError,
+    );
+
+    await _expectRejectedOrderLeavesNoWrites(database);
   });
 
   test('a new cancelled order does not consume inventory', () async {
@@ -239,7 +417,10 @@ void main() {
       expect(results.whereType<StockShortageException>(), hasLength(1));
       expect(await database.query('orders'), hasLength(1));
       expect(await stock(), 0);
-      expect((await database.query('orders')).single['order_id'], 'KNZ-001');
+      expect(
+        (await database.query('orders')).single['order_id'],
+        matches(r'^TMP-[A-F0-9]{4}-000001$'),
+      );
     },
   );
 
@@ -259,7 +440,7 @@ void main() {
     await repo.addWithInventory(_order(id: 'order-1'), 'user-1');
 
     await expectLater(
-      repo.updateStatus('order-1', OrderStatus.delivered),
+      repo.recordDelivery('order-1', _delivery('order-1')),
       throwsA(isA<InvalidOrderTransitionException>()),
     );
     expect(await stock(), 4);
@@ -290,10 +471,10 @@ void main() {
       await repo.addWithInventory(_order(id: 'order-1'), 'user-1');
       await repo.updateStatus('order-1', OrderStatus.processing);
       await repo.updateStatus('order-1', OrderStatus.shipped);
-      await repo.updateStatus('order-1', OrderStatus.delivered);
+      await repo.recordDelivery('order-1', _delivery('order-1'));
       expect(await stock(), 4);
 
-      await repo.deleteWithInventory('order-1');
+      await repo.deleteWithInventory('order-1', 'user-1');
       expect(await stock(), 5);
       final tombstoneRow = (await database.query(
         'sync_queue',
@@ -304,9 +485,217 @@ void main() {
       expect(tombstone['customer_name'], 'Customer');
       expect(tombstone['_items'], hasLength(1));
       expect(tombstone['stock_released_on_delete'], 1);
-      await repo.restoreWithInventory('order-1');
+      await repo.restoreWithInventory('order-1', 'user-1');
       expect(await stock(), 4);
       expect((await database.query('orders')).single['status'], 'Delivered');
+    },
+  );
+
+  test(
+    'payment refund and reversal append exact immutable cash facts',
+    () async {
+      final repo = repository();
+      await repo.addWithInventory(_order(id: 'order-1'), 'user-1');
+      final payment = _financialEvent(
+        id: 'payment-event',
+        orderId: 'order-1',
+        type: BusinessEventType.payment,
+        amountCentavos: 6000,
+      );
+      final refund = _financialEvent(
+        id: 'refund-event',
+        orderId: 'order-1',
+        type: BusinessEventType.refund,
+        amountCentavos: 1000,
+        reason: 'Returned item',
+      );
+      final reversal = _financialEvent(
+        id: 'reversal-event',
+        orderId: 'order-1',
+        type: BusinessEventType.reversal,
+        amountCentavos: 1000,
+        relatedEventId: refund.id,
+        reason: 'Refund entered in error',
+      );
+
+      await repo.recordPayment('order-1', payment);
+      await repo.issueRefund('order-1', refund);
+      await repo.reverseEvent('order-1', reversal);
+
+      final rows = await database.query(
+        'business_events',
+        orderBy: 'recorded_at',
+      );
+      expect(rows, hasLength(3));
+      expect(rows.map((row) => row['event_type']), [
+        'payment',
+        'refund',
+        'reversal',
+      ]);
+      final events = rows
+          .map((row) => BusinessEventDto.fromLocal(row).toDomain())
+          .toList();
+      expect(BusinessEventLedger.netCash(events).centavos, 6000);
+      expect(
+        await database.query(
+          'sync_queue',
+          where: 'operation = ?',
+          whereArgs: ['save_business_event'],
+        ),
+        hasLength(3),
+      );
+
+      await expectLater(
+        database.update(
+          'business_events',
+          {'amount_centavos': 1},
+          where: 'id = ?',
+          whereArgs: [payment.id],
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      await expectLater(
+        database.delete(
+          'business_events',
+          where: 'id = ?',
+          whereArgs: [payment.id],
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+    },
+  );
+
+  test('event command replay is idempotent and payload changes fail', () async {
+    final repo = repository();
+    await repo.addWithInventory(_order(id: 'order-1'), 'user-1');
+    final event = _financialEvent(
+      id: 'payment-event',
+      orderId: 'order-1',
+      type: BusinessEventType.payment,
+      amountCentavos: 6000,
+    );
+
+    final first = await repo.recordPayment('order-1', event);
+    final replay = await repo.recordPayment('order-1', event);
+    expect(replay.id, first.id);
+    expect(await database.query('business_events'), hasLength(1));
+
+    await expectLater(
+      repo.recordPayment(
+        'order-1',
+        _financialEvent(
+          id: event.id,
+          orderId: 'order-1',
+          type: BusinessEventType.payment,
+          amountCentavos: 5000,
+        ),
+      ),
+      throwsStateError,
+    );
+    expect(await database.query('business_events'), hasLength(1));
+  });
+
+  test(
+    'overpayments and excessive refunds leave no event or outbox row',
+    () async {
+      final repo = repository();
+      await repo.addWithInventory(_order(id: 'order-1'), 'user-1');
+      final baselineOutbox = (await database.query('sync_queue')).length;
+
+      await expectLater(
+        repo.recordPayment(
+          'order-1',
+          _financialEvent(
+            id: 'overpayment',
+            orderId: 'order-1',
+            type: BusinessEventType.payment,
+            amountCentavos: 10001,
+          ),
+        ),
+        throwsArgumentError,
+      );
+      await expectLater(
+        repo.issueRefund(
+          'order-1',
+          _financialEvent(
+            id: 'excess-refund',
+            orderId: 'order-1',
+            type: BusinessEventType.refund,
+            amountCentavos: 1,
+            reason: 'No payment exists',
+          ),
+        ),
+        throwsArgumentError,
+      );
+
+      expect(await database.query('business_events'), isEmpty);
+      expect((await database.query('sync_queue')).length, baselineOutbox);
+    },
+  );
+
+  test('event and outbox roll back together when enqueue fails', () async {
+    final base = repository();
+    await base.addWithInventory(_order(id: 'order-1'), 'user-1');
+    final failing = LocalOrderRepository(
+      databaseProvider: () async => database,
+      queue: _FailingOutbox(),
+    );
+
+    await expectLater(
+      failing.recordPayment(
+        'order-1',
+        _financialEvent(
+          id: 'payment-event',
+          orderId: 'order-1',
+          type: BusinessEventType.payment,
+          amountCentavos: 5000,
+        ),
+      ),
+      throwsStateError,
+    );
+
+    expect(await database.query('business_events'), isEmpty);
+  });
+
+  test(
+    'collected direct cash blocks cancellation and Utang conversion',
+    () async {
+      final repo = repository();
+      final created = await repo.addWithInventory(
+        _order(id: 'order-1'),
+        'user-1',
+      );
+      await repo.recordPayment(
+        'order-1',
+        _financialEvent(
+          id: 'payment-event',
+          orderId: 'order-1',
+          type: BusinessEventType.payment,
+          amountCentavos: 5000,
+        ),
+      );
+
+      await expectLater(
+        repo.updateStatus('order-1', OrderStatus.cancelled),
+        throwsStateError,
+      );
+      await expectLater(
+        repo.markAsUtang(
+          'order-1',
+          CustomerDebt(
+            id: 'debt-cash-conflict',
+            customerName: 'Customer',
+            orderId: created.order.orderId,
+            principalOriginal: const Money.fromCentavos(10000),
+            principalOutstanding: const Money.fromCentavos(10000),
+            createdAt: DateTime.utc(2026, 1, 2),
+          ),
+        ),
+        throwsStateError,
+      );
+
+      expect((await database.query('orders')).single['status'], 'Pending');
+      expect(await database.query('debts'), isEmpty);
     },
   );
 
@@ -315,13 +704,13 @@ void main() {
     () async {
       final repo = repository();
       await repo.addWithInventory(_order(id: 'order-1', quantity: 2), 'user-1');
-      await repo.deleteWithInventory('order-1');
+      await repo.deleteWithInventory('order-1', 'user-1');
       expect(await stock(), 5);
       await database.update('products', {'stock_qty': 1});
       final beforeOutbox = (await database.query('sync_queue')).length;
 
       await expectLater(
-        repo.restoreWithInventory('order-1'),
+        repo.restoreWithInventory('order-1', 'user-1'),
         throwsA(
           isA<StockShortageException>().having(
             (error) => error.message,
@@ -346,11 +735,11 @@ void main() {
     );
 
     await expectLater(
-      repo.updateStatus('order-1', OrderStatus.delivered),
+      repo.recordDelivery('order-1', _delivery('order-1')),
       throwsA(isA<OpenDebtException>()),
     );
     await expectLater(
-      repo.deleteWithInventory('order-1'),
+      repo.deleteWithInventory('order-1', 'user-1'),
       throwsA(isA<OpenDebtException>()),
     );
     expect(await stock(), 4);
@@ -387,7 +776,7 @@ void main() {
         'note': null,
       });
 
-      await repo.updateStatus('order-1', OrderStatus.delivered);
+      await repo.recordDelivery('order-1', _delivery('order-1'));
 
       expect((await database.query('orders')).single['status'], 'Delivered');
       expect(await stock(), 4);
@@ -397,12 +786,13 @@ void main() {
   test('readable sequence is not reused after permanent purge', () async {
     final repo = repository();
     final first = await repo.addWithInventory(_order(id: 'order-1'), 'user-1');
-    await repo.deleteWithInventory('order-1');
-    await repo.hardDelete('order-1');
+    await repo.deleteWithInventory('order-1', 'user-1');
+    await repo.hardDelete('order-1', 'user-1');
     final second = await repo.addWithInventory(_order(id: 'order-2'), 'user-1');
 
-    expect(first.order.orderId, 'KNZ-001');
-    expect(second.order.orderId, 'KNZ-002');
+    final firstPrefix = first.order.orderId.substring(0, 8);
+    expect(first.order.orderId, matches(r'^TMP-[A-F0-9]{4}-000001$'));
+    expect(second.order.orderId, '$firstPrefix-000002');
   });
 
   test('rapid double submission replays one committed command', () async {
@@ -565,7 +955,7 @@ void main() {
 
     expect(first.created, isTrue);
     expect(second.created, isTrue);
-    expect(second.order.orderId, 'KNZ-002');
+    expect(second.order.orderId, matches(r'^TMP-[A-F0-9]{4}-000002$'));
     expect(await database.query('orders'), hasLength(2));
     expect(await stock(), 3);
   });
@@ -619,4 +1009,12 @@ Future<void> _expectSingleCommandEffects(
     expect(debt['order_id'], order['order_id']);
     expect(debt['_payments'], isEmpty);
   }
+}
+
+Future<void> _expectRejectedOrderLeavesNoWrites(Database database) async {
+  expect(await database.query('orders'), isEmpty);
+  expect(await database.query('order_items'), isEmpty);
+  expect(await database.query('debts'), isEmpty);
+  expect(await database.query('sync_queue'), isEmpty);
+  expect((await database.query('products')).single['stock_qty'], 5);
 }
