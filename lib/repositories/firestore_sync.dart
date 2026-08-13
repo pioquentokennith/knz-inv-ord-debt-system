@@ -708,5 +708,4 @@ class FirestoreSync {
     final user = await getUser(uid);
     return user != null;
   }
-
 }
