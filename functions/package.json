@@ -13,7 +13,7 @@
     "deploy:firestore": "firebase --config ../firebase.json deploy --only firestore:rules,firestore:indexes"
   },
   "dependencies": {
-    "firebase-admin": "^12.0.0"
+    "firebase-admin": "^14.3.0"
   },
   "engines": { "node": "20" }
 }
