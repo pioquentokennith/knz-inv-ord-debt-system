@@ -46,7 +46,7 @@ void main() {
       final sync = _read('lib/repositories/firestore_sync.dart');
       final rules = _read('firestore.rules');
 
-      expect(sync, contains('principal.uid != uid'));
+      expect(sync, contains('_currentUid != uid'));
       expect(rules, contains('accountAccess'));
       expect(rules, contains("status == 'approved'"));
       expect(rules, contains("role == 'Administrator'"));
@@ -143,12 +143,26 @@ void main() {
       },
     );
 
-    test('Android requests no exact-alarm or reboot scheduling capability', () {
+    test('Android supports reboot rescheduling without exact-alarm permission', () {
       final manifest = _read('android/app/src/main/AndroidManifest.xml');
 
       expect(manifest, isNot(contains('USE_EXACT_ALARM')));
-      expect(manifest, isNot(contains('RECEIVE_BOOT_COMPLETED')));
-      expect(manifest, isNot(contains('ScheduledNotificationReceiver')));
+      expect(manifest, isNot(contains('SCHEDULE_EXACT_ALARM')));
+      expect(manifest, contains('RECEIVE_BOOT_COMPLETED'));
+      expect(
+        manifest,
+        contains(
+          'com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver',
+        ),
+      );
+      expect(
+        manifest,
+        contains(
+          'com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver',
+        ),
+      );
+      expect(manifest, contains('android.intent.action.BOOT_COMPLETED'));
+      expect(manifest, contains('android.intent.action.MY_PACKAGE_REPLACED'));
     });
 
     test('iOS declares every privacy purpose used by the app', () {

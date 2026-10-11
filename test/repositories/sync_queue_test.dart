@@ -56,6 +56,89 @@ void main() {
 
     tearDown(() => database.close());
 
+    test(
+      'ready work beyond 100 delayed rows runs and retry metadata survives',
+      () async {
+        final retry = DateTime.utc(2026, 2).toIso8601String();
+        for (var i = 0; i < 105; i++) {
+          await _insertOutbox(
+            database,
+            key: 'delayed-$i',
+            documentId: 'delayed-$i',
+          );
+        }
+        await database.update('sync_queue', {
+          'status': 'failed',
+          'attempt_count': 4,
+          'next_attempt_at': retry,
+          'last_error': 'offline',
+        });
+        await _insertOutbox(database, key: 'ready', documentId: 'ready');
+        await _insertOutbox(
+          database,
+          key: 'dependent',
+          documentId: 'delayed-0',
+        );
+        final sent = <String>[];
+        final result = await OutboxProcessor(
+          databaseProvider: () async => database,
+          dispatch: (row) async => sent.add(row['doc_id'] as String),
+          now: () => DateTime.utc(2026),
+        ).processUser('user-1');
+        expect(result.completedCount, 1);
+        expect(sent, ['ready']);
+        final delayed = (await database.query(
+          'sync_queue',
+          where: 'id = 1',
+        )).single;
+        expect(delayed['attempt_count'], 4);
+        expect(delayed['next_attempt_at'], retry);
+        expect(delayed['last_error'], 'offline');
+      },
+    );
+
+    test(
+      'order waits for delayed product dependency while unrelated product runs',
+      () async {
+        final first = await _insertOutbox(
+          database,
+          key: 'stock',
+          documentId: 'p',
+        );
+        await database.update(
+          'sync_queue',
+          {'next_attempt_at': DateTime.utc(2026, 2).toIso8601String()},
+          where: 'id = ?',
+          whereArgs: [first],
+        );
+        final order = await _insertOutbox(
+          database,
+          key: 'order',
+          documentId: 'o',
+        );
+        await database.update(
+          'sync_queue',
+          {
+            'operation': 'create_order',
+            'collection': 'orders',
+            'data':
+                '{"_order":{"order_id":"PENDING","_items":[{"product_id":"p"}]}}',
+          },
+          where: 'id = ?',
+          whereArgs: [order],
+        );
+        await _insertOutbox(database, key: 'unrelated', documentId: 'other');
+        final sent = <String>[];
+        await OutboxProcessor(
+          databaseProvider: () async => database,
+          dispatch: (row) async => sent.add(row['doc_id'] as String),
+          now: () => DateTime.utc(2026),
+        ).processUser('user-1');
+        expect(sent, ['other']);
+        expect(await database.query('sync_queue'), hasLength(2));
+      },
+    );
+
     test('Firestore write failure remains durable and visible', () async {
       await _insertOutbox(database, key: 'failure');
       final processor = OutboxProcessor(

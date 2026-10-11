@@ -14,7 +14,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
-import 'package:permission_handler/permission_handler.dart';
+import '../services/printer_discovery.dart';
 import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/money.dart';
@@ -483,79 +483,43 @@ class _UtangPrintPanel extends StatefulWidget {
 
 class _UtangPrintPanelState extends State<_UtangPrintPanel> {
   BtPrintState _state = const BtIdle();
-  StreamSubscription? _scanSub;
+  late final PrinterDiscovery _discovery = PrinterDiscovery(_set);
+  BluetoothDevice? _connectedDevice;
 
   @override
   void dispose() {
-    _scanSub?.cancel();
-    if (_state case BtConnected(:final device)) {
-      device.disconnect();
-    }
+    unawaited(_discovery.dispose());
+    unawaited(_connectedDevice?.disconnect().catchError((Object _) {}));
     super.dispose();
   }
 
-  Future<bool> _requestPermissions() async {
-    final s = await [
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-      Permission.bluetoothAdvertise,
-      Permission.location,
-    ].request();
-    return (s[Permission.bluetoothScan]?.isGranted ?? false) &&
-        (s[Permission.bluetoothConnect]?.isGranted ?? false);
-  }
-
-  Future<void> _startScan() async {
-    if (!await _requestPermissions()) {
-      _set(
-        const BtError(
-          'Bluetooth permission denied.\nPlease allow in Settings.',
-        ),
-      );
-      return;
-    }
-    if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
-      _set(const BtError('Please turn on Bluetooth first.'));
-      return;
-    }
-
-    _set(const BtScanning());
-    List<ScanResult> found = [];
-
-    _scanSub?.cancel();
-    _scanSub = FlutterBluePlus.scanResults.listen((r) {
-      found = r.where((x) => x.device.platformName.isNotEmpty).toList();
-      if (mounted) _set(const BtScanning());
-    });
-
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 8));
-    await Future.delayed(const Duration(seconds: 8));
-    await FlutterBluePlus.stopScan();
-    _scanSub?.cancel();
-
-    if (mounted) {
-      _set(
-        found.isEmpty
-            ? const BtError('No printers found. Make sure printer is on.')
-            : BtScanned(found),
-      );
-    }
-  }
+  Future<void> _startScan() => _discovery.start();
 
   Future<void> _connectTo(BluetoothDevice device) async {
+    if (_state is BtConnecting ||
+        _state is BtConnected ||
+        _state is BtPrinting) {
+      return;
+    }
     _set(BtConnecting(device.platformName));
     try {
+      await _discovery.stop();
+      if (!mounted) return;
       await device.connect(timeout: const Duration(seconds: 10));
-      if (mounted) _set(BtConnected(device));
+      if (!mounted) {
+        await device.disconnect();
+        return;
+      }
+      _connectedDevice = device;
+      _set(BtConnected(device));
     } catch (_) {
       if (mounted) _set(const BtError('Connection failed. Try again.'));
     }
   }
 
   Future<void> _disconnect() async {
-    if (_state case BtConnected(:final device)) {
-      await device.disconnect();
-    }
+    await _connectedDevice?.disconnect();
+    _connectedDevice = null;
     if (mounted) _set(const BtIdle());
   }
 

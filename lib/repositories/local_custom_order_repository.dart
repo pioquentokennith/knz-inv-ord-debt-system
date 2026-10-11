@@ -11,9 +11,9 @@ import '../dto/custom_order_dto.dart';
 import '../models/business_event_model.dart';
 import '../models/custom_order_model.dart';
 import 'base_repository.dart';
-import 'firestore_sync.dart';
 import 'local_business_event_repository.dart';
 import 'sync_queue.dart';
+import 'child_record_loader.dart';
 
 class LocalCustomOrderRepository extends BaseRepository {
   LocalCustomOrderRepository({
@@ -25,38 +25,10 @@ class LocalCustomOrderRepository extends BaseRepository {
 
   final Future<Database> Function() _databaseProvider;
   final SyncOutbox _queue;
-  final _cloud = FirestoreSync.instance;
 
   /// Returns all active (non-deleted) custom orders for the given user.
   Future<List<CustomOrder>> getAll(String userId) => safeCall(() async {
     final database = await _databaseProvider();
-    final partition = await database.query(
-      'custom_orders',
-      columns: const ['id'],
-      where: 'user_id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (partition.isEmpty && _queue.isOnline) {
-      final cloudRows = await _cloud.getCustomOrders(userId);
-      await database.transaction((txn) async {
-        for (final cloudRow in cloudRows) {
-          final dto = CustomOrderDto.fromCloud(cloudRow, userId: userId);
-          await txn.insert(
-            'custom_orders',
-            dto.toLocal(),
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
-          for (final payment in dto.payments) {
-            await txn.insert(
-              'custom_order_payments',
-              payment.toLocal(),
-              conflictAlgorithm: ConflictAlgorithm.ignore,
-            );
-          }
-        }
-      });
-    }
     final rows = await database.query(
       'custom_orders',
       where: 'user_id = ? AND is_deleted = 0',
@@ -312,16 +284,20 @@ class LocalCustomOrderRepository extends BaseRepository {
     DatabaseExecutor database,
     List<Map<String, Object?>> rows,
   ) async {
-    final result = <CustomOrder>[];
-    for (final row in rows) {
-      result.add(
-        (await _dtoFromRow(
-          database,
+    final payments = await loadChildRecords(
+      database,
+      table: 'custom_order_payments',
+      parentColumn: 'custom_order_id',
+      parentIds: rows.map((row) => row['id'] as String),
+      orderBy: 'paid_at ASC, id ASC',
+    );
+    return [
+      for (final row in rows)
+        CustomOrderDto.fromLocal(
           Map<String, dynamic>.from(row),
-        )).toDomain(),
-      );
-    }
-    return result;
+          payments[row['id']] ?? const [],
+        ).toDomain(),
+    ];
   }
 
   Future<CustomOrderDto> _dtoFromRow(

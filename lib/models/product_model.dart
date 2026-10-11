@@ -99,6 +99,9 @@ class Product extends BaseModel {
        _minStockLevel = minStockLevel,
        _imagePath = imagePath,
        _createdAt = createdAt ?? DateTime.now() {
+    price.validate(field: 'Price');
+    Money.validateQuantity(stockQty);
+    Money.validateQuantity(minStockLevel);
     // Default to now if not provided
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Product id cannot be blank.');
@@ -141,6 +144,7 @@ class Product extends BaseModel {
 
   // ── Validated setter — prevents negative stock from being set externally ──
   set stockQty(int value) {
+    Money.validateQuantity(value);
     if (value < 0) throw ArgumentError('Stock quantity cannot be negative.');
     _stockQty = value;
   }

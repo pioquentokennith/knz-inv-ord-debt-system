@@ -74,6 +74,7 @@ class BusinessEvent {
     this.sourceType,
     this.sourceId,
   }) {
+    amount?.validate(field: 'Payment/refund');
     if (id.trim().isEmpty ||
         userId.trim().isEmpty ||
         subjectId.trim().isEmpty ||

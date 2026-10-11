@@ -26,6 +26,9 @@ class PaymentRecord extends BaseModel {
     this.reference,
     String? note,
   }) : note = note == null || note.trim().isEmpty ? null : note.trim() {
+    amount.validate(field: 'Payment');
+    interestApplied.validate();
+    principalApplied.validate();
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Payment id cannot be blank.');
     }
@@ -142,6 +145,9 @@ class CustomerDebt extends BaseModel {
         _principalOutstanding.compareTo(_principalOriginal) > 0) {
       throw ArgumentError('Debt balances are invalid.');
     }
+    principalOriginal.validate(field: 'Principal');
+    principalOutstanding.validate();
+    interestOutstanding.validate();
     if (_interestRateBasisPoints < 0) {
       throw ArgumentError.value(
         interestRateBasisPoints,
@@ -253,8 +259,9 @@ class CustomerDebt extends BaseModel {
     final periods = elapsed.inSeconds ~/ period.inSeconds;
     if (periods == 0) return this;
     final perPeriod = Money.fromCentavos(
-      roundRatioHalfUp(
-        _principalOutstanding.centavos * _interestRateBasisPoints,
+      roundProductRatioHalfUp(
+        _principalOutstanding.centavos,
+        _interestRateBasisPoints,
         10000,
       ),
     );

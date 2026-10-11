@@ -15,6 +15,11 @@ import '../core/money.dart';
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
 
+  static int pageCountFor(int count, {int pageSize = 50}) {
+    if (count < 0 || pageSize <= 0) throw ArgumentError('Invalid pagination.');
+    return count == 0 ? 1 : 1 + (count - 1) ~/ pageSize;
+  }
+
   @override
   State<SalesScreen> createState() => _SalesScreenState();
 }
@@ -46,6 +51,10 @@ class _SalesScreenState extends State<SalesScreen> {
 
   // ── Pagination ────────────────────────────────────────────────────────────
   int _currentPage = 0;
+  Object? _projectionKey;
+  List<SalesRecord> _projectedRows = const [];
+  Money _projectedSales = Money.zero;
+  Money _projectedDiscount = Money.zero;
 
   final _dateFmt = DateFormat('MM/dd/yy');
 
@@ -139,7 +148,7 @@ class _SalesScreenState extends State<SalesScreen> {
         child: child!,
       ),
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         _fromDate = picked.start;
         _toDate = picked.end;
@@ -153,33 +162,50 @@ class _SalesScreenState extends State<SalesScreen> {
     return ListenableBuilder(
       listenable: AppState(),
       builder: (context, _) {
-        final all = AppState().salesRecords;
-        final filtered = _sorted(_filtered(all));
-        final pageCount = ((filtered.length + _pageSize - 1) / _pageSize)
-            .ceil()
-            .clamp(1, 9999);
+        final state = AppState();
+        final key = (
+          state.financialRevision,
+          _searchQuery,
+          _fromDate,
+          _toDate,
+          _resellerFilter,
+          _sortField,
+          _sortAsc,
+        );
+        if (key != _projectionKey) {
+          final rows = _sorted(_filtered(state.salesRecords));
+          var sales = Money.zero;
+          var discount = Money.zero;
+          for (final row in rows) {
+            sales += row.totalSales;
+            discount += row.discountAmount;
+          }
+          _projectedRows = rows;
+          _projectedSales = sales;
+          _projectedDiscount = discount;
+          _projectionKey = key;
+        }
+        final filtered = _projectedRows;
+        final pageCount = SalesScreen.pageCountFor(
+          filtered.length,
+          pageSize: _pageSize,
+        );
         if (_currentPage >= pageCount) _currentPage = pageCount - 1;
         final pageRows = filtered
             .skip(_currentPage * _pageSize)
             .take(_pageSize)
             .toList();
 
-        // Summary totals for visible filtered set
-        final totalSales = filtered.fold(
-          Money.zero,
-          (s, r) => s + r.totalSales,
-        );
-        final totalDiscount = filtered.fold(
-          Money.zero,
-          (s, r) => s + r.discountAmount,
-        );
-
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(),
             _buildFilterBar(),
-            _buildSummaryRow(filtered.length, totalSales, totalDiscount),
+            _buildSummaryRow(
+              filtered.length,
+              _projectedSales,
+              _projectedDiscount,
+            ),
             Expanded(child: _buildTable(pageRows)),
             _buildPagination(filtered.length, pageCount),
           ],
@@ -200,13 +226,15 @@ class _SalesScreenState extends State<SalesScreen> {
         children: [
           Icon(Icons.table_chart_outlined, color: AppColors.gold, size: 22),
           SizedBox(width: 10),
-          Text(
-            'Sales Table',
-            style: TextStyle(
-              color: AppColors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1,
+          Expanded(
+            child: Text(
+              'Sales Table',
+              style: TextStyle(
+                color: AppColors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1,
+              ),
             ),
           ),
         ],
@@ -327,7 +355,9 @@ class _SalesScreenState extends State<SalesScreen> {
     return Container(
       color: AppColors.surfaceElevated,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 8,
         children: [
           Text(
             '$count record${count == 1 ? '' : 's'}',
@@ -336,13 +366,11 @@ class _SalesScreenState extends State<SalesScreen> {
               fontSize: 12,
             ),
           ),
-          const Spacer(),
           if (totalDiscount > 0) ...[
             Text(
               'Discount: ${totalDiscount.format()}',
               style: const TextStyle(color: AppColors.warning, fontSize: 12),
             ),
-            const SizedBox(width: 16),
           ],
           Text(
             'Total: ${totalSales.format()}',
@@ -503,8 +531,11 @@ class _SalesScreenState extends State<SalesScreen> {
     return Container(
       color: AppColors.surface,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+      child: Wrap(
+        alignment: WrapAlignment.center,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 8,
+        runSpacing: 4,
         children: [
           IconButton(
             icon: const Icon(Icons.chevron_left, color: AppColors.gold),

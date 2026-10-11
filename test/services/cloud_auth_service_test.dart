@@ -1,8 +1,79 @@
 import 'dart:async';
 
-import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:knz_scent_admin/models/cloud_authorization.dart';
 import 'package:knz_scent_admin/services/cloud_auth_service.dart';
+
+class _FirebaseAuth extends Fake implements FirebaseAuth {
+  User? user;
+  @override
+  User? get currentUser => user;
+}
+
+class _FirebaseUser extends Fake implements User {
+  _FirebaseUser(this.error);
+  final Object? error;
+  @override
+  String get uid => 'trusted-uid';
+  @override
+  bool get isAnonymous => false;
+  @override
+  Future<String?> getIdToken([bool forceRefresh = false]) async {
+    expect(forceRefresh, isTrue);
+    if (error != null) throw error!;
+    return 'refreshed-token';
+  }
+}
+
+class _Firestore extends Fake implements FirebaseFirestore {
+  _Firestore(this.record);
+  final Map<String, dynamic>? record;
+  @override
+  CollectionReference<Map<String, dynamic>> collection(String path) {
+    expect(path, 'accountAccess');
+    return _AccessCollection(record);
+  }
+}
+
+// Test doubles exercise server-only reads without platform channels.
+// ignore: subtype_of_sealed_class
+class _AccessCollection extends Fake
+    implements CollectionReference<Map<String, dynamic>> {
+  _AccessCollection(this.record);
+  final Map<String, dynamic>? record;
+  @override
+  DocumentReference<Map<String, dynamic>> doc([String? path]) {
+    expect(path, 'trusted-uid');
+    return _AccessDocument(record);
+  }
+}
+
+// ignore: subtype_of_sealed_class
+class _AccessDocument extends Fake
+    implements DocumentReference<Map<String, dynamic>> {
+  _AccessDocument(this.record);
+  final Map<String, dynamic>? record;
+  @override
+  Future<DocumentSnapshot<Map<String, dynamic>>> get([
+    GetOptions? options,
+  ]) async {
+    expect(options?.source, Source.server);
+    return _AccessSnapshot(record);
+  }
+}
+
+// ignore: subtype_of_sealed_class
+class _AccessSnapshot extends Fake
+    implements DocumentSnapshot<Map<String, dynamic>> {
+  _AccessSnapshot(this.record);
+  final Map<String, dynamic>? record;
+  @override
+  bool get exists => record != null;
+  @override
+  Map<String, dynamic>? data() => record;
+}
 
 class _RegistrationAccount implements RegistrationAccount {
   @override
@@ -47,6 +118,101 @@ class _DraftStore implements RegistrationDraftStore {
 }
 
 void main() {
+  for (final entry in {
+    'suspended': CloudAuthorization.suspended,
+    'rejected': CloudAuthorization.rejected,
+    'disabled': CloudAuthorization.disabled,
+    'deleted': CloudAuthorization.deleted,
+    'expired': CloudAuthorization.expired,
+    'pending': CloudAuthorization.unauthorized,
+    'approved': CloudAuthorization.unauthorized, // Confirmed inactive.
+  }.entries) {
+    test('server confirms ${entry.key} inactive account', () async {
+      final result = await CloudAuthService(
+        firebaseAuth: _FirebaseAuth()..user = _FirebaseUser(null),
+        firebaseAvailable: () => true,
+        firestore: _Firestore({'status': entry.key, 'active': false}),
+      ).revalidateAccess('trusted-uid');
+      expect(result.authorization, entry.value);
+      expect(result.authorization.revokesLocalAccess, isTrue);
+    });
+  }
+
+  test('server confirms missing access record', () async {
+    final result = await CloudAuthService(
+      firebaseAuth: _FirebaseAuth()..user = _FirebaseUser(null),
+      firebaseAvailable: () => true,
+      firestore: _Firestore(null),
+    ).revalidateAccess('trusted-uid');
+    expect(result.authorization, CloudAuthorization.unauthorized);
+  });
+
+  test(
+    'missing and mismatched Firebase principals only require cloud reauth',
+    () async {
+      final auth = _FirebaseAuth();
+      final service = CloudAuthService(
+        firebaseAvailable: () => true,
+        firebaseAuth: auth,
+      );
+      expect(
+        (await service.revalidateAccess('trusted-uid')).authorization,
+        CloudAuthorization.reauthRequired,
+      );
+      auth.user = _FirebaseUser(StateError('token must not be requested'));
+      expect(
+        (await service.revalidateAccess('other-uid')).authorization,
+        CloudAuthorization.reauthRequired,
+      );
+    },
+  );
+
+  test('Firebase initialization failure is not revocation', () async {
+    final result = await CloudAuthService(
+      firebaseAvailable: () => false,
+    ).revalidateAccess('trusted-uid');
+    expect(result.authorization.revokesLocalAccess, isFalse);
+    expect(result.canAccess, isFalse);
+  });
+
+  for (final entry in {
+    'network-request-failed': CloudAuthorization.offlineAllowed,
+    'user-token-expired': CloudAuthorization.reauthRequired,
+    'invalid-user-token': CloudAuthorization.reauthRequired,
+    'requires-recent-login': CloudAuthorization.reauthRequired,
+    'internal-error': CloudAuthorization.temporarilyUnavailable,
+    'too-many-requests': CloudAuthorization.temporarilyUnavailable,
+    'user-disabled': CloudAuthorization.disabled,
+    'user-not-found': CloudAuthorization.deleted,
+  }.entries) {
+    test('token refresh ${entry.key} maps to ${entry.value.name}', () async {
+      final auth = _FirebaseAuth()
+        ..user = _FirebaseUser(FirebaseAuthException(code: entry.key));
+      final result = await CloudAuthService(
+        firebaseAvailable: () => true,
+        firebaseAuth: auth,
+      ).revalidateAccess('trusted-uid');
+      expect(result.authorization, entry.value);
+      expect(result.canAccess, isFalse);
+    });
+  }
+
+  for (final error in <Object>[
+    TimeoutException('unreachable'),
+    FirebaseException(plugin: 'cloud_firestore', code: 'unavailable'),
+    FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied'),
+  ]) {
+    test('$error does not establish revocation', () async {
+      final auth = _FirebaseAuth()..user = _FirebaseUser(error);
+      final result = await CloudAuthService(
+        firebaseAvailable: () => true,
+        firebaseAuth: auth,
+      ).revalidateAccess('trusted-uid');
+      expect(result.authorization.revokesLocalAccess, isFalse);
+      expect(result.canAccess, isFalse);
+    });
+  }
+
   test('registration is unavailable before Firebase initialization', () async {
     var createCalled = false;
     final service = CloudAuthService(

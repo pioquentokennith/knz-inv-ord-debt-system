@@ -11,6 +11,7 @@ import 'debt_repository.dart';
 import 'firestore_sync.dart';
 import 'local_business_event_repository.dart';
 import 'sync_queue.dart';
+import 'child_record_loader.dart';
 
 /// SQLite-backed debt repository with persisted accrual and payment allocation.
 class LocalDebtRepository extends BaseRepository implements DebtRepository {
@@ -22,29 +23,16 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   }) : _databaseProvider =
            databaseProvider ?? (() => DatabaseHelper.instance.database),
        _queue = queue ?? SyncQueue.instance,
-       _cloud = cloud ?? FirestoreSync.instance,
        _now = now ?? (() => DateTime.now().toUtc());
 
   final Future<Database> Function() _databaseProvider;
   final SyncOutbox _queue;
-  final FirestoreSync _cloud;
   final DateTime Function() _now;
 
   @override
   Future<List<CustomerDebt>> getAll(String userId) => safeCall(() async {
     final database = await _databaseProvider();
-    final partition = await database.query(
-      'debts',
-      columns: const ['id'],
-      where: 'user_id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (partition.isEmpty && _queue.isOnline) {
-      await _restoreCloudPartition(database, userId);
-    }
     final debts = await _accrueAndLoad(database, userId, _now());
-    _queue.requestSync();
     return debts;
   });
 
@@ -275,15 +263,14 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     String userId,
     DateTime timestamp,
   ) async {
-    await database.transaction((txn) async {
-      final rows = await txn.query(
-        'debts',
-        columns: const ['id'],
-        where: 'user_id = ? AND is_deleted = 0',
-        whereArgs: [userId],
-      );
-      for (final row in rows) {
-        final debt = await _loadOne(txn, row['id'] as String, isDeleted: false);
+    var changed = false;
+    final debts = await database.transaction((txn) async {
+      final loaded = await _loadDebts(txn, userId, isDeleted: false);
+      for (var index = 0; index < loaded.length; index++) {
+        final debt = loaded[index];
+        // Advancing a no-interest/settled debt's clock on every read creates
+        // needless writes and an inbound-refresh -> outbox -> refresh loop.
+        if (!debt.hasInterest || debt.principalOutstanding.isZero) continue;
         final accrued = debt.accrueTo(timestamp);
         if (accrued.lastAccrualTimestamp == debt.lastAccrualTimestamp &&
             accrued.interestOutstanding == debt.interestOutstanding) {
@@ -295,28 +282,21 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
           where: 'id = ? AND is_deleted = 0',
           whereArgs: [debt.id],
         );
-        final payments = await txn.query(
-          'payments',
-          where: 'debt_id = ?',
-          whereArgs: [debt.id],
-          orderBy: 'paid_at ASC, id ASC',
-        );
         await _queue.enqueue(
           operation: 'save_debt',
           collection: 'debts',
           userId: userId,
           docId: debt.id,
-          data: _outboxPayload(
-            DebtDto.fromLocal(
-              DebtDto.fromDomain(accrued, userId: userId).toLocal(),
-              payments.map(Map<String, dynamic>.from).toList(),
-            ),
-          ),
+          data: _outboxPayload(DebtDto.fromDomain(accrued, userId: userId)),
           executor: txn,
         );
+        changed = true;
+        loaded[index] = accrued;
       }
+      return loaded;
     });
-    return _loadDebts(database, userId, isDeleted: false);
+    if (changed) _queue.requestSync();
+    return debts;
   }
 
   Future<List<CustomerDebt>> _loadDebts(
@@ -326,18 +306,24 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
   }) async {
     final rows = await database.query(
       'debts',
-      columns: const ['id'],
       where: 'user_id = ? AND is_deleted = ?',
       whereArgs: [userId, isDeleted ? 1 : 0],
       orderBy: 'created_at DESC',
     );
-    final result = <CustomerDebt>[];
-    for (final row in rows) {
-      result.add(
-        await _loadOne(database, row['id'] as String, isDeleted: isDeleted),
-      );
-    }
-    return result;
+    final payments = await loadChildRecords(
+      database,
+      table: 'payments',
+      parentColumn: 'debt_id',
+      parentIds: rows.map((row) => row['id'] as String),
+      orderBy: 'paid_at ASC, id ASC',
+    );
+    return [
+      for (final row in rows)
+        DebtDto.fromLocal(
+          Map<String, dynamic>.from(row),
+          payments[row['id']] ?? const [],
+        ).toDomain(),
+    ];
   }
 
   Future<CustomerDebt> _loadOne(
@@ -385,27 +371,6 @@ class LocalDebtRepository extends BaseRepository implements DebtRepository {
     );
     if (rows.isEmpty) throw StateError('Debt owner not found: $debtId');
     return rows.single['user_id'] as String;
-  }
-
-  Future<void> _restoreCloudPartition(Database database, String userId) async {
-    final cloudDebts = await _cloud.getDebts(userId);
-    await database.transaction((txn) async {
-      for (final cloudDebt in cloudDebts) {
-        final dto = DebtDto.fromCloud(cloudDebt, userId: userId);
-        await txn.insert(
-          'debts',
-          dto.toLocal(),
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
-        for (final payment in dto.payments) {
-          await txn.insert(
-            'payments',
-            payment.toLocal(),
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
-        }
-      }
-    });
   }
 
   void _validateNewDebt(CustomerDebt debt, String userId) {

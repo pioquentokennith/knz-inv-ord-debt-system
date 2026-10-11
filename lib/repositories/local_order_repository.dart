@@ -14,10 +14,10 @@ import '../models/order_model.dart';
 import '../models/order_state_machine.dart';
 import '../models/payment_method_model.dart';
 import 'base_repository.dart';
-import 'firestore_sync.dart';
 import 'local_business_event_repository.dart';
 import 'order_repository.dart';
 import 'sync_queue.dart';
+import 'child_record_loader.dart';
 
 /// SQLite-backed order repository with a durable Firestore outbox.
 class LocalOrderRepository extends BaseRepository implements OrderRepository {
@@ -35,67 +35,20 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
   final SyncOutbox _queue;
   final Uuid _uuid;
   final Future<void> Function(OrderCommitStage stage)? commitHook;
-  final _cloud = FirestoreSync.instance;
 
   @override
   Future<List<Order>> getAll(
     String userId, {
     DateTime? fromDate,
     DateTime? toDate,
-  }) => safeCall(() async {
-    final database = await _databaseProvider();
-    final where = <String>['user_id = ?', 'is_deleted = 0'];
-    final args = <Object?>[userId];
-    if (fromDate != null) {
-      where.add('order_date >= ?');
-      args.add(fromDate.toIso8601String());
-    }
-    if (toDate != null) {
-      where.add('order_date <= ?');
-      args.add(toDate.toIso8601String());
-    }
-    final localRows = await database.query(
-      'orders',
-      columns: const ['id'],
-      where: 'user_id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-
-    if (localRows.isEmpty && _queue.isOnline) {
-      final cloudOrders = await _cloud.getOrders(userId);
-      final incoming = cloudOrders
-          .map((order) => OrderDto.fromCloud(order, userId: userId))
-          .toList(growable: false);
-      await database.transaction((txn) async {
-        for (final dto in incoming) {
-          final orderId = dto.id;
-          final existing = await txn.query(
-            'orders',
-            columns: const ['id'],
-            where: 'id = ?',
-            whereArgs: [orderId],
-            limit: 1,
-          );
-          if (existing.isNotEmpty) continue;
-
-          await txn.insert('orders', dto.toLocal());
-          await _ensureSequenceAtLeast(txn, userId, dto.orderId);
-
-          for (final item in dto.items) {
-            await txn.insert('order_items', item.toLocal());
-          }
-        }
-      });
-    }
-
-    return _loadOrders(
+  }) => safeCall(
+    () => _loadOrders(
       userId,
       isDeleted: false,
       fromDate: fromDate,
       toDate: toDate,
-    );
-  });
+    ),
+  );
 
   @override
   Future<List<Order>> getDeleted(String userId) =>
@@ -1146,24 +1099,6 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
     return (result.single['last_value'] as num).toInt();
   }
 
-  Future<void> _ensureSequenceAtLeast(
-    DatabaseExecutor database,
-    String userId,
-    String readableId,
-  ) async {
-    final parsed = int.tryParse(readableId.replaceFirst('KNZ-', ''));
-    if (parsed == null || parsed < 0) return;
-    await database.rawInsert(
-      'INSERT OR IGNORE INTO order_sequences(user_id, last_value) VALUES(?, ?)',
-      [userId, parsed],
-    );
-    await database.rawUpdate(
-      'UPDATE order_sequences SET last_value = MAX(last_value, ?) '
-      'WHERE user_id = ?',
-      [parsed, userId],
-    );
-  }
-
   Future<List<Order>> _loadOrders(
     String userId, {
     required bool isDeleted,
@@ -1190,18 +1125,19 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
       whereArgs: args,
       orderBy: 'order_date DESC',
     );
+    final children = await loadChildRecords(
+      database,
+      table: 'order_items',
+      parentColumn: 'order_id',
+      parentIds: rows.map((row) => row['id'] as String),
+      orderBy: 'id ASC',
+    );
     final result = <Order>[];
     for (final row in rows) {
-      final itemRows = await database.query(
-        'order_items',
-        where: 'order_id = ?',
-        whereArgs: [row['id']],
-        orderBy: 'id ASC',
-      );
       result.add(
         OrderDto.fromLocal(
           Map<String, dynamic>.from(row),
-          itemRows.map(Map<String, dynamic>.from).toList(),
+          children[row['id']] ?? const [],
         ).toDomain(),
       );
     }

@@ -60,6 +60,7 @@ class CustomOrderPayment {
     required this.paidAt,
     String? note,
   }) : note = note == null || note.trim().isEmpty ? null : note.trim() {
+    amount.validate(field: 'Payment');
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Payment id cannot be blank.');
     }
@@ -136,6 +137,8 @@ class CustomOrder extends BaseModel {
        _terms = terms,
        _userId = userId,
        _createdAt = createdAt {
+    agreedPrice.validate(field: 'Agreed price');
+    depositPaid.validate(field: 'Deposit');
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Custom order id cannot be blank.');
     }

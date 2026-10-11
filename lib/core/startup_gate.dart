@@ -47,6 +47,7 @@ class _StartupGateState extends State<StartupGate> with WidgetsBindingObserver {
       return;
     }
     unawaited(appState.reconcileCloudPrincipal(uid));
+    unawaited(appState.refreshNotifications());
     SyncQueue.instance.requestSync();
   }
 

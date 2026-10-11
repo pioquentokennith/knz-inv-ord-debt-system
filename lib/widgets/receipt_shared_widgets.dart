@@ -71,7 +71,8 @@ final class BtIdle extends BtPrintState {
 
 /// Actively scanning for nearby BT devices.
 final class BtScanning extends BtPrintState {
-  const BtScanning();
+  const BtScanning([this.results = const []]);
+  final List<ScanResult> results;
 }
 
 /// Scan finished; [results] contains discovered devices.
@@ -682,6 +683,7 @@ class BtPrintPanelShell extends StatelessWidget {
   Widget build(BuildContext context) {
     // Results live inside BtScanned — no separate list needed.
     final scanResults = switch (state) {
+      BtScanning(:final results) => results,
       BtScanned(:final results) => results,
       _ => <ScanResult>[],
     };

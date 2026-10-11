@@ -1,4 +1,5 @@
 import '../models/user_model.dart';
+import '../models/cloud_authorization.dart';
 import '../repositories/user_repository.dart';
 import 'cloud_auth_service.dart';
 import 'trusted_device_service.dart';
@@ -9,12 +10,14 @@ class AuthResult {
     this.user,
     this.message,
     this.diagnosticCode,
+    this.authorization = CloudAuthorization.temporarilyUnavailable,
   });
 
   final String status;
   final AppUser? user;
   final String? message;
   final String? diagnosticCode;
+  final CloudAuthorization authorization;
 
   bool get success => user?.canAccess ?? false;
 }
@@ -99,7 +102,11 @@ class AuthService implements IAuthService {
     if (result.mayUseOfflineCache && result.uid != null) {
       final trusted = await _trustedDevice.restore(expectedUid: result.uid);
       if (trusted != null) {
-        return AuthResult(status: 'offline', user: trusted);
+        return AuthResult(
+          status: 'offline',
+          user: trusted,
+          authorization: CloudAuthorization.offlineAllowed,
+        );
       }
     }
     return _resolve(result, enrollDevice: result.canAccess);
@@ -110,20 +117,28 @@ class AuthService implements IAuthService {
     final user = await _trustedDevice.restore();
     return user == null
         ? const AuthResult(status: 'signed_out')
-        : AuthResult(status: 'offline', user: user);
+        : AuthResult(
+            status: 'offline',
+            user: user,
+            authorization: CloudAuthorization.offlineAllowed,
+          );
   }
 
   @override
   Future<AuthResult> revalidateAccess(String uid) async {
     final result = await _cloudAuth.revalidateAccess(uid);
-    if (result.status == 'offline') {
-      return const AuthResult(status: 'offline');
-    }
     if (!result.canAccess) {
       return AuthResult(
         status: result.status,
         message: result.error,
         diagnosticCode: result.diagnosticCode,
+        authorization: result.authorization,
+      );
+    }
+    if (result.uid != uid) {
+      return const AuthResult(
+        status: 'reauth_required',
+        authorization: CloudAuthorization.reauthRequired,
       );
     }
     return _resolve(result, enrollDevice: true);
@@ -159,7 +174,11 @@ class AuthService implements IAuthService {
           accessGeneration: result.accessGeneration,
         );
       }
-      return AuthResult(status: result.status, user: cached);
+      return AuthResult(
+        status: result.status,
+        user: cached,
+        authorization: CloudAuthorization.verified,
+      );
     } on StateError catch (error) {
       await _cloudAuth.signOut();
       return AuthResult(status: 'migration_required', message: error.message);
@@ -170,8 +189,8 @@ class AuthService implements IAuthService {
   Future<void> logout() async {
     final uid =
         await _trustedDevice.pendingFirebaseSignOutUid ??
-        _cloudAuth.currentUid ??
-        await _trustedDevice.activeUid;
+        await _trustedDevice.activeUid ??
+        _cloudAuth.currentUid;
     if (uid != null) await _trustedDevice.beginSignOut(uid);
     await _cloudAuth.signOut();
     if (_cloudAuth.isAvailable && _cloudAuth.currentUid == null) {

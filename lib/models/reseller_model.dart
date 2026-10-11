@@ -32,6 +32,7 @@ class Reseller extends BaseModel {
        _deductionPerItem = deductionPerItem,
        _userId = userId,
        _createdAt = createdAt {
+    deductionPerItem.validate(field: 'Discount');
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Reseller id cannot be blank.');
     }

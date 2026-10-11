@@ -195,6 +195,36 @@ void main() {
   Future<int> stock() async =>
       (await database.query('products')).single['stock_qty'] as int;
 
+  test(
+    'create cancel reopen and repeated status preserve exact local stock on sync failure',
+    () async {
+      final repo = repository();
+      await repo.addWithInventory(_order(id: 'cycle', quantity: 2), 'user-1');
+      expect(await stock(), 3);
+      await repo.updateStatus('cycle', OrderStatus.cancelled);
+      expect(await stock(), 5);
+      await expectLater(
+        repo.updateStatus('cycle', OrderStatus.cancelled),
+        throwsA(isA<InvalidOrderTransitionException>()),
+      );
+      expect(await stock(), 5);
+      await repo.updateStatus('cycle', OrderStatus.pending);
+      expect(await stock(), 3);
+      await expectLater(
+        repo.updateStatus('cycle', OrderStatus.pending),
+        throwsA(isA<InvalidOrderTransitionException>()),
+      );
+      expect(await stock(), 3);
+      final result = await OutboxProcessor(
+        databaseProvider: () async => database,
+        dispatch: (_) async => throw StateError('network unavailable'),
+      ).processUser('user-1');
+      expect(result.succeeded, isFalse);
+      expect(await stock(), 3);
+      expect(await database.query('sync_queue'), isNotEmpty);
+    },
+  );
+
   Future<Object> capture(Future<OrderCreationResult> operation) async {
     try {
       return await operation;

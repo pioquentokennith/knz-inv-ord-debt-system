@@ -10,6 +10,8 @@
 // Existing hard-delete methods kept for permanent purge use-case only.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -22,21 +24,187 @@ import '../dto/debt_dto.dart';
 import '../dto/order_dto.dart';
 import '../dto/product_dto.dart';
 import '../dto/reseller_dto.dart';
+import 'revisioned_replay.dart';
+import 'inbound_change_buffer.dart';
+
+enum _RevisionedWriteOutcome { written, alreadyApplied }
 
 // Singleton — one Firestore adapter per app session
 class FirestoreSync {
   FirestoreSync._(); // Private constructor prevents external instantiation
+  @visibleForTesting
+  FirestoreSync.forTesting({
+    required FirebaseFirestore firestore,
+    required String? Function() currentUid,
+    Stream<QuerySnapshot<Map<String, dynamic>>> Function(String, String)?
+    inboundSnapshots,
+  }) : _firestoreOverride = firestore,
+       _uidOverride = currentUid,
+       _inboundSnapshots = inboundSnapshots;
+  Stream<QuerySnapshot<Map<String, dynamic>>> Function(String, String)?
+  _inboundSnapshots;
+  FirebaseFirestore? _firestoreOverride;
+  String? Function()? _uidOverride;
   static final FirestoreSync instance = FirestoreSync._(); // Shared instance
+
+  static const inboundCollections = [
+    'products',
+    'orders',
+    'debts',
+    'resellers',
+    'custom_orders',
+    'business_events',
+    'activity_logs',
+  ];
+  String? _inboundUid;
+  InboundChangeBuffer? _inboundBuffer;
+  final List<StreamSubscription<QuerySnapshot<Map<String, dynamic>>>>
+  _inboundSubscriptions = [];
+  void Function()? onInboundChanged;
+
+  Future<void> stopInbound() async {
+    _inboundUid = null;
+    final buffer = _inboundBuffer;
+    _inboundBuffer = null;
+    final subscriptions = List.of(_inboundSubscriptions);
+    _inboundSubscriptions.clear();
+    buffer?.fail(StateError('Inbound session stopped.'));
+    await Future.wait(
+      subscriptions.map((subscription) => subscription.cancel()),
+    );
+  }
+
+  Future<List<List<Map<String, dynamic>>>> pendingInbound(String uid) async {
+    _tenant(uid); // Enforce the same account boundary as every other cloud API.
+    if (_inboundUid != uid) {
+      final stopping = stopInbound();
+      _inboundUid = uid;
+      late final InboundChangeBuffer buffer;
+      buffer = InboundChangeBuffer(() {
+        if (identical(_inboundBuffer, buffer)) onInboundChanged?.call();
+      });
+      // Publish ownership before yielding: simultaneous readers share startup.
+      _inboundBuffer = buffer;
+      for (final collection in inboundCollections) {
+        buffer.expect(collection);
+      }
+      await stopping;
+      if (!identical(_inboundBuffer, buffer) || _currentUid != uid) {
+        throw StateError('Inbound session changed during startup.');
+      }
+      try {
+        for (final collection in inboundCollections) {
+          final snapshots =
+              _inboundSnapshots?.call(uid, collection) ??
+              _fs
+                  .collection('users')
+                  .doc(uid)
+                  .collection(collection)
+                  .snapshots(includeMetadataChanges: true);
+          var initialized = false;
+          _inboundSubscriptions.add(
+            snapshots.listen(
+              (snapshot) {
+                if (!identical(_inboundBuffer, buffer) || _currentUid != uid) {
+                  return;
+                }
+                if (snapshot.metadata.isFromCache ||
+                    snapshot.metadata.hasPendingWrites) {
+                  // Firestore computes docChanges relative to every snapshot, even
+                  // ones we cannot safely apply. Replay the next confirmed snapshot
+                  // so an ignored cache/pending-write event cannot hide a change.
+                  initialized = false;
+                  return;
+                }
+                if (!initialized) {
+                  initialized = true;
+                  buffer.add(collection, [
+                    for (final doc in snapshot.docs)
+                      {...doc.data(), 'id': doc.id},
+                    {
+                      'id': '__initial_snapshot__',
+                      '_initial_ids': snapshot.docs
+                          .map((doc) => doc.id)
+                          .toList(),
+                    },
+                  ]);
+                  return;
+                }
+                buffer.add(
+                  collection,
+                  snapshot.docChanges.map(
+                    (change) => change.type == DocumentChangeType.removed
+                        ? <String, dynamic>{
+                            'id': change.doc.id,
+                            'user_id': uid,
+                            '_removed': true,
+                          }
+                        : <String, dynamic>{
+                            ...change.doc.data()!,
+                            'id': change.doc.id,
+                          },
+                  ),
+                );
+              },
+              onError: (Object error) {
+                if (identical(_inboundBuffer, buffer)) buffer.fail(error);
+              },
+            ),
+          );
+        }
+      } catch (error) {
+        buffer.fail(error);
+      }
+    }
+    final buffer = _inboundBuffer;
+    if (buffer == null || _inboundUid != uid) {
+      throw StateError('Inbound session stopped.');
+    }
+    try {
+      return await buffer.snapshot(inboundCollections);
+    } catch (_) {
+      if (identical(_inboundBuffer, buffer)) await stopInbound();
+      rethrow;
+    }
+  }
+
+  void acknowledgeInbound(String uid, List<List<Map<String, dynamic>>> batch) {
+    if (_inboundUid == uid) {
+      _inboundBuffer?.acknowledge(inboundCollections, batch);
+    }
+  }
+
+  /// A listener's earlier snapshot must never delete a just-uploaded local row.
+  Future<bool> confirmRemoteMissing(
+    String uid,
+    String collection,
+    String id,
+  ) async {
+    if (!inboundCollections.take(5).contains(collection)) {
+      throw ArgumentError.value(collection, 'collection');
+    }
+    final snapshot = await _tenant(uid)
+        .collection(collection)
+        .doc(id)
+        .get(const GetOptions(source: Source.server));
+    _tenant(uid);
+    return !snapshot.exists;
+  }
 
   // Lazy getter — only accessed during actual sync, not at construction time.
   // This prevents Firebase-not-initialized crashes during unit tests.
-  FirebaseFirestore get _fs => FirebaseFirestore.instance;
+  FirebaseFirestore get _fs => _firestoreOverride ?? FirebaseFirestore.instance;
+
+  String? get _currentUid {
+    if (_uidOverride != null) return _uidOverride!();
+    final user = FirebaseAuth.instance.currentUser;
+    return user == null || user.isAnonymous ? null : user.uid;
+  }
 
   // ── Collection references (helpers for building Firestore paths) ──────────
   CollectionReference get _users => _fs.collection('users');
   DocumentReference _tenant(String uid) {
-    final principal = FirebaseAuth.instance.currentUser;
-    if (principal == null || principal.isAnonymous || principal.uid != uid) {
+    if (_currentUid != uid) {
       throw StateError('Cloud session is not authorized for local user $uid.');
     }
     return _users.doc(uid);
@@ -89,13 +257,25 @@ class FirestoreSync {
   // ── PRODUCTS ──────────────────────────────────────────────────────────────
 
   // Upserts a product document in the user's products subcollection
-  Future<void> saveProduct(String userId, Map<String, dynamic> data) async {
+  Future<void> saveProduct(
+    String userId,
+    Map<String, dynamic> data, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
     final cloudData = ProductDto.fromCloud(data, userId: userId).toCloud();
     _copyRevisionMetadata(data, cloudData);
     await _revisionedWrite(
       _products(userId).doc(cloudData['id'] as String),
       cloudData,
+      replayOnly: replayOnly,
     );
+  }
+
+  void _checkPayloadOwner(String uid, Map<String, dynamic> data) {
+    if (data['user_id'] != uid) {
+      throw StateError('Outbox payload does not belong to the requested UID.');
+    }
   }
 
   void _copyRevisionMetadata(
@@ -114,37 +294,75 @@ class FirestoreSync {
     }
   }
 
-  Future<void> _revisionedWrite(
+  Future<_RevisionedWriteOutcome> _revisionedWrite(
     DocumentReference reference,
-    Map<String, dynamic> data,
-  ) async {
+    Map<String, dynamic> data, {
+    bool replayOnly = false,
+  }) async {
     final expected = data['base_revision'] as int? ?? 0;
     final resulting = data['revision'] as int? ?? expected + 1;
     if (resulting != expected + 1) {
       throw const FormatException('Revision must advance by exactly one.');
     }
-    await _fs.runTransaction((transaction) async {
+    return _fs.runTransaction((transaction) async {
+      if (_currentUid != data['user_id'] || reference.id != data['id']) {
+        throw StateError('Cloud session or document changed before sync.');
+      }
       final snapshot = await transaction.get(reference);
       final remoteData = snapshot.data() as Map<String, dynamic>?;
+      _retainFinalizedOrderIdentity(data, remoteData);
+      if (_currentUid != data['user_id']) {
+        throw StateError('Cloud session changed during sync.');
+      }
       final remoteRevision = remoteData?['revision'] as int? ?? 0;
-      if (remoteRevision != expected) {
+      if (remoteRevision == resulting &&
+          RevisionedReplay.isExact(data, remoteData)) {
+        // Already applied: success without rewriting the cloud document. The
+        // existing outbox success transaction performs local acknowledgment.
+        return _RevisionedWriteOutcome.alreadyApplied;
+      }
+      if (replayOnly || remoteRevision != expected) {
         throw SyncConflictException(
-          'Remote revision $remoteRevision does not match expected $expected.',
+          replayOnly && remoteRevision == expected
+              ? 'Current remote state does not prove this operation was already applied.'
+              : 'Remote revision $remoteRevision does not match expected $expected.',
           remoteRevision: remoteRevision,
           remoteData: remoteData,
         );
       }
       transaction.set(reference, data, SetOptions(merge: true));
+      return _RevisionedWriteOutcome.written;
     });
+  }
+
+  // Pending status/delivery snapshots were created before online numbering.
+  // Keep the server-assigned identity when replaying these historical snapshots.
+  void _retainFinalizedOrderIdentity(
+    Map<String, dynamic> pending,
+    Map<String, dynamic>? remote,
+  ) {
+    if (remote?['number_state'] != 'finalized' ||
+        !pending.containsKey('order_id')) {
+      return;
+    }
+    for (final key in ['order_id', 'number_state', 'provisional_order_id']) {
+      if (remote!.containsKey(key)) pending[key] = remote[key];
+    }
   }
 
   // ── NEW: Soft-delete product in Firestore ─────────────────────────────────
   // Sets is_deleted=1 and records deleted_at timestamp without removing the document
   Future<void> softDeleteProduct(
     String userId,
-    Map<String, dynamic> data,
-  ) async {
-    await saveProduct(userId, {...data, 'user_id': userId, 'is_deleted': 1});
+    Map<String, dynamic> data, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
+    await saveProduct(userId, {
+      ...data,
+      'user_id': userId,
+      'is_deleted': 1,
+    }, replayOnly: replayOnly);
   }
 
   // Permanently removes a product document from Firestore (admin purge only)
@@ -171,8 +389,10 @@ class FirestoreSync {
   Future<void> saveOrder(
     String userId,
     Map<String, dynamic> orderData,
-    List<Map<String, dynamic>> items,
-  ) async {
+    List<Map<String, dynamic>> items, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, orderData);
     final dto = OrderDto.fromCloud({
       ...orderData,
       'items': items,
@@ -180,7 +400,11 @@ class FirestoreSync {
     final cloudData = dto.toCloud();
     _copyRevisionMetadata(orderData, cloudData);
     final id = dto.id;
-    await _revisionedWrite(_orders(userId).doc(id), cloudData);
+    await _revisionedWrite(
+      _orders(userId).doc(id),
+      cloudData,
+      replayOnly: replayOnly,
+    );
   }
 
   Future<String> finalizeOrder(
@@ -246,8 +470,10 @@ class FirestoreSync {
         }
         transaction.update(reference, {
           'stock_qty': stock - entry.value,
+          'base_revision': data['revision'] as int? ?? 0,
           'revision': (data['revision'] as int? ?? 0) + 1,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
+          'writer_device_id': orderData['writer_device_id'],
+          'updated_at': orderData['updated_at'],
         });
       }
 
@@ -257,6 +483,7 @@ class FirestoreSync {
         ..['number_state'] = 'finalized'
         ..['revision'] = 1
         ..['base_revision'] = 0;
+      _copyRevisionMetadata(orderData, cloudOrder);
       transaction.set(_orders(userId).doc(order.id), cloudOrder);
       if (debtData != null) {
         final debt = Map<String, dynamic>.from(debtData)
@@ -264,6 +491,8 @@ class FirestoreSync {
           ..['order_id'] = canonicalId
           ..['revision'] = 1
           ..['base_revision'] = 0;
+        debt['writer_device_id'] = orderData['writer_device_id'];
+        debt['updated_at'] = orderData['updated_at'];
         transaction.set(_debts(userId).doc(debt['id'] as String), debt);
       }
       transaction.set(counterRef, {
@@ -287,13 +516,16 @@ class FirestoreSync {
   Future<void> softDeleteOrder(
     String userId,
     Map<String, dynamic> data,
-    List<Map<String, dynamic>> items,
-  ) async {
-    await saveOrder(userId, {
-      ...data,
-      'user_id': userId,
-      'is_deleted': 1,
-    }, items);
+    List<Map<String, dynamic>> items, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
+    await saveOrder(
+      userId,
+      {...data, 'user_id': userId, 'is_deleted': 1},
+      items,
+      replayOnly: replayOnly,
+    );
   }
 
   // Permanently removes an order document from Firestore
@@ -320,8 +552,10 @@ class FirestoreSync {
   Future<void> saveDebt(
     String userId,
     Map<String, dynamic> debtData,
-    List<Map<String, dynamic>> payments,
-  ) async {
+    List<Map<String, dynamic>> payments, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, debtData);
     final dto = DebtDto.fromCloud({
       ...debtData,
       'payments': payments,
@@ -329,7 +563,11 @@ class FirestoreSync {
     final cloudData = dto.toCloud();
     _copyRevisionMetadata(debtData, cloudData);
     final id = dto.id;
-    await _revisionedWrite(_debts(userId).doc(id), cloudData);
+    await _revisionedWrite(
+      _debts(userId).doc(id),
+      cloudData,
+      replayOnly: replayOnly,
+    );
   }
 
   // ── NEW: Soft-delete debt in Firestore ────────────────────────────────────
@@ -337,13 +575,16 @@ class FirestoreSync {
   Future<void> softDeleteDebt(
     String userId,
     Map<String, dynamic> data,
-    List<Map<String, dynamic>> payments,
-  ) async {
-    await saveDebt(userId, {
-      ...data,
-      'user_id': userId,
-      'is_deleted': 1,
-    }, payments);
+    List<Map<String, dynamic>> payments, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
+    await saveDebt(
+      userId,
+      {...data, 'user_id': userId, 'is_deleted': 1},
+      payments,
+      replayOnly: replayOnly,
+    );
   }
 
   // Permanently removes a debt document from Firestore
@@ -364,18 +605,33 @@ class FirestoreSync {
         .toList();
   }
 
-  Future<void> saveReseller(String userId, Map<String, dynamic> data) async {
+  Future<void> saveReseller(
+    String userId,
+    Map<String, dynamic> data, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
     final dto = ResellerDto.fromCloud(data, userId: userId);
     final cloudData = dto.toCloud();
     _copyRevisionMetadata(data, cloudData);
-    await _revisionedWrite(_resellers(userId).doc(dto.id), cloudData);
+    await _revisionedWrite(
+      _resellers(userId).doc(dto.id),
+      cloudData,
+      replayOnly: replayOnly,
+    );
   }
 
   Future<void> softDeleteReseller(
     String userId,
-    Map<String, dynamic> data,
-  ) async {
-    await saveReseller(userId, {...data, 'user_id': userId, 'is_deleted': 1});
+    Map<String, dynamic> data, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
+    await saveReseller(userId, {
+      ...data,
+      'user_id': userId,
+      'is_deleted': 1,
+    }, replayOnly: replayOnly);
   }
 
   Future<void> deleteReseller(String userId, String resellerId) async {
@@ -397,27 +653,36 @@ class FirestoreSync {
   Future<void> saveCustomOrder(
     String userId,
     Map<String, dynamic> data,
-    List<Map<String, dynamic>> payments,
-  ) async {
+    List<Map<String, dynamic>> payments, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
     final dto = CustomOrderDto.fromCloud({
       ...data,
       'payments': payments,
     }, userId: userId);
     final cloudData = dto.toCloud();
     _copyRevisionMetadata(data, cloudData);
-    await _revisionedWrite(_customOrders(userId).doc(dto.id), cloudData);
+    await _revisionedWrite(
+      _customOrders(userId).doc(dto.id),
+      cloudData,
+      replayOnly: replayOnly,
+    );
   }
 
   Future<void> softDeleteCustomOrder(
     String userId,
     Map<String, dynamic> data,
-    List<Map<String, dynamic>> payments,
-  ) async {
-    await saveCustomOrder(userId, {
-      ...data,
-      'user_id': userId,
-      'is_deleted': 1,
-    }, payments);
+    List<Map<String, dynamic>> payments, {
+    bool replayOnly = false,
+  }) async {
+    _checkPayloadOwner(userId, data);
+    await saveCustomOrder(
+      userId,
+      {...data, 'user_id': userId, 'is_deleted': 1},
+      payments,
+      replayOnly: replayOnly,
+    );
   }
 
   Future<void> deleteCustomOrder(String userId, String customOrderId) async {
@@ -469,10 +734,12 @@ class FirestoreSync {
       ...orderData,
       'items': items,
     }, userId: userId);
+    final cloudData = order.toCloud();
+    _copyRevisionMetadata(orderData, cloudData);
     await _saveParentWithEvents(
       userId,
       _orders(userId).doc(order.id),
-      order.toCloud(),
+      cloudData,
       [eventData],
     );
   }
@@ -487,10 +754,12 @@ class FirestoreSync {
       ...debtData,
       'payments': payments,
     }, userId: userId);
+    final cloudData = debt.toCloud();
+    _copyRevisionMetadata(debtData, cloudData);
     await _saveParentWithEvents(
       userId,
       _debts(userId).doc(debt.id),
-      debt.toCloud(),
+      cloudData,
       events,
     );
   }
@@ -505,10 +774,12 @@ class FirestoreSync {
       ...customOrderData,
       'payments': payments,
     }, userId: userId);
+    final cloudData = order.toCloud();
+    _copyRevisionMetadata(customOrderData, cloudData);
     await _saveParentWithEvents(
       userId,
       _customOrders(userId).doc(order.id),
-      order.toCloud(),
+      cloudData,
       events,
     );
   }
@@ -655,11 +926,30 @@ class FirestoreSync {
       for (final event in events) _businessEvents(userId).doc(event.id),
     ];
     await _fs.runTransaction((transaction) async {
+      final parentSnapshot = await transaction.get(parent);
+      final remoteData = parentSnapshot.data() as Map<String, dynamic>?;
+      _retainFinalizedOrderIdentity(parentData, remoteData);
+      final expected = parentData['base_revision'] as int? ?? 0;
+      final resulting = parentData['revision'] as int? ?? expected + 1;
+      if (resulting != expected + 1) {
+        throw const FormatException('Revision must advance by exactly one.');
+      }
+      final alreadyApplied = RevisionedReplay.isExact(parentData, remoteData);
+      final remoteRevision = remoteData?['revision'] as int? ?? 0;
+      if (!alreadyApplied && remoteRevision != expected) {
+        throw SyncConflictException(
+          'Event parent revision changed remotely.',
+          remoteRevision: remoteRevision,
+          remoteData: remoteData,
+        );
+      }
       final existing = <DocumentSnapshot>[];
       for (final reference in references) {
         existing.add(await transaction.get(reference));
       }
-      transaction.set(parent, parentData, SetOptions(merge: true));
+      if (!alreadyApplied) {
+        transaction.set(parent, parentData, SetOptions(merge: true));
+      }
       for (var index = 0; index < events.length; index++) {
         final cloudData = events[index].toCloud();
         if (existing[index].exists) {
@@ -684,7 +974,18 @@ class FirestoreSync {
   // Saves a single activity log entry to Firestore using the log's UUID as document ID
   Future<void> saveLog(String userId, Map<String, dynamic> data) async {
     final dto = ActivityLogDto.fromCloud(data, userId: userId);
-    await _logs(userId).doc(dto.id).set(dto.toCloud());
+    final reference = _logs(userId).doc(dto.id);
+    final cloudData = dto.toCloud();
+    await _fs.runTransaction((transaction) async {
+      final snapshot = await transaction.get(reference);
+      if (snapshot.exists) {
+        if (!RevisionedReplay.sameValues(snapshot.data(), cloudData)) {
+          throw StateError('Cloud activity log ${dto.id} is immutable.');
+        }
+        return;
+      }
+      transaction.set(reference, cloudData);
+    });
   }
 
   // Fetches the 500 most recent activity logs for a user

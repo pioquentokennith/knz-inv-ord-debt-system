@@ -1,4 +1,11 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:knz_scent_admin/core/app_state.dart';
+import 'package:knz_scent_admin/database/database_helper.dart';
+import 'package:knz_scent_admin/models/cloud_authorization.dart';
 import 'package:knz_scent_admin/models/device_auth_grant.dart';
 import 'package:knz_scent_admin/models/user_model.dart';
 import 'package:knz_scent_admin/repositories/user_repository.dart';
@@ -108,6 +115,9 @@ class _CloudAuth implements ICloudAuthService {
   Map<String, String>? registrationInput;
 
   bool available = true;
+  int revalidationCalls = 0;
+  Object? revalidationError;
+  Object? signOutError;
 
   @override
   bool get isAvailable => available;
@@ -145,7 +155,11 @@ class _CloudAuth implements ICloudAuthService {
   Future<CloudAuthResult> restoreSession() async => restoreResult;
 
   @override
-  Future<CloudAuthResult> revalidateAccess(String uid) async => restoreResult;
+  Future<CloudAuthResult> revalidateAccess(String uid) async {
+    revalidationCalls++;
+    if (revalidationError != null) throw revalidationError!;
+    return restoreResult;
+  }
 
   @override
   Future<void> sendPasswordReset(String email) async {
@@ -155,7 +169,10 @@ class _CloudAuth implements ICloudAuthService {
   }
 
   @override
-  Future<void> signOut() async => signedOut = true;
+  Future<void> signOut() async {
+    if (signOutError != null) throw signOutError!;
+    signedOut = true;
+  }
 }
 
 CloudAuthResult _approved() => CloudAuthResult(
@@ -170,6 +187,214 @@ CloudAuthResult _approved() => CloudAuthResult(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('first offline login cannot create a trusted local session', () async {
+    final repository = _UserRepository();
+    final cloud = _CloudAuth()
+      ..loginResult = const CloudAuthResult(status: 'offline');
+    final service = _service(repository, cloud);
+    expect(
+      (await service.login('staff@example.com', 'password')).success,
+      isFalse,
+    );
+    expect(repository.cached, isNull);
+    expect(repository.grant, isNull);
+    expect((await service.restoreTrustedDevice()).success, isFalse);
+  });
+
+  group('trusted local access is independent of cloud reauthentication', () {
+    late Directory directory;
+    late _UserRepository repository;
+    late _SecureStore secureStore;
+    late _CloudAuth cloud;
+    late AuthService service;
+    final state = AppState();
+
+    AuthService reopen() => AuthService(
+      repository,
+      cloudAuth: cloud,
+      trustedDevice: TrustedDeviceService(
+        repository,
+        secureStore: secureStore,
+        now: () => DateTime.utc(2046),
+      ),
+    );
+
+    setUpAll(() async {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+      directory = await Directory.systemTemp.createTemp('offline-auth-');
+      await databaseFactory.setDatabasesPath(directory.path);
+      await DatabaseHelper.instance.database;
+    });
+    tearDownAll(() async {
+      await (await DatabaseHelper.instance.database).close();
+      await directory.delete(recursive: true);
+    });
+    setUp(() async {
+      repository = _UserRepository();
+      secureStore = _SecureStore();
+      cloud = _CloudAuth()..loginResult = _approved();
+      service = AuthService(
+        repository,
+        cloudAuth: cloud,
+        trustedDevice: TrustedDeviceService(
+          repository,
+          secureStore: secureStore,
+          now: () => DateTime.utc(2026),
+        ),
+      );
+      expect(
+        (await service.login('staff@example.com', 'password')).success,
+        isTrue,
+      );
+      service =
+          reopen(); // New services reuse only durable profile/grant/secret.
+      state.configure(
+        authService: service,
+        stopSynchronization: () async {},
+        cancelNotifications: () async {},
+        syncBusinessAlerts: (_, _) async {},
+      );
+      await state.restoreTrustedDevice();
+    });
+    tearDown(() async {
+      cloud.signOutError = null;
+      await state.logout();
+    });
+
+    test(
+      'online enrollment reopens offline decades later without Firebase',
+      () async {
+        expect(state.isLoggedIn, isTrue);
+        expect(state.isOfflineSession, isTrue);
+        expect(state.currentUser?.role, 'Staff');
+        expect(state.activeUser, 'firebase-uid');
+        expect(cloud.revalidationCalls, 0);
+        expect((await reopen().restoreTrustedDevice()).success, isTrue);
+      },
+    );
+
+    for (final result in [
+      const CloudAuthResult(
+        status: 'reauth_required',
+        authorization: CloudAuthorization.reauthRequired,
+      ),
+      const CloudAuthResult(
+        status: 'offline',
+        authorization: CloudAuthorization.offlineAllowed,
+      ),
+      const CloudAuthResult(status: 'unavailable'),
+    ]) {
+      test(
+        '${result.status} pauses sync without deleting trusted session',
+        () async {
+          cloud.restoreResult = result;
+          await state.reconcileCloudPrincipal('firebase-uid');
+          expect(state.isLoggedIn, isTrue);
+          expect(state.isOfflineSession, isTrue);
+          expect(state.cloudAuthorization, result.authorization);
+          expect(repository.grant?.isEnabled, isTrue);
+          expect(secureStore.secrets, isNotEmpty);
+          expect((await reopen().restoreTrustedDevice()).success, isTrue);
+          expect(cloud.signedOut, isFalse);
+        },
+      );
+    }
+
+    test('timeout exceptions preserve local access', () async {
+      cloud.revalidationError = TimeoutException('Firebase unavailable');
+      await state.reconcileCloudPrincipal('firebase-uid');
+      expect(state.isLoggedIn, isTrue);
+      expect(
+        state.cloudAuthorization,
+        CloudAuthorization.temporarilyUnavailable,
+      );
+      expect((await reopen().restoreTrustedDevice()).success, isTrue);
+    });
+
+    for (final principal in <String?>[null, 'other-uid']) {
+      test(
+        'principal $principal blocks sync and preserves the trusted UID',
+        () async {
+          await state.reconcileCloudPrincipal(principal);
+          expect(state.isLoggedIn, isTrue);
+          expect(state.activeUser, 'firebase-uid');
+          expect(state.currentUser?.email, 'staff@example.com');
+          expect(state.cloudAuthorization, CloudAuthorization.reauthRequired);
+          expect(cloud.revalidationCalls, 0);
+          expect(
+            (await reopen().restoreTrustedDevice()).user?.id,
+            'firebase-uid',
+          );
+        },
+      );
+    }
+
+    test(
+      'logout revokes trusted UID even if Firebase has a different UID',
+      () async {
+        cloud.loginResult = const CloudAuthResult(
+          status: 'approved',
+          uid: 'other-uid',
+        );
+        await state.logout();
+        expect(repository.grant?.isEnabled, isFalse);
+        expect(secureStore.secrets, isEmpty);
+        expect((await reopen().restoreTrustedDevice()).success, isFalse);
+      },
+    );
+
+    for (final authorization in CloudAuthorization.values.where(
+      (a) => a.revokesLocalAccess,
+    )) {
+      test('confirmed ${authorization.name} revokes local access', () async {
+        cloud.restoreResult = CloudAuthResult(
+          status: authorization.name,
+          authorization: authorization,
+        );
+        await state.reconcileCloudPrincipal('firebase-uid');
+        expect(state.isLoggedIn, isFalse);
+        expect(state.currentUser, isNull);
+        expect(secureStore.secrets, isEmpty);
+        expect((await reopen().restoreTrustedDevice()).success, isFalse);
+      });
+    }
+
+    test(
+      'offline logout removes trust even when Firebase cleanup fails',
+      () async {
+        cloud.available = false;
+        cloud.signOutError = StateError('Firebase not initialized');
+        await expectLater(state.logout(), throwsStateError);
+        expect(state.isLoggedIn, isFalse);
+        expect(secureStore.secrets, isEmpty);
+        expect((await reopen().restoreTrustedDevice()).success, isFalse);
+      },
+    );
+
+    test(
+      'wrong UID revalidation result cannot replace cached identity',
+      () async {
+        cloud.restoreResult = CloudAuthResult(
+          status: 'approved',
+          active: true,
+          uid: 'other-uid',
+          email: 'other@example.com',
+          username: 'other',
+          name: 'Other',
+          role: 'Administrator',
+        );
+        await state.reconcileCloudPrincipal('firebase-uid');
+        expect(state.activeUser, 'firebase-uid');
+        expect(state.currentUser?.role, 'Staff');
+        expect(repository.cached?.id, 'firebase-uid');
+        expect(state.cloudAuthorization, CloudAuthorization.reauthRequired);
+      },
+    );
+  });
+
   test(
     'registration delegates account creation and requires verification',
     () async {

@@ -53,6 +53,105 @@ void main() {
 
   tearDown(() => database.close());
 
+  test(
+    'pending composite order protects locally deducted product stock',
+    () async {
+      await database.insert('products', _product(stock: 3));
+      await database.insert('sync_queue', {
+        'operation': 'create_order',
+        'collection': 'orders',
+        'user_id': 'user-1',
+        'doc_id': 'order-1',
+        'aggregate_key': 'orders:order-1',
+        'data': jsonEncode({
+          '_order': {
+            '_items': [
+              {'product_id': 'product-1'},
+            ],
+          },
+        }),
+        'created_at': '2026-01-01',
+        'updated_at': '2026-01-01',
+        'idempotency_key': 'create-order',
+        'status': 'pending',
+      });
+      final coordinator = InboundSyncCoordinator(
+        databaseProvider: () async => database,
+        remoteLoader: (_) =>
+            _snapshot(products: [_product(stock: 9, revision: 2)]),
+      );
+      final result = await coordinator.reconcile('user-1');
+      expect(result.conflictCount, 1);
+      expect((await database.query('products')).single['stock_qty'], 3);
+    },
+  );
+
+  test(
+    'acknowledgment follows commit and failed SQLite transaction retains changes',
+    () async {
+      var acknowledgments = 0;
+      final coordinator = InboundSyncCoordinator(
+        databaseProvider: () async => database,
+        remoteLoader: (_) => _snapshot(products: [_product()]),
+        acknowledge: (_, __) async {
+          expect(await database.query('products'), hasLength(1));
+          acknowledgments++;
+        },
+      );
+      await database.execute(
+        "CREATE TRIGGER reject_product BEFORE INSERT ON products BEGIN SELECT RAISE(ABORT, 'disk failure'); END",
+      );
+      await expectLater(
+        coordinator.reconcile('user-1'),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(acknowledgments, 0);
+      await database.execute('DROP TRIGGER reject_product');
+      await coordinator.reconcile('user-1');
+      expect(acknowledgments, 1);
+      expect((await coordinator.reconcile('user-1')).changed, isFalse);
+    },
+  );
+
+  test(
+    'stale initial snapshot cannot delete a recently uploaded record',
+    () async {
+      await database.insert('products', _product());
+      final coordinator = InboundSyncCoordinator(
+        databaseProvider: () async => database,
+        remoteLoader: (_) => _snapshot(
+          products: [
+            {'id': '__initial_snapshot__', '_initial_ids': <String>[]},
+          ],
+        ),
+        confirmMissing: (_, __, ___) async => false,
+      );
+      expect((await coordinator.reconcile('user-1')).changed, isFalse);
+      expect(await database.query('products'), hasLength(1));
+    },
+  );
+
+  test('confirmed offline purge removes only its owning partition', () async {
+    await database.insert('products', _product());
+    await database.insert('products', {
+      ..._product(id: 'other'),
+      'user_id': 'user-2',
+    });
+    final coordinator = InboundSyncCoordinator(
+      databaseProvider: () async => database,
+      remoteLoader: (_) => _snapshot(
+        products: [
+          {'id': '__initial_snapshot__', '_initial_ids': <String>[]},
+        ],
+      ),
+      confirmMissing: (_, __, ___) async => true,
+    );
+    final purged = await coordinator.reconcile('user-1');
+    expect(purged.appliedCount, 1);
+    expect(purged.changedCollections, {'products'});
+    expect((await database.query('products')).single['user_id'], 'user-2');
+  });
+
   test('newer clean remote revision replaces the local entity', () async {
     await database.insert('products', _product(stock: 2, revision: 1));
     final coordinator = InboundSyncCoordinator(
@@ -64,9 +163,12 @@ void main() {
     final result = await coordinator.reconcile('user-1');
 
     expect(result.appliedCount, 1);
+    expect(result.changedCollections, {'products'});
     final row = (await database.query('products')).single;
     expect(row['stock_qty'], 8);
     expect(row['revision'], 2);
+    final repeated = await coordinator.reconcile('user-1');
+    expect(repeated.changedCollections, isEmpty);
   });
 
   test('newer remote revision preserves the device-local image path', () async {
@@ -114,6 +216,7 @@ void main() {
       final result = await coordinator.reconcile('user-1');
 
       expect(result.conflictCount, 1);
+      expect(result.changedCollections, isEmpty);
       expect((await database.query('products')).single['stock_qty'], 2);
       expect(await database.query('sync_conflicts'), hasLength(1));
     },

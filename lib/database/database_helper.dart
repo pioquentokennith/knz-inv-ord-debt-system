@@ -1611,7 +1611,7 @@ class DatabaseHelper {
         final periods = target.difference(cursor).inSeconds ~/ period.inSeconds;
         if (periods == 0) return;
         final perPeriod = Money.fromCentavos(
-          roundRatioHalfUp(principal.centavos * rateBasisPoints, 10000),
+          roundProductRatioHalfUp(principal.centavos, rateBasisPoints, 10000),
         );
         interest += perPeriod * periods;
         cursor = cursor.add(period * periods);

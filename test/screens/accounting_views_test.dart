@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:knz_scent_admin/screens/accounting_screen.dart';
 import 'package:knz_scent_admin/screens/overview_screen.dart';
 import 'package:knz_scent_admin/screens/reports_screen.dart';
+import 'package:knz_scent_admin/screens/sales_screen.dart';
 import 'package:knz_scent_admin/services/accounting_service.dart';
 
 import '../fixtures/accounting_fixture.dart';
@@ -38,6 +39,71 @@ void main() {
     expect(find.text('₱100.00'), findsOneWidget);
     expect(find.text('₱550.00'), findsOneWidget);
   });
+
+  for (final scale in [1.0, 2.0]) {
+    testWidgets('Reports fits a 320px screen at text scale $scale', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: ReportsScreen(accountingReport: report),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.tap(
+        find
+            .byWidgetPredicate((widget) => widget is DropdownButtonFormField)
+            .first,
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Revenue Summary'),
+        150,
+        scrollable: find.byType(Scrollable).last,
+      );
+      await Scrollable.ensureVisible(
+        tester.element(find.text('Revenue Summary').last),
+        alignment: 0.5,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Revenue Summary').hitTestable().last);
+      await tester.pumpAndSettle();
+      expect(find.text('REVENUE & COLLECTIONS SUMMARY'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+    testWidgets('Sales empty state fits a 320px screen at text scale $scale', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: const Scaffold(body: SalesScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('accounting cards and ledger use the fixed fixture report', (
     tester,

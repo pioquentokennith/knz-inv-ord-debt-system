@@ -14,7 +14,6 @@ import '../database/database_helper.dart';
 import '../dto/reseller_dto.dart';
 import '../models/reseller_model.dart';
 import 'base_repository.dart';
-import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
 class LocalResellerRepository extends BaseRepository {
@@ -27,31 +26,10 @@ class LocalResellerRepository extends BaseRepository {
 
   final Future<Database> Function() _databaseProvider;
   final SyncOutbox _queue;
-  final _cloud = FirestoreSync.instance;
 
   /// Returns all active (non-deleted) resellers for a given user.
   Future<List<Reseller>> getAll(String userId) => safeCall(() async {
     final database = await _databaseProvider();
-    final partition = await database.query(
-      'resellers',
-      columns: const ['id'],
-      where: 'user_id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    if (partition.isEmpty && _queue.isOnline) {
-      final cloudRows = await _cloud.getResellers(userId);
-      await database.transaction((txn) async {
-        for (final cloudRow in cloudRows) {
-          final dto = ResellerDto.fromCloud(cloudRow, userId: userId);
-          await txn.insert(
-            'resellers',
-            dto.toLocal(),
-            conflictAlgorithm: ConflictAlgorithm.ignore,
-          );
-        }
-      });
-    }
     final rows = await database.query(
       'resellers',
       where: 'user_id = ? AND is_deleted = 0',

@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/cloud_authorization.dart';
 
 typedef FirebaseAvailability = bool Function();
 typedef RegistrationAccountCreator =
@@ -38,6 +39,8 @@ abstract class ICloudAuthService {
 
 class CloudAuthService implements ICloudAuthService {
   CloudAuthService({
+    FirebaseAuth? firebaseAuth,
+    FirebaseFirestore? firestore,
     FirebaseAvailability? firebaseAvailable,
     RegistrationAccountCreator? registrationAccountCreator,
     RegistrationBatchWriter? registrationBatchWriter,
@@ -45,7 +48,9 @@ class CloudAuthService implements ICloudAuthService {
     RegistrationDraftStore? registrationDraftStore,
     String? Function()? currentUserUid,
     Future<void> Function()? registrationSignOut,
-  }) : _firebaseAvailable =
+  }) : _firebaseAuth = firebaseAuth,
+       _firestoreInstance = firestore,
+       _firebaseAvailable =
            firebaseAvailable ?? (() => Firebase.apps.isNotEmpty),
        _registrationAccountCreator = registrationAccountCreator,
        _registrationBatchWriter = registrationBatchWriter,
@@ -58,6 +63,8 @@ class CloudAuthService implements ICloudAuthService {
   static final CloudAuthService instance = CloudAuthService();
 
   final FirebaseAvailability _firebaseAvailable;
+  final FirebaseAuth? _firebaseAuth;
+  final FirebaseFirestore? _firestoreInstance;
   final RegistrationAccountCreator? _registrationAccountCreator;
   final RegistrationBatchWriter? _registrationBatchWriter;
   final RegistrationSubmissionChecker? _registrationSubmissionChecker;
@@ -68,8 +75,9 @@ class CloudAuthService implements ICloudAuthService {
 
   static const Duration _timeout = Duration(seconds: 20);
 
-  FirebaseAuth get _auth => FirebaseAuth.instance;
-  FirebaseFirestore get _firestore => FirebaseFirestore.instance;
+  FirebaseAuth get _auth => _firebaseAuth ?? FirebaseAuth.instance;
+  FirebaseFirestore get _firestore =>
+      _firestoreInstance ?? FirebaseFirestore.instance;
 
   @override
   bool get isAvailable => _firebaseAvailable();
@@ -393,26 +401,7 @@ class CloudAuthService implements ICloudAuthService {
     if (user == null || user.isAnonymous) {
       return const CloudAuthResult(status: 'signed_out');
     }
-    try {
-      final access = await _loadAccess(user.uid).timeout(_timeout);
-      if (!access.canAccess) await signOut();
-      return access;
-    } on FirebaseException catch (error) {
-      if (error.code == 'unavailable') {
-        return CloudAuthResult(
-          status: 'offline',
-          uid: user.uid,
-          mayUseOfflineCache: true,
-        );
-      }
-      rethrow;
-    } on TimeoutException {
-      return CloudAuthResult(
-        status: 'offline',
-        uid: user.uid,
-        mayUseOfflineCache: true,
-      );
-    }
+    return revalidateAccess(user.uid);
   }
 
   @override
@@ -420,6 +409,7 @@ class CloudAuthService implements ICloudAuthService {
     if (!_firebaseAvailable()) {
       return const CloudAuthResult(
         status: 'offline',
+        authorization: CloudAuthorization.temporarilyUnavailable,
         mayUseOfflineCache: true,
         diagnosticCode: 'firebase-not-initialized',
       );
@@ -428,6 +418,7 @@ class CloudAuthService implements ICloudAuthService {
     if (user == null || user.isAnonymous || user.uid != uid) {
       return const CloudAuthResult(
         status: 'reauth_required',
+        authorization: CloudAuthorization.reauthRequired,
         error:
             'Sign in online again before cloud synchronization can continue.',
       );
@@ -440,14 +431,21 @@ class CloudAuthService implements ICloudAuthService {
         return CloudAuthResult(
           status: 'offline',
           uid: uid,
+          authorization: CloudAuthorization.offlineAllowed,
           mayUseOfflineCache: true,
           diagnosticCode: error.code,
         );
       }
+      final authorization = authorizationForAuthError(error.code);
       return CloudAuthResult(
-        status: 'reauth_required',
+        status: authorization.revokesLocalAccess
+            ? authorization.name
+            : 'reauth_required',
+        authorization: authorization,
         uid: uid,
-        error: 'Cloud authentication must be renewed.',
+        error: authorization.revokesLocalAccess
+            ? 'Firebase confirmed that this account is ${authorization.name}.'
+            : 'Cloud authentication must be renewed.',
         diagnosticCode: error.code,
       );
     } on FirebaseException catch (error) {
@@ -455,20 +453,41 @@ class CloudAuthService implements ICloudAuthService {
         return CloudAuthResult(
           status: 'offline',
           uid: uid,
+          authorization: CloudAuthorization.offlineAllowed,
           mayUseOfflineCache: true,
           diagnosticCode: error.code,
         );
       }
-      rethrow;
+      // An unsuccessful Firestore request is not proof of account revocation.
+      // In particular, permission-denied can reflect rules/configuration issues.
+      return CloudAuthResult(
+        status: 'unavailable',
+        uid: uid,
+        diagnosticCode: error.code,
+      );
     } on TimeoutException {
       return CloudAuthResult(
         status: 'offline',
         uid: uid,
+        authorization: CloudAuthorization.temporarilyUnavailable,
         mayUseOfflineCache: true,
         diagnosticCode: 'timeout',
       );
     }
   }
+
+  /// Only explicit account errors establish revocation. Token expiry and
+  /// invalidation require cloud reauthentication, not removal of local trust.
+  static CloudAuthorization authorizationForAuthError(String code) =>
+      switch (code) {
+        'user-disabled' => CloudAuthorization.disabled,
+        'user-not-found' => CloudAuthorization.deleted,
+        'network-request-failed' => CloudAuthorization.offlineAllowed,
+        'user-token-expired' ||
+        'invalid-user-token' ||
+        'requires-recent-login' => CloudAuthorization.reauthRequired,
+        _ => CloudAuthorization.temporarilyUnavailable,
+      };
 
   Future<CloudAuthResult> _loadAccess(String uid) async {
     final snapshot = await _firestore
@@ -478,6 +497,7 @@ class CloudAuthService implements ICloudAuthService {
     if (!snapshot.exists) {
       return const CloudAuthResult(
         status: 'registration_required',
+        authorization: CloudAuthorization.unauthorized,
         error: 'A verified pending registration request has not been created.',
       );
     }
@@ -487,12 +507,21 @@ class CloudAuthService implements ICloudAuthService {
     if (status != 'approved' || !active) {
       return CloudAuthResult(
         status: status,
+        authorization: switch (status) {
+          'suspended' => CloudAuthorization.suspended,
+          'rejected' => CloudAuthorization.rejected,
+          'disabled' => CloudAuthorization.disabled,
+          'deleted' => CloudAuthorization.deleted,
+          'expired' => CloudAuthorization.expired,
+          _ => CloudAuthorization.unauthorized,
+        },
         active: active,
         error: accountStatusMessage(status),
       );
     }
     return CloudAuthResult(
       status: status,
+      authorization: CloudAuthorization.verified,
       active: active,
       uid: uid,
       email: (data['email'] as String?)?.trim().toLowerCase(),
@@ -742,6 +771,7 @@ class CloudAuthResult {
     this.mayUseOfflineCache = false,
     this.diagnosticCode,
     this.accessGeneration = 1,
+    this.authorization = CloudAuthorization.temporarilyUnavailable,
   });
 
   const CloudAuthResult.denied(String message)
@@ -760,6 +790,7 @@ class CloudAuthResult {
   final bool mayUseOfflineCache;
   final String? diagnosticCode;
   final int accessGeneration;
+  final CloudAuthorization authorization;
 
   bool get canAccess =>
       status == 'approved' &&

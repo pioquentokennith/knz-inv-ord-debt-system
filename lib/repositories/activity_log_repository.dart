@@ -15,14 +15,11 @@ import '../models/user_model.dart';
 import '../dto/activity_log_dto.dart';
 import 'base_repository.dart';
 import 'i_activity_log_repository.dart';
-import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
 // Concrete implementation of IActivityLogRepository backed by SQLite + Firestore
 class ActivityLogRepository extends BaseRepository
     implements IActivityLogRepository {
-  final _cloud =
-      FirestoreSync.instance; // Used for Firestore fallback in getAll()
   final _queue = SyncQueue.instance; // Used to enqueue async Firestore writes
 
   // ── getAll ────────────────────────────────────────────────────────────────
@@ -41,43 +38,7 @@ class ActivityLogRepository extends BaseRepository
       limit: 500,
     );
 
-    // Local cache hit — return immediately without any network call (works offline too)
-    if (maps.isNotEmpty) {
-      return maps
-          .map((row) => ActivityLogDto.fromLocal(row).toDomain())
-          .toList();
-    }
-
-    // Local is empty and device is online — restore from Firestore and cache locally
-    if (_queue.isOnline) {
-      final cloudLogs = await _cloud.getLogs(userId);
-      await database.transaction((txn) async {
-        for (final l in cloudLogs) {
-          final dto = ActivityLogDto.fromCloud(l, userId: userId);
-          // Check for duplicates before inserting to avoid double entries on partial sync
-          final existing = await txn.query(
-            'activity_logs',
-            where: 'id = ?',
-            whereArgs: [dto.id],
-          );
-          if (existing.isNotEmpty) continue; // Skip if already cached
-          await txn.insert('activity_logs', dto.toLocal());
-        }
-      });
-      // Re-query SQLite after caching cloud logs
-      final restored = await database.query(
-        'activity_logs',
-        where: 'user_id = ?',
-        whereArgs: [userId],
-        orderBy: 'timestamp DESC',
-        limit: 500,
-      );
-      return restored
-          .map((row) => ActivityLogDto.fromLocal(row).toDomain())
-          .toList();
-    }
-
-    return []; // Offline and no local data — return empty list
+    return maps.map((row) => ActivityLogDto.fromLocal(row).toDomain()).toList();
   });
 
   // ── add ───────────────────────────────────────────────────────────────────

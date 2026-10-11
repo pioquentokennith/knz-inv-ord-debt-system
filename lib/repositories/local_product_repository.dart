@@ -19,7 +19,6 @@ import '../models/product_model.dart';
 import '../dto/product_dto.dart';
 import 'base_repository.dart';
 import 'product_repository.dart';
-import 'firestore_sync.dart';
 import 'sync_queue.dart';
 
 // Concrete SQLite + Firestore implementation of ProductRepository
@@ -33,7 +32,6 @@ class LocalProductRepository extends BaseRepository
        _queue = queue ?? SyncQueue.instance;
 
   final Future<Database> Function() _databaseProvider;
-  final _cloud = FirestoreSync.instance; // Firestore adapter for cloud sync
   final SyncOutbox _queue;
 
   // Returns all active (non-deleted) products for a user, newest first
@@ -47,41 +45,6 @@ class LocalProductRepository extends BaseRepository
       whereArgs: [userId],
       orderBy: 'created_at DESC',
     );
-
-    final partitionRows = await database.query(
-      'products',
-      columns: const ['id'],
-      where: 'user_id = ?',
-      whereArgs: [userId],
-      limit: 1,
-    );
-    // Restore both active records and tombstones only into an empty partition.
-    if (partitionRows.isEmpty && _queue.isOnline) {
-      final cloud = await _cloud.getProducts(userId);
-      await database.transaction((txn) async {
-        for (final p in cloud) {
-          final dto = ProductDto.fromCloud(p, userId: userId);
-          // Avoid inserting duplicates if a partial sync already ran
-          final exists = await txn.query(
-            'products',
-            where: 'id = ?',
-            whereArgs: [dto.id],
-          );
-          if (exists.isNotEmpty) continue;
-          await txn.insert('products', dto.toLocal());
-        }
-      });
-      // Re-query after caching cloud products
-      final restored = await database.query(
-        'products',
-        where: 'user_id = ? AND is_deleted = 0',
-        whereArgs: [userId],
-        orderBy: 'created_at DESC',
-      );
-      return restored
-          .map((row) => ProductDto.fromLocal(row).toDomain())
-          .toList();
-    }
 
     return maps.map((row) => ProductDto.fromLocal(row).toDomain()).toList();
   });

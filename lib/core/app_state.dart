@@ -14,6 +14,7 @@ import '../core/money.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
 import '../models/user_model.dart';
+import '../models/cloud_authorization.dart';
 import '../models/debt_model.dart';
 import '../models/business_event_model.dart';
 import '../models/payment_method_model.dart';
@@ -113,6 +114,12 @@ class AppState extends ChangeNotifier {
         cancelNotifications ?? NotificationService.instance.cancelAll;
     _syncBusinessAlerts =
         syncBusinessAlerts ?? NotificationService.instance.syncBusinessAlerts;
+    NotificationService.instance.configure(
+      activeUser: () => _isLoggedIn ? _activeUser : null,
+      snapshot: () => _isLoggedIn && _notificationDataLoaded
+          ? NotificationSnapshot(_activeUser, _products, _debts)
+          : null,
+    );
     unawaited(_syncStatusSubscription?.cancel());
     _syncStatusSubscription = SyncQueue.instance.statusStream.listen((status) {
       if (!_isLoggedIn) return;
@@ -125,7 +132,10 @@ class AppState extends ChangeNotifier {
 
   // ── State ─────────────────────────────────────────────────────────────────
   bool _isLoggedIn = false;
+  bool _notificationDataLoaded = false;
   bool _isOfflineSession = false;
+  CloudAuthorization _cloudAuthorization =
+      CloudAuthorization.temporarilyUnavailable;
   AppUser? _currentUser;
   String _activeUser = ''; // Lowercase username — used as DB partition key
   String? _lastAuthMessage;
@@ -137,12 +147,50 @@ class AppState extends ChangeNotifier {
 
   // In-memory lists — source of truth for the UI
   List<Product> _products = [];
-  List<Order> _orders = [];
-  List<CustomerDebt> _debts = [];
+  List<Order> _orderData = [];
+  List<CustomerDebt> _debtData = [];
   List<ActivityLog> _activityLogs = [];
   List<Reseller> _resellers = [];
-  List<CustomOrder> _customOrders = [];
-  List<BusinessEvent> _businessEvents = [];
+  List<CustomOrder> _customOrderData = [];
+  List<BusinessEvent> _eventData = [];
+  AccountingReport? _cachedAccountingReport;
+  final _periodReports = <(DateTime?, DateTime?, bool?), AccountingReport>{};
+  List<SalesRecord>? _cachedSalesRecords;
+  int _financialRevision = 0;
+  int get financialRevision => _financialRevision;
+
+  void _invalidateFinancialData() {
+    _financialRevision++;
+    _cachedAccountingReport = null;
+    _cachedSalesRecords = null;
+    _periodReports.clear();
+  }
+
+  // All financial list replacements invalidate derived data, including logout
+  // and inbound refresh. Connectivity/log/product-only notifications do not.
+  List<Order> get _orders => _orderData;
+  set _orders(List<Order> value) {
+    _orderData = value;
+    _invalidateFinancialData();
+  }
+
+  List<CustomerDebt> get _debts => _debtData;
+  set _debts(List<CustomerDebt> value) {
+    _debtData = value;
+    _invalidateFinancialData();
+  }
+
+  List<CustomOrder> get _customOrders => _customOrderData;
+  set _customOrders(List<CustomOrder> value) {
+    _customOrderData = value;
+    _invalidateFinancialData();
+  }
+
+  List<BusinessEvent> get _businessEvents => _eventData;
+  set _businessEvents(List<BusinessEvent> value) {
+    _eventData = value;
+    _invalidateFinancialData();
+  }
 
   final LocalResellerRepository _resellerRepo = LocalResellerRepository();
   final LocalCustomOrderRepository _customOrderRepo =
@@ -153,6 +201,7 @@ class AppState extends ChangeNotifier {
   // ── Public read-only getters ──────────────────────────────────────────────
   bool get isLoggedIn => _isLoggedIn;
   bool get isOfflineSession => _isOfflineSession;
+  CloudAuthorization get cloudAuthorization => _cloudAuthorization;
   AppUser? get currentUser => _currentUser;
   String get activeUser => _activeUser;
   String? get lastAuthMessage => _lastAuthMessage;
@@ -178,12 +227,34 @@ class AppState extends ChangeNotifier {
       )
       .toList(growable: false);
 
-  AccountingReport get accountingReport => AccountingService.instance.summarize(
-    orders: _orders,
-    debts: _debts,
-    customOrders: _customOrders,
-    businessEvents: _businessEvents,
-  );
+  AccountingReport accountingReportForPeriod(AccountingPeriod period) {
+    if (!period.isBounded) return accountingReport;
+    // The end's timezone affects the exclusive end-of-day boundary. Keep it in
+    // the key even when two DateTimes denote the same instant.
+    final key = (period.from, period.to, period.to?.isUtc);
+    final cached = _periodReports[key];
+    if (cached != null) return cached;
+    final report = AccountingService.instance.summarize(
+      orders: _orders,
+      debts: _debts,
+      customOrders: _customOrders,
+      businessEvents: _businessEvents,
+      period: period,
+    );
+    if (_periodReports.length >= 8) {
+      _periodReports.remove(_periodReports.keys.first);
+    }
+    _periodReports[key] = report;
+    return report;
+  }
+
+  AccountingReport get accountingReport =>
+      _cachedAccountingReport ??= AccountingService.instance.summarize(
+        orders: _orders,
+        debts: _debts,
+        customOrders: _customOrders,
+        businessEvents: _businessEvents,
+      );
 
   // ── Computed aggregate getters ────────────────────────────────────────────
   int get totalProducts => _products.length;
@@ -265,9 +336,11 @@ class AppState extends ChangeNotifier {
 
       await limiter.recordSuccess(email);
       _activeUser = user.id;
+      _notificationDataLoaded = false;
       _currentUser = user;
       _isLoggedIn = true;
       _isOfflineSession = false;
+      _cloudAuthorization = CloudAuthorization.verified;
       await SyncQueue.instance.startMonitoring();
       _syncStatus = await SyncQueue.instance.statusForUser(_activeUser);
       await _loadAllData();
@@ -337,9 +410,13 @@ class AppState extends ChangeNotifier {
     final user = result.user;
     if (user == null || operation != _sessionGeneration || _isLoggedIn) return;
     _activeUser = user.id;
+    _notificationDataLoaded = false;
     _currentUser = user;
     _isLoggedIn = true;
-    _isOfflineSession = false;
+    _isOfflineSession = result.status == 'offline';
+    _cloudAuthorization = _isOfflineSession
+        ? CloudAuthorization.offlineAllowed
+        : result.authorization;
     await SyncQueue.instance.startMonitoring();
     await _loadAllData();
     _scheduleDueDateCheck();
@@ -352,9 +429,11 @@ class AppState extends ChangeNotifier {
     final user = result.user;
     if (user == null || operation != _sessionGeneration) return;
     _activeUser = user.id;
+    _notificationDataLoaded = false;
     _currentUser = user;
     _isLoggedIn = true;
     _isOfflineSession = true;
+    _cloudAuthorization = CloudAuthorization.offlineAllowed;
     await _loadAllData();
     _scheduleDueDateCheck();
   }
@@ -362,12 +441,11 @@ class AppState extends ChangeNotifier {
   Future<void> completePendingSignOut() => _as.completePendingSignOut();
 
   Future<void> reconcileCloudPrincipal(String? uid) async {
-    if (!_isLoggedIn || uid == null) return;
-    if (uid != _activeUser) {
-      await _closeRevokedSession(
-        'reauth_required',
-        'The cloud account changed. Sign in online to select an account.',
-      );
+    if (!_isLoggedIn) return;
+    if (uid == null || uid != _activeUser) {
+      _cloudAuthorization = CloudAuthorization.reauthRequired;
+      _isOfflineSession = true;
+      _batchNotify();
       return;
     }
     await _authorizeSynchronization(uid);
@@ -376,20 +454,27 @@ class AppState extends ChangeNotifier {
   Future<bool> _authorizeSynchronization(String uid) async {
     if (!_isLoggedIn || uid != _activeUser) return false;
     final generation = _sessionGeneration;
-    final result = await _as.revalidateAccess(uid);
+    AuthResult result;
+    try {
+      result = await _as.revalidateAccess(uid);
+    } catch (_) {
+      // Failure to verify is not evidence that local authorization was revoked.
+      result = const AuthResult(status: 'unavailable');
+    }
     if (generation != _sessionGeneration || uid != _activeUser) return false;
-    if (result.success) {
+    if (result.authorization == CloudAuthorization.verified &&
+        result.success &&
+        result.user?.id == uid) {
       _currentUser = result.user;
       _isOfflineSession = false;
+      _cloudAuthorization = CloudAuthorization.verified;
       _batchNotify();
       return true;
     }
-    if (result.status == 'offline' || result.status == 'unavailable') {
-      _isOfflineSession = true;
-      _batchNotify();
-      return false;
-    }
-    if ({'suspended', 'rejected', 'reauth_required'}.contains(result.status)) {
+    _cloudAuthorization = result.authorization;
+    _isOfflineSession = true;
+    _batchNotify();
+    if (result.authorization.revokesLocalAccess) {
       await _closeRevokedSession(result.status, result.message);
     }
     return false;
@@ -404,10 +489,7 @@ class AppState extends ChangeNotifier {
         uid != _activeUser) {
       return;
     }
-    await _loadAllData();
-    if (generation == _sessionGeneration && uid == _activeUser) {
-      _batchNotify();
-    }
+    await _loadAllData(collections: result.changedCollections);
   }
 
   Future<void> _closeRevokedSession(String reason, String? message) async {
@@ -472,6 +554,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _clearProtectedState() async {
+    NotificationService.instance.invalidateSession();
+    _notificationDataLoaded = false;
     SessionTimeoutService.instance.stop();
     _dueDateTimer?.cancel();
     _dueDateTimer = null;
@@ -479,6 +563,7 @@ class AppState extends ChangeNotifier {
     _sessionGeneration++;
     _isLoggedIn = false;
     _isOfflineSession = false;
+    _cloudAuthorization = CloudAuthorization.temporarilyUnavailable;
     _currentUser = null;
     _activeUser = '';
     _products = [];
@@ -498,7 +583,12 @@ class AppState extends ChangeNotifier {
 
   // ── Data loading ──────────────────────────────────────────────────────────
 
-  Future<void> _loadAllData() async {
+  Future<void> _loadAllData({Set<String>? collections}) async {
+    if (collections != null && collections.isEmpty) return;
+    Future<T?> read<T>(String collection, Future<T> Function() load) =>
+        collections == null || collections.contains(collection)
+        ? load()
+        : Future<T?>.value();
     try {
       final generation = _sessionGeneration;
       final ownerUid = _activeUser;
@@ -511,25 +601,31 @@ class AppState extends ChangeNotifier {
         customOrders,
         businessEvents,
       ) = await (
-        _ps.getAll(ownerUid),
-        _os.getAll(ownerUid),
-        _ds.getAll(ownerUid),
-        _logRepo.getAll(ownerUid),
-        _resellerRepo.getAll(ownerUid),
-        _customOrderRepo.getAll(ownerUid),
-        _businessEventRepo.getAll(ownerUid),
+        read('products', () => _ps.getAll(ownerUid)),
+        read('orders', () => _os.getAll(ownerUid)),
+        read('debts', () => _ds.getAll(ownerUid)),
+        read('activity_logs', () => _logRepo.getAll(ownerUid)),
+        read('resellers', () => _resellerRepo.getAll(ownerUid)),
+        read('custom_orders', () => _customOrderRepo.getAll(ownerUid)),
+        read('business_events', () => _businessEventRepo.getAll(ownerUid)),
       ).wait;
       if (generation != _sessionGeneration || ownerUid != _activeUser) return;
-      _products = products;
-      _orders = orders;
-      _debts = debts;
-      _activityLogs = logs;
-      _resellers = resellers;
-      _customOrders = customOrders;
-      _businessEvents = businessEvents;
+      if (products != null) _products = products;
+      if (orders != null) _orders = orders;
+      if (debts != null) _debts = debts;
+      if (logs != null) _activityLogs = logs;
+      if (resellers != null) _resellers = resellers;
+      if (customOrders != null) _customOrders = customOrders;
+      if (businessEvents != null) _businessEvents = businessEvents;
+      if (products != null && debts != null) _notificationDataLoaded = true;
       _lastDataError = null;
-      _syncStatus = await SyncQueue.instance.statusForUser(ownerUid);
-      await _syncNotificationsForCurrentState();
+      _batchNotify();
+      final status = await SyncQueue.instance.statusForUser(ownerUid);
+      if (generation != _sessionGeneration || ownerUid != _activeUser) return;
+      _syncStatus = status;
+      if (products != null || debts != null) {
+        unawaited(_syncNotificationsForCurrentState());
+      }
     } catch (error, stackTrace) {
       if (kDebugMode) debugPrint('[AppState] data load: $error\n$stackTrace');
       _lastDataError =
@@ -540,7 +636,8 @@ class AppState extends ChangeNotifier {
   }
 
   // Public shortcut to re-fetch all data (e.g. after sync or pull-to-refresh)
-  Future<void> refreshData() => _loadAllData();
+  Future<void> refreshData({Set<String>? collections}) =>
+      _loadAllData(collections: collections);
 
   Future<void> _syncNotificationsForCurrentState() async {
     if (!_isLoggedIn) return;
@@ -552,6 +649,8 @@ class AppState extends ChangeNotifier {
       }
     }
   }
+
+  Future<void> refreshNotifications() => _syncNotificationsForCurrentState();
 
   void _scheduleDueDateCheck() {
     _dueDateTimer?.cancel();
@@ -756,12 +855,31 @@ class AppState extends ChangeNotifier {
 
   // Updates the status of a single order (e.g. Pending → Shipped → Delivered)
   Future<void> updateOrderStatus(String orderId, OrderStatus status) async {
+    final ownerUid = _activeUser;
+    final generation = _sessionGeneration;
+    final previous = _orders.where((o) => o.id == orderId).firstOrNull?.status;
     try {
       await _os.updateStatus(orderId, status);
+      if (generation != _sessionGeneration || ownerUid != _activeUser) return;
       final idx = _orders.indexWhere((o) => o.id == orderId);
       if (idx != -1) {
         _orders = List.of(_orders)
           ..[idx] = _orders[idx].copyWith(status: status);
+      }
+      if (status == OrderStatus.cancelled ||
+          previous == OrderStatus.cancelled) {
+        await _refreshAfterCommit(() async {
+          // Repository reads are strictly local; use committed quantities rather
+          // than applying a second optimistic stock adjustment.
+          final products = await _ps.getAll(ownerUid);
+          if (generation != _sessionGeneration || ownerUid != _activeUser) {
+            return;
+          }
+          _products = products;
+        });
+        if (generation != _sessionGeneration || ownerUid != _activeUser) return;
+        _batchNotify();
+        unawaited(_syncNotificationsForCurrentState());
       }
       _addLogSilent('Order status updated → ${status.displayName}', 'order');
     } catch (e, st) {
@@ -881,7 +999,12 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _reloadBusinessEvents() async {
-    _businessEvents = await _businessEventRepo.getAll(_activeUser);
+    final ownerUid = _activeUser;
+    final generation = _sessionGeneration;
+    final events = await _businessEventRepo.getAll(ownerUid);
+    if (generation == _sessionGeneration && ownerUid == _activeUser) {
+      _businessEvents = events;
+    }
   }
 
   /// Atomically converts an existing order to utang and creates its debt.
@@ -1307,6 +1430,8 @@ class AppState extends ChangeNotifier {
   /// Flattens all active orders + their items into SalesRecord rows.
   /// Filtered to recognized (delivered or fulfilled-credit) sales only.
   List<SalesRecord> get salesRecords {
+    final cached = _cachedSalesRecords;
+    if (cached != null) return cached;
     final List<SalesRecord> records = [];
     for (final order in accountingReport.recognizedOrders) {
       for (final item in order.items) {
@@ -1322,8 +1447,9 @@ class AppState extends ChangeNotifier {
 
         final displayDiscountBasisPoints =
             srp.isPositive && srp != discountedPrice
-            ? roundRatioHalfUp(
-                (srp - discountedPrice).centavos * 10000,
+            ? roundProductRatioHalfUp(
+                (srp - discountedPrice).centavos,
+                10000,
                 srp.centavos,
               )
             : 0;
@@ -1345,7 +1471,7 @@ class AppState extends ChangeNotifier {
     }
     // Most recent first
     records.sort((a, b) => b.datePurchased.compareTo(a.datePurchased));
-    return records;
+    return _cachedSalesRecords = List.unmodifiable(records);
   }
 
   void _requireAdministrator() {

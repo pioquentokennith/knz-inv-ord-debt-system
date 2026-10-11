@@ -86,6 +86,10 @@ class OrderItem extends BaseModel {
        _unitPrice = unitPrice,
        _srpPrice = srpPrice,
        _quantity = quantity {
+    unitPrice.validate(field: 'Unit price');
+    srpPrice?.validate(field: 'SRP');
+    Money.validateQuantity(quantity, allowZero: false);
+    (unitPrice * quantity).validate(field: 'Line total');
     final storedSrp = _srpPrice;
     // Empty item/product IDs remain accepted for the documented legacy flat
     // order format. New writes assign an item id and validate productId in the
@@ -212,6 +216,10 @@ class Order extends BaseModel {
        _deductionPerItem = deductionPerItem,
        _discountedTotal = discountedTotal,
        _orderType = orderType {
+    totalAmount.validate(field: 'Order total');
+    srpTotal?.validate(field: 'SRP total');
+    discountedTotal?.validate(field: 'Discounted total');
+    deductionPerItem.validate(field: 'Discount');
     final storedDiscountedTotal = _discountedTotal;
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Order id cannot be blank.');

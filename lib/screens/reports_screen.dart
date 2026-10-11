@@ -178,16 +178,31 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   AccountingReport _accountingReport() =>
       widget.accountingReport ??
-      AccountingService.instance.summarize(
-        orders: AppState().orders,
-        debts: AppState().debts,
-        customOrders: AppState().customOrders,
-        businessEvents: AppState().businessEvents,
-        period: AccountingPeriod(from: _dateRange?.start, to: _dateRange?.end),
+      AppState().accountingReportForPeriod(
+        AccountingPeriod(from: _dateRange?.start, to: _dateRange?.end),
       );
+
+  Object? _previewKey;
+  _PreviewStats? _cachedPreview;
 
   // ── Preview stats for the export preview card ─────────────────────────────
   _PreviewStats _buildPreview() {
+    final state = AppState();
+    final key = (
+      state.financialRevision,
+      _selected,
+      _dateRange?.start,
+      _dateRange?.end,
+      widget.accountingReport,
+      _selected == _ReportType.inventoryStock ? state.totalProducts : null,
+    );
+    if (_previewKey == key && _cachedPreview != null) return _cachedPreview!;
+    final preview = _computePreview();
+    _previewKey = key;
+    return _cachedPreview = preview;
+  }
+
+  _PreviewStats _computePreview() {
     final orders = _filteredOrders();
     final debts = _filteredDebts();
     final svc = AccountingService.instance;
@@ -382,7 +397,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
           break;
       }
     } catch (e) {
-      setState(() => _errorMsg = 'Export failed: $e');
+      if (mounted) setState(() => _errorMsg = 'Export failed: $e');
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
@@ -401,7 +416,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         child: child!,
       ),
     );
-    if (picked != null) setState(() => _dateRange = picked);
+    if (picked != null && mounted) setState(() => _dateRange = picked);
   }
 
   @override
@@ -429,13 +444,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     size: 22,
                   ),
                   SizedBox(width: 10),
-                  Text(
-                    'Reports',
-                    style: TextStyle(
-                      color: AppColors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1,
+                  Expanded(
+                    child: Text(
+                      'Reports',
+                      style: TextStyle(
+                        color: AppColors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1,
+                      ),
                     ),
                   ),
                 ],
@@ -445,110 +462,138 @@ class _ReportsScreenState extends State<ReportsScreen> {
             Expanded(
               child: LayoutBuilder(
                 builder: (ctx, constraints) {
-                  final sideW = constraints.maxWidth < 400 ? 130.0 : 200.0;
-                  return Row(
+                  final narrow =
+                      constraints.maxWidth < 700 ||
+                      MediaQuery.textScalerOf(context).scale(14) > 20;
+                  return Flex(
+                    direction: narrow ? Axis.vertical : Axis.horizontal,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // ── Left: Report selector ─────────────────────────────────
-                      Container(
-                        width: sideW,
-                        decoration: const BoxDecoration(
-                          color: AppColors.surface,
-                          border: Border(
-                            right: BorderSide(color: AppColors.cardBorder),
+                      if (narrow)
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: DropdownButtonFormField<_ReportType>(
+                            initialValue: _selected,
+                            isExpanded: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Report',
+                            ),
+                            items: [
+                              for (final type in _ReportType.values)
+                                DropdownMenuItem(
+                                  value: type,
+                                  child: Text(type.label),
+                                ),
+                            ],
+                            onChanged: (value) {
+                              if (value != null) {
+                                setState(() => _selected = value);
+                              }
+                            },
                           ),
-                        ),
-                        child: ListView(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          children: _ReportType.values.map((type) {
-                            final isActive = type == _selected;
-                            return Semantics(
-                              button: true,
-                              selected: isActive,
-                              label: '${type.label} report',
-                              child: InkWell(
-                                onTap: () => setState(() => _selected = type),
-                                borderRadius: BorderRadius.circular(8),
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 150),
-                                  margin: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 3,
-                                  ),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isActive
-                                        ? AppColors.gold.withValues(alpha: 0.1)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: isActive
-                                        ? Border.all(
-                                            color: AppColors.gold.withValues(
-                                              alpha: 0.3,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        type.icon,
-                                        size: 16,
-                                        color: isActive
-                                            ? AppColors.gold
-                                            : AppColors.whiteTertiary,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          type.label,
-                                          overflow: TextOverflow.ellipsis,
-                                          maxLines: 1,
-                                          style: TextStyle(
-                                            color: isActive
-                                                ? AppColors.gold
-                                                : AppColors.whiteSecondary,
-                                            fontSize: 12,
-                                            fontWeight: isActive
-                                                ? FontWeight.w700
-                                                : FontWeight.normal,
-                                          ),
+                        )
+                      else
+                        Container(
+                          width: 200,
+                          decoration: const BoxDecoration(
+                            color: AppColors.surface,
+                            border: Border(
+                              right: BorderSide(color: AppColors.cardBorder),
+                            ),
+                          ),
+                          child: ListView(
+                            padding: const EdgeInsets.symmetric(vertical: 8),
+                            children: _ReportType.values.map((type) {
+                              final isActive = type == _selected;
+                              return Semantics(
+                                button: true,
+                                selected: isActive,
+                                label: '${type.label} report',
+                                child: InkWell(
+                                  onTap: () => setState(() => _selected = type),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 150),
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 3,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: isActive
+                                          ? AppColors.gold.withValues(
+                                              alpha: 0.1,
+                                            )
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: isActive
+                                          ? Border.all(
+                                              color: AppColors.gold.withValues(
+                                                alpha: 0.3,
+                                              ),
+                                            )
+                                          : null,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          type.icon,
+                                          size: 16,
+                                          color: isActive
+                                              ? AppColors.gold
+                                              : AppColors.whiteTertiary,
                                         ),
-                                      ),
-                                      if (type.badgeLabel != null)
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 4,
-                                            vertical: 1,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: AppColors.info.withValues(
-                                              alpha: 0.2,
-                                            ),
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                          ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
                                           child: Text(
-                                            type.badgeLabel!,
-                                            style: const TextStyle(
-                                              color: AppColors.info,
-                                              fontSize: 8,
-                                              fontWeight: FontWeight.w700,
+                                            type.label,
+                                            overflow: TextOverflow.ellipsis,
+                                            maxLines: 1,
+                                            style: TextStyle(
+                                              color: isActive
+                                                  ? AppColors.gold
+                                                  : AppColors.whiteSecondary,
+                                              fontSize: 12,
+                                              fontWeight: isActive
+                                                  ? FontWeight.w700
+                                                  : FontWeight.normal,
                                             ),
                                           ),
                                         ),
-                                    ],
+                                        if (type.badgeLabel != null)
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 1,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: AppColors.info.withValues(
+                                                alpha: 0.2,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              type.badgeLabel!,
+                                              style: const TextStyle(
+                                                color: AppColors.info,
+                                                fontSize: 8,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ),
-                            );
-                          }).toList(),
+                              );
+                            }).toList(),
+                          ),
                         ),
-                      ),
 
                       // ── Right: Detail + export ────────────────────────────────
                       Expanded(
@@ -768,40 +813,42 @@ class _ReportsScreenState extends State<ReportsScreen> {
                 size: 14,
               ),
               SizedBox(width: 6),
-              Text(
-                'EXPORT PREVIEW',
-                style: TextStyle(
-                  color: AppColors.whiteTertiary,
-                  fontSize: 10,
-                  letterSpacing: 1.2,
+              Flexible(
+                child: Text(
+                  'EXPORT PREVIEW',
+                  style: TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontSize: 10,
+                    letterSpacing: 1.2,
+                  ),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          Row(
+          Wrap(
+            spacing: 16,
+            runSpacing: 12,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '${preview.count}',
-                      style: const TextStyle(
-                        color: AppColors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                      ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${preview.count}',
+                    style: const TextStyle(
+                      color: AppColors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w700,
                     ),
-                    Text(
-                      preview.label,
-                      style: const TextStyle(
-                        color: AppColors.whiteTertiary,
-                        fontSize: 12,
-                      ),
+                  ),
+                  Text(
+                    preview.label,
+                    style: const TextStyle(
+                      color: AppColors.whiteTertiary,
+                      fontSize: 12,
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
               if (preview.total != null)
                 Column(
@@ -863,12 +910,14 @@ class _ReportsScreenState extends State<ReportsScreen> {
             children: [
               Icon(Icons.trending_up_outlined, color: AppColors.gold, size: 16),
               SizedBox(width: 6),
-              Text(
-                'REVENUE & COLLECTIONS SUMMARY',
-                style: TextStyle(
-                  color: AppColors.whiteTertiary,
-                  fontSize: 10,
-                  letterSpacing: 1.2,
+              Flexible(
+                child: Text(
+                  'REVENUE & COLLECTIONS SUMMARY',
+                  style: TextStyle(
+                    color: AppColors.whiteTertiary,
+                    fontSize: 10,
+                    letterSpacing: 1.2,
+                  ),
                 ),
               ),
             ],
@@ -992,7 +1041,6 @@ class _PLRow extends StatelessWidget {
           Flexible(
             child: Text(
               '$sign${absVal.format()}',
-              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 color: color,
                 fontSize: bold ? 14 : 13,
@@ -1055,12 +1103,14 @@ class _ExportBtn extends StatelessWidget {
                       )
                     : Icon(icon, color: color, size: 18),
                 const SizedBox(width: 8),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                Flexible(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: color,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
                   ),
                 ),
               ],

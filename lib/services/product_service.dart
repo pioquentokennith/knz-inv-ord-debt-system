@@ -97,6 +97,9 @@ class ProductService implements IProductService {
     }
 
     // All validations passed — create the model and hand off to the repository
+    price.validate(field: 'Price', max: Money.maxUnitCentavos);
+    Money.validateQuantity(stockQty, max: Money.maxQuantity);
+    Money.validateQuantity(minStockLevel, max: Money.maxQuantity);
     await _repo.add(
       Product(
         id: _uuid.v4(), // Generate a unique ID for the new product
@@ -119,6 +122,7 @@ class ProductService implements IProductService {
   // Guards against setting negative stock (business rule) before updating
   @override
   Future<void> updateStock(String productId, int newQty) async {
+    Money.validateQuantity(newQty, max: Money.maxQuantity);
     if (productId.trim().isEmpty) {
       throw ArgumentError.value(
         productId,

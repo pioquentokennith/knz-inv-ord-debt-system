@@ -31,6 +31,8 @@ import 'custom_orders_screen.dart';
 import 'reports_screen.dart';
 import 'registration_requests_screen.dart';
 import 'sync_issues_screen.dart';
+import '../services/notification_service.dart';
+import '../widgets/notification_status_banner.dart';
 
 enum NavItem {
   overview,
@@ -49,7 +51,8 @@ enum NavItem {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key});
+  const MainShell({super.key, this.notifications});
+  final NotificationService? notifications;
 
   @override
   State<MainShell> createState() => MainShellState();
@@ -60,6 +63,9 @@ class MainShellState extends State<MainShell>
   NavItem _selected = NavItem.overview;
   bool _sidebarOpen = false;
   bool _isLoggingOut = false;
+  NotificationService get _notifications =>
+      widget.notifications ?? NotificationService.instance;
+  VoidCallback? _removeNotificationNavigation;
 
   // Public method — allows child dialogs/screens to navigate to a specific tab
   // (e.g., MarkAsUtangDialog calls this to jump to the Utang tab after recording)
@@ -84,6 +90,30 @@ class MainShellState extends State<MainShell>
       begin: const Offset(-1, 0),
       end: Offset.zero,
     ).animate(CurvedAnimation(parent: _drawerCtrl, curve: Curves.easeOut));
+    _removeNotificationNavigation = _notifications.attachNavigation((
+      uid,
+      destination,
+    ) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            !AppState().isLoggedIn ||
+            AppState().currentUser?.id != uid) {
+          return;
+        }
+        final route = ModalRoute.of(context);
+        if (route == null) return;
+        Navigator.of(context).popUntil((candidate) => candidate == route);
+        navigateTo(
+          destination == NotificationDestination.inventory
+              ? NavItem.inventory
+              : NavItem.utang,
+        );
+      });
+      WidgetsBinding.instance.ensureVisualUpdate();
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_notifications.requestPermissionOnce());
+    });
   }
 
   Future<void> _confirmSignOut() async {
@@ -125,6 +155,7 @@ class MainShellState extends State<MainShell>
 
   @override
   void dispose() {
+    _removeNotificationNavigation?.call();
     _drawerCtrl.dispose();
     super.dispose();
   }
@@ -168,6 +199,7 @@ class MainShellState extends State<MainShell>
       backgroundColor: AppColors.background,
       body: Column(
         children: [
+          NotificationStatusBanner(service: _notifications),
           ListenableBuilder(
             listenable: AppState(),
             builder: (context, _) => SyncStatusBanner(
@@ -470,7 +502,10 @@ class MainShellState extends State<MainShell>
                           leading: const Icon(Icons.sync_problem_outlined),
                           title: const Text('Sync Issues'),
                           onTap: () {
-                            Navigator.pop(context);
+                            if (_sidebarOpen) {
+                              _drawerCtrl.reverse();
+                              setState(() => _sidebarOpen = false);
+                            }
                             Navigator.push(
                               context,
                               MaterialPageRoute<void>(

@@ -113,6 +113,7 @@ class _SyncIssuesScreenState extends State<SyncIssuesScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        leading: const BackButton(),
         title: const Text('Sync Issues'),
         actions: [
           IconButton(

@@ -9,12 +9,14 @@ import 'dart:math' as math;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../database/database_helper.dart';
 import '../core/domain_exceptions.dart';
 import 'firestore_sync.dart';
+import 'revisioned_replay.dart';
 
 abstract interface class SyncOutbox {
   bool get isOnline;
@@ -71,9 +73,113 @@ class SyncProcessResult {
 
 typedef OutboxDispatch = Future<void> Function(Map<String, Object?> row);
 
+Set<String> outboxDependencyKeys(Map<String, Object?> row) =>
+    _OutboxWork.keys(row);
+
+// Shared by dispatch and wake-up scheduling so neither can spin on a ready
+// revision whose prerequisite is delayed. Scan in bounded SQLite pages; only
+// the next 100 runnable payloads are retained.
+class _OutboxWork {
+  final rows = <Map<String, Object?>>[];
+  final dependencyKeys = <int, Set<String>>{};
+  DateTime? nextAttempt;
+
+  static Set<String> keys(Map<String, Object?> row) {
+    final result = <String>{
+      row['aggregate_key'] as String? ??
+          '${row['collection']}:${row['doc_id']}',
+    };
+    try {
+      final data = jsonDecode(row['data'] as String) as Map<String, dynamic>;
+      final order =
+          data['_order'] ?? (row['collection'] == 'orders' ? data : null);
+      if (order is Map) {
+        if (order['order_id'] != null) {
+          result.add('order_number:${order['order_id']}');
+        }
+        final encoded = order['_items'] ?? order['items'];
+        final items = encoded is String ? jsonDecode(encoded) : encoded;
+        if (items is List) {
+          for (final item in items.whereType<Map>()) {
+            if (item['product_id'] != null) {
+              result.add('products:${item['product_id']}');
+            }
+          }
+        }
+      }
+      final debt =
+          data['_debt'] ?? (row['collection'] == 'debts' ? data : null);
+      if (debt is Map) {
+        if (debt['id'] != null) result.add('debts:${debt['id']}');
+        if (debt['order_id'] != null) {
+          result.add('order_number:${debt['order_id']}');
+        }
+      }
+    } catch (_) {
+      // Malformed payloads must reach the normal permanent-failure classifier.
+    }
+    return result;
+  }
+
+  static Future<_OutboxWork> load(
+    Database database,
+    String uid,
+    DateTime now,
+  ) async {
+    final work = _OutboxWork();
+    final waitingUntil = <String, DateTime>{};
+    var lastId = 0;
+    while (true) {
+      final page = await database.query(
+        'sync_queue',
+        where: 'user_id = ? AND id > ?',
+        whereArgs: [uid, lastId],
+        orderBy: 'id ASC',
+        limit: 200,
+      );
+      for (final row in page) {
+        lastId = row['id'] as int;
+        final dependencies = keys(row);
+        var readyAt =
+            DateTime.tryParse(
+              row['next_attempt_at'] as String? ?? '',
+            )?.toUtc() ??
+            now;
+        for (final key in dependencies) {
+          final earlier = waitingUntil[key];
+          if (earlier != null && earlier.isAfter(readyAt)) readyAt = earlier;
+        }
+        for (final key in dependencies) {
+          waitingUntil[key] = readyAt;
+        }
+        if (work.nextAttempt == null || readyAt.isBefore(work.nextAttempt!)) {
+          work.nextAttempt = readyAt;
+        }
+        if (!readyAt.isAfter(now) && work.rows.length < 100) {
+          work.rows.add(row);
+          work.dependencyKeys[lastId] = dependencies;
+        }
+      }
+      if (page.length < 200) return work;
+    }
+  }
+}
+
 /// Testable durable processor. Connectivity only triggers this processor; a row
 /// is removed exclusively after [dispatch] confirms remote success.
 class OutboxProcessor {
+  static const _revisionedOperations = {
+    'save_product',
+    'soft_delete_product',
+    'save_reseller',
+    'soft_delete_reseller',
+    'save_order',
+    'soft_delete_order',
+    'save_debt',
+    'soft_delete_debt',
+    'save_custom_order',
+    'soft_delete_custom_order',
+  };
   OutboxProcessor({
     required Future<Database> Function() databaseProvider,
     required OutboxDispatch dispatch,
@@ -91,13 +197,9 @@ class OutboxProcessor {
     bool Function()? shouldContinue,
   }) async {
     final database = await _databaseProvider();
-    final pending = await database.query(
-      'sync_queue',
-      where: 'user_id = ?',
-      whereArgs: [userId],
-      orderBy: 'id ASC',
-      limit: 100,
-    );
+    await _recoverDetachedConflicts(database, userId, shouldContinue);
+    final work = await _OutboxWork.load(database, userId, _now().toUtc());
+    final pending = work.rows;
     var completed = 0;
     int? firstFailedRowId;
     Object? firstError;
@@ -105,21 +207,29 @@ class OutboxProcessor {
 
     for (final row in pending) {
       if (shouldContinue != null && !shouldContinue()) break;
-      final aggregateKey =
-          row['aggregate_key'] as String? ??
-          '${row['collection']}:${row['doc_id']}';
-      if (blockedAggregates.contains(aggregateKey)) continue;
+      final dependencyKeys = work.dependencyKeys[row['id'] as int]!;
+      if (dependencyKeys.any(blockedAggregates.contains)) {
+        blockedAggregates.addAll(dependencyKeys);
+        continue;
+      }
       final now = _now().toUtc();
       final nextAttempt = row['next_attempt_at'] as String?;
       final retryAt = nextAttempt == null
           ? null
           : DateTime.tryParse(nextAttempt)?.toUtc();
       if (retryAt != null && retryAt.isAfter(now)) {
-        blockedAggregates.add(aggregateKey);
+        blockedAggregates.addAll(dependencyKeys);
         continue;
       }
 
       final rowId = row['id'] as int;
+      final conflicts = await _matchingConflicts(database, row);
+      final replayOnly =
+          _revisionedOperations.contains(row['operation']) &&
+          (row['status'] == 'conflict' ||
+              row['conflict_id'] != null ||
+              conflicts.isNotEmpty);
+      if (shouldContinue != null && !shouldContinue()) break;
       final claimed = await database.update(
         'sync_queue',
         {
@@ -136,10 +246,24 @@ class OutboxProcessor {
       }
 
       try {
-        await _dispatch(Map<String, Object?>.from(row));
+        await _dispatch({...row, 'replay_only': replayOnly});
+        // A remote commit may complete after logout/account switch. Leave its
+        // durable intent for a retry under the original authenticated session.
+        if (shouldContinue != null && !shouldContinue()) break;
         await database.transaction((txn) async {
           await _completeConfirmedPurge(txn, row);
           await _acknowledgeRevision(txn, row);
+          if (replayOnly) {
+            for (final conflict in await _matchingConflicts(txn, row)) {
+              // Remove only the exact historical operation just confirmed by
+              // the live cloud transaction. Never restore its business payload.
+              await txn.delete(
+                'sync_conflicts',
+                where: 'id = ? AND user_id = ? AND status = ?',
+                whereArgs: [conflict['id'], userId, 'open'],
+              );
+            }
+          }
           final deleted = await txn.delete(
             'sync_queue',
             where: 'id = ? AND user_id = ?',
@@ -153,12 +277,13 @@ class OutboxProcessor {
         });
         completed++;
       } catch (error) {
+        if (shouldContinue != null && !shouldContinue()) break;
         final failureClass = _classify(error);
         await _recordFailure(database, row, error, now, failureClass);
         firstFailedRowId ??= rowId;
         firstError ??= error;
         if (failureClass == 'authorization') break;
-        blockedAggregates.add(aggregateKey);
+        blockedAggregates.addAll(dependencyKeys);
       }
     }
     return SyncProcessResult(
@@ -166,6 +291,116 @@ class OutboxProcessor {
       failedRowId: firstFailedRowId,
       error: firstError,
     );
+  }
+
+  /// The old concurrent runner could record a conflict AFTER its other caller
+  /// had deleted the successful outbox row. Recover these product/reseller
+  /// remnants only by a fresh read-only replay check, never by replaying a write.
+  Future<void> _recoverDetachedConflicts(
+    Database database,
+    String uid,
+    bool Function()? shouldContinue,
+  ) async {
+    final conflicts = await database.query(
+      'sync_conflicts',
+      where: 'user_id = ? AND status = ? AND collection IN (?, ?)',
+      whereArgs: [uid, 'open', 'products', 'resellers'],
+    );
+    for (final conflict in conflicts) {
+      if (shouldContinue != null && !shouldContinue()) return;
+      Future<bool> hasPending(DatabaseExecutor executor) async =>
+          (await executor.query(
+            'sync_queue',
+            columns: const ['id'],
+            where: 'user_id = ? AND collection = ? AND doc_id = ?',
+            whereArgs: [uid, conflict['collection'], conflict['doc_id']],
+            limit: 1,
+          )).isNotEmpty;
+      if (await hasPending(database)) continue;
+      Map<String, dynamic> data;
+      try {
+        final decoded = jsonDecode(conflict['local_data'] as String);
+        if (decoded is! Map<String, dynamic>) continue;
+        data = decoded;
+      } on FormatException {
+        continue;
+      }
+      if (data['id'] != conflict['doc_id'] ||
+          data['user_id'] != uid ||
+          data['base_revision'] != conflict['local_revision'] ||
+          !RevisionedReplay.isExact(data, data)) {
+        continue;
+      }
+      final row = <String, Object?>{
+        'operation': conflict['collection'] == 'products'
+            ? 'save_product'
+            : 'save_reseller',
+        'collection': conflict['collection'],
+        'doc_id': conflict['doc_id'],
+        'user_id': uid,
+        'data': conflict['local_data'],
+        'replay_only': true,
+        'resulting_revision': data['revision'],
+      };
+      try {
+        if (shouldContinue != null && !shouldContinue()) return;
+        await _dispatch(row);
+      } on SyncConflictException {
+        continue; // Current cloud no longer matches: preserve genuine conflict.
+      } on FormatException {
+        continue; // Unrecognized legacy payload requires manual review.
+      }
+      if (shouldContinue != null && !shouldContinue()) return;
+      await database.transaction((txn) async {
+        // A new local edit may have been queued while the cloud read awaited.
+        if (await hasPending(txn)) return;
+        await _acknowledgeRevision(txn, row);
+        await txn.delete(
+          'sync_conflicts',
+          where:
+              'id = ? AND user_id = ? AND collection = ? AND doc_id = ? '
+              'AND status = ? AND local_data = ?',
+          whereArgs: [
+            conflict['id'],
+            uid,
+            conflict['collection'],
+            conflict['doc_id'],
+            'open',
+            conflict['local_data'],
+          ],
+        );
+      });
+    }
+  }
+
+  Future<List<Map<String, Object?>>> _matchingConflicts(
+    DatabaseExecutor executor,
+    Map<String, Object?> row,
+  ) async {
+    final candidates = await executor.query(
+      'sync_conflicts',
+      where:
+          'user_id = ? AND collection = ? AND doc_id = ? '
+          'AND aggregate_key = ? AND local_revision = ? AND status = ?',
+      whereArgs: [
+        row['user_id'],
+        row['collection'],
+        row['doc_id'],
+        row['aggregate_key'] ?? '${row['collection']}:${row['doc_id']}',
+        row['expected_revision'] ?? 0,
+        'open',
+      ],
+    );
+    return candidates.where((conflict) {
+      try {
+        return RevisionedReplay.sameValues(
+          jsonDecode(row['data'] as String),
+          jsonDecode(conflict['local_data'] as String),
+        );
+      } on FormatException {
+        return false;
+      }
+    }).toList();
   }
 
   Future<void> _completeConfirmedPurge(
@@ -224,36 +459,44 @@ class OutboxProcessor {
     final errorText = error.toString();
     if (failureClass == 'conflict') {
       final conflict = error as SyncConflictException;
-      final conflictId = await database.insert('sync_conflicts', {
-        'user_id': row['user_id'],
-        'collection': row['collection'],
-        'doc_id': row['doc_id'],
-        'aggregate_key':
-            row['aggregate_key'] ?? '${row['collection']}:${row['doc_id']}',
-        'local_revision': row['expected_revision'] ?? 0,
-        'remote_revision': conflict.remoteRevision,
-        'local_data': row['data'],
-        'remote_data': conflict.remoteData == null
-            ? null
-            : jsonEncode(conflict.remoteData),
-        'reason': conflict.message,
-        'status': 'open',
-        'created_at': now.toIso8601String(),
-      }, conflictAlgorithm: ConflictAlgorithm.ignore);
-      await database.update(
-        'sync_queue',
-        {
-          'status': 'conflict',
-          'error_class': failureClass,
-          'conflict_id': conflictId == 0 ? null : conflictId,
-          'attempt_count': attempts,
-          'last_attempt_at': now.toIso8601String(),
-          'last_error': errorText,
-          'updated_at': now.toIso8601String(),
-        },
-        where: 'id = ?',
-        whereArgs: [row['id']],
-      );
+      await database.transaction((txn) async {
+        await txn.insert('sync_conflicts', {
+          'user_id': row['user_id'],
+          'collection': row['collection'],
+          'doc_id': row['doc_id'],
+          'aggregate_key':
+              row['aggregate_key'] ?? '${row['collection']}:${row['doc_id']}',
+          'local_revision': row['expected_revision'] ?? 0,
+          'remote_revision': conflict.remoteRevision,
+          'local_data': row['data'],
+          'remote_data': conflict.remoteData == null
+              ? null
+              : jsonEncode(conflict.remoteData),
+          'reason': conflict.message,
+          'status': 'open',
+          'created_at': now.toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        // INSERT OR IGNORE can leave an older link null (or report a previous
+        // insert's ID). Recover the link from exact scoped operation identity.
+        final matches = await _matchingConflicts(txn, row);
+        await txn.update(
+          'sync_queue',
+          {
+            'status': 'conflict',
+            'error_class': failureClass,
+            'conflict_id': matches.isEmpty ? null : matches.single['id'],
+            'attempt_count': attempts,
+            'last_attempt_at': now.toIso8601String(),
+            'last_error': errorText,
+            'updated_at': now.toIso8601String(),
+            'next_attempt_at': now
+                .add(SyncQueue.retryDelayForAttempt(attempts))
+                .toIso8601String(),
+          },
+          where: 'id = ? AND user_id = ?',
+          whereArgs: [row['id'], row['user_id']],
+        );
+      });
       return;
     }
     if (failureClass == 'permanent') {
@@ -322,15 +565,42 @@ class OutboxProcessor {
 /// success. A queue row is never removed after a failed remote operation.
 class SyncQueue implements SyncOutbox {
   SyncQueue._();
+  @visibleForTesting
+  SyncQueue.forTesting({
+    required Future<Database> Function() databaseProvider,
+    required String? Function() currentUid,
+    OutboxDispatch? dispatch,
+    FirestoreSync? cloud,
+  }) : _databaseOverride = databaseProvider,
+       _uidOverride = currentUid,
+       _dispatchOverride = dispatch,
+       _cloudOverride = cloud {
+    _isMonitoring = true;
+    _isOnline = true;
+  }
   static final SyncQueue instance = SyncQueue._();
 
   static const int _maxBackoffSeconds = 60 * 60;
 
-  final _cloud = FirestoreSync.instance;
+  Future<Database> Function()? _databaseOverride;
+  String? Function()? _uidOverride;
+  OutboxDispatch? _dispatchOverride;
+  FirestoreSync? _cloudOverride;
+  FirestoreSync get _cloud => _cloudOverride ?? FirestoreSync.instance;
+  Future<Database> _database() =>
+      _databaseOverride?.call() ?? DatabaseHelper.instance.database;
+  String? get _currentUid {
+    if (_uidOverride != null) return _uidOverride!();
+    if (Firebase.apps.isEmpty) return null;
+    final user = FirebaseAuth.instance.currentUser;
+    return user == null || user.isAnonymous ? null : user.uid;
+  }
+
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   Timer? _retryTimer;
   bool _isOnline = false;
   bool _isSyncing = false;
+  bool _syncRequested = false;
   bool _isMonitoring = false;
   int _sessionGeneration = 0;
   final StreamController<SyncStatus> _statusController =
@@ -392,6 +662,7 @@ class SyncQueue implements SyncOutbox {
     _retryTimer = null;
     _isOnline = false;
     await subscription?.cancel();
+    await _cloud.stopInbound();
   }
 
   @override
@@ -526,6 +797,10 @@ class SyncQueue implements SyncOutbox {
       unawaited(_emitStatus(principal.uid));
     }
     if (!_isOnline) return;
+    if (_isSyncing) {
+      _syncRequested = true;
+      return;
+    }
     _scheduleSync(Duration.zero);
   }
 
@@ -556,30 +831,39 @@ class SyncQueue implements SyncOutbox {
     if (!_isMonitoring || _isSyncing || !_isOnline) {
       return const SyncProcessResult.skipped();
     }
-    if (Firebase.apps.isEmpty) return const SyncProcessResult.skipped();
-    final principal = FirebaseAuth.instance.currentUser;
+    final principalUid = _currentUid;
     // Anonymous sessions are never allowed to flush tenant data. Cloud account
     // login must bind the Firebase UID to the local user ID first.
-    if (principal == null || principal.isAnonymous) {
+    if (principalUid == null) {
       return const SyncProcessResult.skipped();
     }
-    final principalUid = principal.uid;
     final generation = _sessionGeneration;
-    final authorizationGate = _authorizationGate;
-    if (authorizationGate != null && !await authorizationGate(principalUid)) {
-      return const SyncProcessResult.skipped();
-    }
-    if (!_sameSession(principalUid, generation)) {
-      return const SyncProcessResult.skipped();
-    }
+    // Acquire before authorization yields. All returns and failures below
+    // release through finally; a second caller cannot enter during revalidation.
     _isSyncing = true;
-    _retryTimer?.cancel();
-    _retryTimer = null;
-
+    _syncRequested = false;
+    var authorized = false;
     try {
+      final authorizationGate = _authorizationGate;
+      if (authorizationGate != null && !await authorizationGate(principalUid)) {
+        // A network/token refresh failure must not strand the queue until the
+        // network interface changes again. This retries verification, not login.
+        if (_sameSession(principalUid, generation)) {
+          _scheduleSync(const Duration(seconds: 30));
+        }
+        return const SyncProcessResult.skipped();
+      }
+      if (!_sameSession(principalUid, generation)) {
+        return const SyncProcessResult.skipped();
+      }
+      authorized = true;
+      _cloud.onInboundChanged = requestSync;
+      _retryTimer?.cancel();
+      _retryTimer = null;
+
       final processor = OutboxProcessor(
-        databaseProvider: () => DatabaseHelper.instance.database,
-        dispatch: _dispatch,
+        databaseProvider: _database,
+        dispatch: _dispatchOverride ?? _dispatch,
       );
       final result = await processor.processUser(
         principalUid,
@@ -591,9 +875,16 @@ class SyncQueue implements SyncOutbox {
       }
       return result;
     } finally {
-      _isSyncing = false;
-      if (_sameSession(principalUid, generation)) {
-        await _scheduleNextDurableRetry();
+      try {
+        if (authorized && _sameSession(principalUid, generation)) {
+          await _scheduleNextDurableRetry();
+        }
+      } finally {
+        _isSyncing = false;
+        if (_syncRequested && _sameSession(principalUid, generation)) {
+          _syncRequested = false;
+          _scheduleSync(const Duration(milliseconds: 250));
+        }
       }
     }
   }
@@ -607,6 +898,13 @@ class SyncQueue implements SyncOutbox {
       throw const FormatException('Outbox payload is not a JSON object.');
     }
     final data = decoded;
+    final replayOnly = row['replay_only'] == true;
+    if (data['user_id'] != null && data['user_id'] != userId ||
+        data['id'] != null && data['id'] != docId) {
+      throw StateError(
+        'Outbox UID/document identity does not match its payload.',
+      );
+    }
 
     switch (operation) {
       case 'save_user':
@@ -619,26 +917,33 @@ class SyncQueue implements SyncOutbox {
         await _cloud.saveUser(data);
         break;
       case 'save_product':
-        await _cloud.saveProduct(userId, data);
+        await _cloud.saveProduct(userId, data, replayOnly: replayOnly);
         break;
       case 'soft_delete_product':
-        await _cloud.softDeleteProduct(userId, data);
+        await _cloud.softDeleteProduct(userId, data, replayOnly: replayOnly);
         break;
       case 'delete_product':
         await _cloud.deleteProduct(userId, docId);
         break;
       case 'save_order':
         final orderItems = _decodeEmbeddedMaps(data.remove('_items'));
-        await _cloud.saveOrder(userId, data, orderItems);
+        await _cloud.saveOrder(
+          userId,
+          data,
+          orderItems,
+          replayOnly: replayOnly,
+        );
         break;
       case 'save_order_with_event':
         final order = _decodeEmbeddedMap(data['_order'], '_order');
+        _copyQueueRevisionMetadata(data, order);
         final event = _decodeEmbeddedMap(data['_event'], '_event');
         final orderItems = _decodeEmbeddedMaps(order.remove('_items'));
         await _cloud.saveOrderWithEvent(userId, order, orderItems, event);
         break;
       case 'create_order':
         final order = _decodeEmbeddedMap(data['_order'], '_order');
+        _copyQueueRevisionMetadata(data, order);
         final debtValue = data['_debt'];
         final orderItems = _decodeEmbeddedMaps(order.remove('_items'));
         final quantities = <String, int>{};
@@ -662,7 +967,7 @@ class SyncQueue implements SyncOutbox {
           quantities,
           debt,
         );
-        final database = await DatabaseHelper.instance.database;
+        final database = await _database();
         await database.transaction((txn) async {
           final changed = await txn.update(
             'orders',
@@ -701,17 +1006,28 @@ class SyncQueue implements SyncOutbox {
         break;
       case 'soft_delete_order':
         final deletedOrderItems = _decodeEmbeddedMaps(data.remove('_items'));
-        await _cloud.softDeleteOrder(userId, data, deletedOrderItems);
+        await _cloud.softDeleteOrder(
+          userId,
+          data,
+          deletedOrderItems,
+          replayOnly: replayOnly,
+        );
         break;
       case 'delete_order':
         await _cloud.deleteOrder(userId, docId);
         break;
       case 'save_debt':
         final debtPayments = _decodeEmbeddedMaps(data.remove('_payments'));
-        await _cloud.saveDebt(userId, data, debtPayments);
+        await _cloud.saveDebt(
+          userId,
+          data,
+          debtPayments,
+          replayOnly: replayOnly,
+        );
         break;
       case 'save_debt_with_events':
         final debt = _decodeEmbeddedMap(data['_debt'], '_debt');
+        _copyQueueRevisionMetadata(data, debt);
         final events = _decodeEmbeddedMaps(data['_events']);
         final debtPayments = _decodeEmbeddedMaps(debt.remove('_payments'));
         await _cloud.saveDebtWithEvents(userId, debt, debtPayments, events);
@@ -730,29 +1046,40 @@ class SyncQueue implements SyncOutbox {
         final deletedDebtPayments = _decodeEmbeddedMaps(
           data.remove('_payments'),
         );
-        await _cloud.softDeleteDebt(userId, data, deletedDebtPayments);
+        await _cloud.softDeleteDebt(
+          userId,
+          data,
+          deletedDebtPayments,
+          replayOnly: replayOnly,
+        );
         break;
       case 'delete_debt':
         await _cloud.deleteDebt(userId, docId);
         break;
       case 'save_reseller':
-        await _cloud.saveReseller(userId, data);
+        await _cloud.saveReseller(userId, data, replayOnly: replayOnly);
         break;
       case 'soft_delete_reseller':
-        await _cloud.softDeleteReseller(userId, data);
+        await _cloud.softDeleteReseller(userId, data, replayOnly: replayOnly);
         break;
       case 'delete_reseller':
         await _cloud.deleteReseller(userId, docId);
         break;
       case 'save_custom_order':
         final customPayments = _decodeEmbeddedMaps(data.remove('_payments'));
-        await _cloud.saveCustomOrder(userId, data, customPayments);
+        await _cloud.saveCustomOrder(
+          userId,
+          data,
+          customPayments,
+          replayOnly: replayOnly,
+        );
         break;
       case 'save_custom_order_with_events':
         final customOrder = _decodeEmbeddedMap(
           data['_custom_order'],
           '_custom_order',
         );
+        _copyQueueRevisionMetadata(data, customOrder);
         final events = _decodeEmbeddedMaps(data['_events']);
         final customPayments = _decodeEmbeddedMaps(
           customOrder.remove('_payments'),
@@ -781,7 +1108,12 @@ class SyncQueue implements SyncOutbox {
         final deletedCustomPayments = _decodeEmbeddedMaps(
           data.remove('_payments'),
         );
-        await _cloud.softDeleteCustomOrder(userId, data, deletedCustomPayments);
+        await _cloud.softDeleteCustomOrder(
+          userId,
+          data,
+          deletedCustomPayments,
+          replayOnly: replayOnly,
+        );
         break;
       case 'delete_custom_order':
         await _cloud.deleteCustomOrder(userId, docId);
@@ -844,16 +1176,13 @@ class SyncQueue implements SyncOutbox {
   }
 
   bool _sameSession(String uid, int generation) {
-    final current = FirebaseAuth.instance.currentUser;
     return generation == _sessionGeneration &&
         _isMonitoring &&
-        current != null &&
-        !current.isAnonymous &&
-        current.uid == uid;
+        _currentUid == uid;
   }
 
   Future<SyncStatus> statusForUser(String userId) async {
-    final database = await DatabaseHelper.instance.database;
+    final database = await _database();
     final rows = await database.rawQuery(
       '''
       SELECT
@@ -916,31 +1245,22 @@ class SyncQueue implements SyncOutbox {
 
   Future<void> _scheduleNextDurableRetry() async {
     if (!_isMonitoring || !_isOnline) return;
-    if (Firebase.apps.isEmpty) return;
-    final principal = FirebaseAuth.instance.currentUser;
-    if (principal == null || principal.isAnonymous) return;
-    final database = await DatabaseHelper.instance.database;
-    final rows = await database.query(
-      'sync_queue',
-      columns: const ['next_attempt_at'],
-      where: 'user_id = ?',
-      whereArgs: [principal.uid],
-      orderBy: 'id ASC',
-      limit: 1,
+    final principalUid = _currentUid;
+    if (principalUid == null) return;
+    final generation = _sessionGeneration;
+    final database = await _database();
+    final work = await _OutboxWork.load(
+      database,
+      principalUid,
+      DateTime.now().toUtc(),
     );
-    if (rows.isEmpty) return;
-    final value = rows.single['next_attempt_at'] as String?;
-    if (value == null) {
-      _scheduleSync(Duration.zero);
+    if (!_sameSession(principalUid, generation)) return;
+    if (work.nextAttempt == null) {
+      // Revalidate access and recover failed listener startup even while idle.
+      _scheduleSync(const Duration(minutes: 1));
       return;
     }
-
-    final retryAt = DateTime.tryParse(value)?.toUtc();
-    if (retryAt == null) {
-      _scheduleSync(const Duration(seconds: 5));
-      return;
-    }
-    final remaining = retryAt.difference(DateTime.now().toUtc());
+    final remaining = work.nextAttempt!.difference(DateTime.now().toUtc());
     _scheduleSync(remaining.isNegative ? Duration.zero : remaining);
   }
 }

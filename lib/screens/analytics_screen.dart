@@ -22,8 +22,6 @@ import '../core/app_state_builder.dart';
 import '../dialogs/export_dialog.dart';
 import '../models/order_model.dart';
 import '../models/debt_model.dart';
-import '../models/custom_order_model.dart';
-import '../models/business_event_model.dart';
 import '../models/payment_method_model.dart';
 import '../models/reseller_accounting_summary.dart';
 import '../services/accounting_service.dart';
@@ -137,19 +135,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   // ── Month-over-month helper ───────────────────────────────────────────────
-  Money _revenueForMonth(
-    List<Order> orders,
-    List<CustomerDebt> debts,
-    List<CustomOrder> customOrders,
-    List<BusinessEvent> businessEvents,
-    DateTime month,
-  ) => AccountingService.instance
-      .summarize(
-        orders: orders,
-        debts: debts,
-        customOrders: customOrders,
-        businessEvents: businessEvents,
-        period: AccountingPeriod(
+  Money _revenueForMonth(DateTime month) => AppState()
+      .accountingReportForPeriod(
+        AccountingPeriod(
           from: DateTime(month.year, month.month),
           to: DateTime(month.year, month.month + 1, 0),
         ),
@@ -251,29 +239,24 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             );
             final regularDisc = discounts - resellerDisc;
             final discPct = gross.isPositive
-                ? roundRatioHalfUp(discounts.centavos * 10000, gross.centavos) /
+                ? roundProductRatioHalfUp(
+                        discounts.centavos,
+                        10000,
+                        gross.centavos,
+                      ) /
                       100
                 : 0.0;
 
             // ── MoM ────────────────────────────────────────────────────────
             final now = DateTime.now();
-            final thisMonth = _revenueForMonth(
-              orders,
-              state.debts,
-              state.customOrders,
-              state.businessEvents,
-              now,
-            );
+            final thisMonth = _revenueForMonth(now);
             final lastMonth = _revenueForMonth(
-              orders,
-              state.debts,
-              state.customOrders,
-              state.businessEvents,
               DateTime(now.year, now.month - 1),
             );
             final momPct = lastMonth.isPositive
-                ? roundRatioHalfUp(
-                        (thisMonth - lastMonth).centavos * 10000,
+                ? roundProductRatioHalfUp(
+                        (thisMonth - lastMonth).centavos,
+                        10000,
                         lastMonth.centavos,
                       ) /
                       100

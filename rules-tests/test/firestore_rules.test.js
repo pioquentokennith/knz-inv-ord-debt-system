@@ -573,6 +573,16 @@ test('atomic order finalization may allocate one canonical command result', asyn
   const firestore = authenticated('approved-user');
   const batch = writeBatch(firestore);
   const order = doc(firestore, 'users/approved-user/orders/order-1');
+  const product = doc(firestore, 'users/approved-user/products/product-1');
+  await assertSucceeds(setDoc(product, {
+    id: 'product-1', user_id: 'approved-user', stock_qty: 100,
+    revision: 1, base_revision: 0, writer_device_id: 'DEVICE01',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }));
+  batch.update(product, {
+    stock_qty: 99, base_revision: 1, revision: 2,
+    writer_device_id: 'DEVICE01', updated_at: '2026-01-02T00:00:00.000Z',
+  });
   const counter = doc(firestore, 'users/approved-user/counters/orders');
   const command = doc(
     firestore,
@@ -586,6 +596,8 @@ test('atomic order finalization may allocate one canonical command result', asyn
     status: 'Pending',
     items: [{ product_id: 'product-1', quantity: 1 }],
     is_deleted: 0,
+    revision: 1, base_revision: 0, writer_device_id: 'DEVICE01',
+    updated_at: '2026-01-02T00:00:00.000Z',
   });
   batch.set(counter, {
     id: 'orders',
