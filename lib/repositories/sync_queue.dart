@@ -607,6 +607,8 @@ class SyncQueue implements SyncOutbox {
       StreamController<SyncStatus>.broadcast();
   Future<bool> Function(String uid)? _authorizationGate;
   Future<void> Function(String uid)? _afterSuccessfulSync;
+  Future<void> Function(String uid, Set<String> collections)? _afterLocalSync;
+  final _locallyChangedCollections = <String>{};
 
   Stream<SyncStatus> get statusStream => _statusController.stream;
 
@@ -616,6 +618,14 @@ class SyncQueue implements SyncOutbox {
 
   void setAfterSuccessfulSync(Future<void> Function(String uid) callback) {
     _afterSuccessfulSync = callback;
+  }
+
+  /// Publishes local changes committed by outbound sync, independently of
+  /// whether the rest of the batch or subsequent inbound reconciliation succeeds.
+  void setAfterLocalSync(
+    Future<void> Function(String uid, Set<String> collections) callback,
+  ) {
+    _afterLocalSync = callback;
   }
 
   Future<void> startMonitoring() async {
@@ -694,8 +704,30 @@ class SyncQueue implements SyncOutbox {
       aggregateKey,
     );
     final resultingRevision = expectedRevision + 1;
+    // Order creation also advances stock and creates an optional debt. Record
+    // those implicit revisions in the durable command so later offline writes
+    // do not assume only the order aggregate changed.
+    final stockRevisions = <String, int>{};
+    if (operation == 'create_order') {
+      final order = _decodeEmbeddedMap(data['_order'], '_order');
+      if (order['status'] != 'Cancelled') {
+        for (final item in _decodeEmbeddedMaps(order['_items'])) {
+          final productId = item['product_id'] as String;
+          stockRevisions[productId] =
+              await _nextExpectedRevision(
+                database,
+                'products',
+                productId,
+                userId,
+                'products:$productId',
+              ) +
+              1;
+        }
+      }
+    }
     final revisionedData = <String, dynamic>{
       ...data,
+      if (operation == 'create_order') '_stock_revisions': stockRevisions,
       'base_revision': expectedRevision,
       'revision': resultingRevision,
       'writer_device_id': deviceId,
@@ -732,17 +764,6 @@ class SyncQueue implements SyncOutbox {
     String userId,
     String aggregateKey,
   ) async {
-    final queued = await executor.query(
-      'sync_queue',
-      columns: const ['resulting_revision'],
-      where: 'user_id = ? AND aggregate_key = ?',
-      whereArgs: [userId, aggregateKey],
-      orderBy: 'id DESC',
-      limit: 1,
-    );
-    if (queued.isNotEmpty) {
-      return queued.single['resulting_revision'] as int? ?? 0;
-    }
     const entityTables = {
       'products': 'products',
       'orders': 'orders',
@@ -759,7 +780,45 @@ class SyncQueue implements SyncOutbox {
       whereArgs: [docId, userId],
       limit: 1,
     );
-    return rows.isEmpty ? 0 : rows.single['revision'] as int? ?? 0;
+    var revision = rows.isEmpty ? 0 : rows.single['revision'] as int? ?? 0;
+    final queued = await executor.query(
+      'sync_queue',
+      columns: const [
+        'operation',
+        'aggregate_key',
+        'resulting_revision',
+        'data',
+      ],
+      where: 'user_id = ? AND (aggregate_key = ? OR operation = ?)',
+      whereArgs: [userId, aggregateKey, 'create_order'],
+      orderBy: 'id ASC',
+    );
+    for (final row in queued) {
+      if (row['aggregate_key'] == aggregateKey) {
+        revision = math.max(revision, row['resulting_revision'] as int? ?? 0);
+      } else if (row['operation'] == 'create_order') {
+        final data = jsonDecode(row['data'] as String) as Map<String, dynamic>;
+        if (collection == 'debts' &&
+            data['_debt'] != null &&
+            _decodeEmbeddedMap(data['_debt'], '_debt')['id'] == docId) {
+          revision = math.max(revision, 1);
+        } else if (collection == 'products') {
+          final stocks = data['_stock_revisions'] as Map?;
+          if (stocks?[docId] case final int planned) {
+            revision = math.max(revision, planned);
+          } else if (stocks == null) {
+            final order = _decodeEmbeddedMap(data['_order'], '_order');
+            if (order['status'] != 'Cancelled' &&
+                _decodeEmbeddedMaps(
+                  order['_items'],
+                ).any((item) => item['product_id'] == docId)) {
+              revision++;
+            }
+          }
+        }
+      }
+    }
+    return revision;
   }
 
   Future<String> _deviceId(DatabaseExecutor executor, String now) async {
@@ -784,6 +843,111 @@ class SyncQueue implements SyncOutbox {
       limit: 1,
     );
     return created.single['device_id'] as String;
+  }
+
+  /// Upgrade only unsent legacy commands. Already attempted/conflicted writes
+  /// remain available for explicit review rather than guessing their outcome.
+  /// No business values or schema are changed; only missing own-write revision
+  /// dependencies are recorded in the existing durable payloads.
+  Future<void> _prepareLegacyOrderCommands(
+    DatabaseExecutor txn,
+    String uid,
+  ) async {
+    final rows = await txn.query(
+      'sync_queue',
+      where: 'user_id = ?',
+      whereArgs: [uid],
+      orderBy: 'id ASC',
+    );
+    final projected = <String, int>{};
+    final implicit = <String, int>{};
+    Future<int> current(String table, String id) async {
+      final key = '$table:$id';
+      final local = await txn.query(
+        table,
+        columns: ['revision'],
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [id, uid],
+      );
+      return math.max(
+        projected[key] ?? 0,
+        local.isEmpty ? 0 : local.single['revision'] as int? ?? 0,
+      );
+    }
+
+    for (final row in rows) {
+      Map<String, dynamic> data;
+      try {
+        data = jsonDecode(row['data'] as String) as Map<String, dynamic>;
+      } catch (_) {
+        continue; // Let the normal processor classify malformed payloads.
+      }
+      final key =
+          row['aggregate_key'] as String? ??
+          '${row['collection']}:${row['doc_id']}';
+      final base = row['expected_revision'] as int? ?? 0;
+      var result = row['resulting_revision'] as int? ?? base + 1;
+      final expected = projected[key] ?? base;
+      final unsent =
+          (row['attempt_count'] as int? ?? 0) == 0 &&
+          row['status'] == 'pending';
+      if (unsent &&
+          result == base + 1 &&
+          expected > base &&
+          expected - base <= (implicit[key] ?? 0)) {
+        result = expected + 1;
+        data.addAll({'base_revision': expected, 'revision': result});
+        await txn.update(
+          'sync_queue',
+          {
+            'expected_revision': expected,
+            'resulting_revision': result,
+            'data': jsonEncode(data),
+          },
+          where: 'id = ? AND user_id = ?',
+          whereArgs: [row['id'], uid],
+        );
+      }
+      projected[key] = math.max(projected[key] ?? 0, result);
+      if (row['operation'] != 'create_order') continue;
+      final stocks = data['_stock_revisions'] as Map?;
+      if (stocks != null) {
+        for (final entry in stocks.entries) {
+          final stockKey = 'products:${entry.key}';
+          projected[stockKey] = math.max(
+            projected[stockKey] ?? 0,
+            entry.value as int,
+          );
+        }
+        continue;
+      }
+      if (!unsent) continue;
+      final order = _decodeEmbeddedMap(data['_order'], '_order');
+      final planned = <String, int>{};
+      if (order['status'] != 'Cancelled') {
+        final ids = _decodeEmbeddedMaps(
+          order['_items'],
+        ).map((item) => item['product_id'] as String).toSet();
+        for (final id in ids) {
+          final stockKey = 'products:$id';
+          planned[id] = await current('products', id) + 1;
+          projected[stockKey] = planned[id]!;
+          implicit[stockKey] = (implicit[stockKey] ?? 0) + 1;
+        }
+      }
+      if (data['_debt'] != null) {
+        final id = _decodeEmbeddedMap(data['_debt'], '_debt')['id'] as String;
+        projected['debts:$id'] = math.max(await current('debts', id), 1);
+        implicit['debts:$id'] = (implicit['debts:$id'] ?? 0) + 1;
+      }
+      data['_stock_revisions'] = planned;
+      await txn.update(
+        'sync_queue',
+        {'data': jsonEncode(data)},
+        where: 'id = ? AND user_id = ?',
+        whereArgs: [row['id'], uid],
+      );
+    }
   }
 
   /// Requests an immediate best-effort flush without making a repository write
@@ -857,10 +1021,18 @@ class SyncQueue implements SyncOutbox {
         return const SyncProcessResult.skipped();
       }
       authorized = true;
+      _locallyChangedCollections.clear();
       _cloud.onInboundChanged = requestSync;
       _retryTimer?.cancel();
       _retryTimer = null;
 
+      final database = await _database();
+      await database.transaction(
+        (txn) => _prepareLegacyOrderCommands(txn, principalUid),
+      );
+      if (!_sameSession(principalUid, generation)) {
+        return const SyncProcessResult.skipped();
+      }
       final processor = OutboxProcessor(
         databaseProvider: _database,
         dispatch: _dispatchOverride ?? _dispatch,
@@ -870,6 +1042,19 @@ class SyncQueue implements SyncOutbox {
         shouldContinue: () => _sameSession(principalUid, generation),
       );
       if (_sameSession(principalUid, generation)) {
+        if (_locallyChangedCollections.isNotEmpty) {
+          // A screen refresh failure must not turn acknowledged cloud writes
+          // back into failed outbox operations.
+          try {
+            await _afterLocalSync?.call(
+              principalUid,
+              Set.unmodifiable(_locallyChangedCollections),
+            );
+          } catch (error) {
+            if (kDebugMode) debugPrint('[SyncQueue] local refresh: $error');
+          }
+        }
+        if (!_sameSession(principalUid, generation)) return result;
         await _emitStatus(principalUid);
         if (result.succeeded) await _afterSuccessfulSync?.call(principalUid);
       }
@@ -904,6 +1089,31 @@ class SyncQueue implements SyncOutbox {
       throw StateError(
         'Outbox UID/document identity does not match its payload.',
       );
+    }
+
+    // An offline conversion/payment snapshot may still reference the temporary
+    // number after its order command finalized. Resolve that immutable identity
+    // from the owner's local order, including when the cloud debt is new.
+    Future<void> canonicalizeDebt(Map<String, dynamic> debt) async {
+      final number = debt['order_id'];
+      if (number is! String || !number.startsWith('TMP-')) return;
+      final database = await _database();
+      final orders = await database.query(
+        'orders',
+        columns: ['order_id'],
+        where: 'user_id = ? AND provisional_order_id = ? AND number_state = ?',
+        whereArgs: [userId, number, 'finalized'],
+        limit: 1,
+      );
+      if (orders.isNotEmpty) debt['order_id'] = orders.single['order_id'];
+    }
+
+    if (data['_debt'] != null) {
+      final debt = _decodeEmbeddedMap(data['_debt'], '_debt');
+      await canonicalizeDebt(debt);
+      data['_debt'] = debt;
+    } else if (row['collection'] == 'debts') {
+      await canonicalizeDebt(data);
     }
 
     switch (operation) {
@@ -947,7 +1157,10 @@ class SyncQueue implements SyncOutbox {
         final debtValue = data['_debt'];
         final orderItems = _decodeEmbeddedMaps(order.remove('_items'));
         final quantities = <String, int>{};
-        for (final item in orderItems) {
+        for (final item
+            in order['status'] == 'Cancelled'
+                ? <Map<String, dynamic>>[]
+                : orderItems) {
           final productId = item['product_id'] as String;
           quantities.update(
             productId,
@@ -1002,7 +1215,20 @@ class SyncQueue implements SyncOutbox {
             where: 'user_id = ? AND order_id = ?',
             whereArgs: [userId, provisionalId],
           );
+          final stockRevisions = data['_stock_revisions'] as Map? ?? const {};
+          for (final entry in stockRevisions.entries) {
+            final revision = entry.value as int;
+            // Only acknowledge the planned revision, never overwrite newer
+            // local stock or adopt a remote writer's unseen business data.
+            await txn.update(
+              'products',
+              {'revision': revision, 'base_revision': revision},
+              where: 'id = ? AND user_id = ? AND revision < ?',
+              whereArgs: [entry.key, userId, revision],
+            );
+          }
         });
+        _locallyChangedCollections.addAll({'orders', 'debts'});
         break;
       case 'soft_delete_order':
         final deletedOrderItems = _decodeEmbeddedMaps(data.remove('_items'));

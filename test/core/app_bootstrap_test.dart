@@ -127,7 +127,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('surfaces Firebase and notification failures as local mode', (
+  testWidgets('tracks optional failures without a banner or reserved space', (
     tester,
   ) async {
     final bootstrap = _bootstrap(
@@ -140,7 +140,11 @@ void main() {
     await tester.pump();
 
     expect(find.text('Local setup flow'), findsOneWidget);
-    expect(find.textContaining('Local mode is available'), findsOneWidget);
+    expect(find.textContaining('Local mode is available'), findsNothing);
+    expect(
+      tester.getRect(find.byType(Scaffold)),
+      tester.getRect(find.byType(StartupGate)),
+    );
     expect(
       bootstrap.unavailableCapabilities.value,
       containsAll({

@@ -24,6 +24,7 @@ import '../models/order_model.dart';
 import '../models/debt_model.dart';
 import '../models/payment_method_model.dart';
 import '../models/reseller_accounting_summary.dart';
+import '../models/business_event_model.dart';
 import '../services/accounting_service.dart';
 import '../widgets/shared_widgets.dart';
 
@@ -87,17 +88,38 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   // ── Revenue trend buckets ─────────────────────────────────────────────────
   List<_TrendPoint> _buildTrendData(AccountingReport report) {
     final map = <String, Money>{};
-    for (final order in report.recognizedOrders) {
-      final key = _bucketKey(order.orderDate);
-      map[key] = (map[key] ?? Money.zero) + order.customerPayAmount;
+    void add(DateTime date, Money amount) {
+      final key = _bucketKey(date);
+      map[key] = (map[key] ?? Money.zero) + amount;
     }
-    for (final row in report.debtPayments) {
-      final key = _bucketKey(row.payment.paidAt);
-      map[key] = (map[key] ?? Money.zero) + row.payment.amount;
+
+    final events = AppState().businessEvents;
+    final byId = {for (final event in events) event.id: event};
+    for (final event in events) {
+      final date = event.occurredAt;
+      if (date == null) continue; // Undated legacy cash has no trend bucket.
+      if (event.subject == BusinessEventSubject.order && event.isFinancial) {
+        add(date, BusinessEventLedger.cashEffect(event, byId));
+      } else if (event.type == BusinessEventType.collection) {
+        add(date, event.amount!);
+      }
     }
-    for (final row in report.customOrderPayments) {
-      final key = _bucketKey(row.payment.paidAt);
-      map[key] = (map[key] ?? Money.zero) + row.payment.amount;
+    // Match AccountingService's legacy fallback without counting both the
+    // immutable collection event and its embedded payment projection.
+    bool hasCollections(BusinessEventSubject subject) => events.any(
+      (event) =>
+          event.subject == subject &&
+          event.type == BusinessEventType.collection,
+    );
+    if (!hasCollections(BusinessEventSubject.debt)) {
+      for (final row in report.debtPayments) {
+        add(row.payment.paidAt, row.payment.amount);
+      }
+    }
+    if (!hasCollections(BusinessEventSubject.customOrder)) {
+      for (final row in report.customOrderPayments) {
+        add(row.payment.paidAt, row.payment.amount);
+      }
     }
     if (map.isEmpty) return [];
     final sorted = map.entries.toList()..sort((a, b) => a.key.compareTo(b.key));

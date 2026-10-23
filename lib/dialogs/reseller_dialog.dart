@@ -39,7 +39,7 @@ class _ResellerDialogState extends State<ResellerDialog> {
     if (_isEdit) {
       _nameCtrl.text = widget.existing!.name;
       _contactCtrl.text = widget.existing!.contact ?? '';
-      _discountCtrl.text = widget.existing!.deductionPerItem.toStringAsFixed(0);
+      _discountCtrl.text = widget.existing!.deductionPerItem.toStringAsFixed(2);
     }
   }
 

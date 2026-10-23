@@ -341,8 +341,17 @@ class FirestoreSync {
     Map<String, dynamic> pending,
     Map<String, dynamic>? remote,
   ) {
-    if (remote?['number_state'] != 'finalized' ||
-        !pending.containsKey('order_id')) {
+    final pendingId = pending['order_id'];
+    final remoteId = remote?['order_id'];
+    final finalizedDebtReference =
+        pendingId is String &&
+        pendingId.startsWith('TMP-') &&
+        remoteId is String &&
+        remoteId.startsWith('KNZ-') &&
+        pending['id'] == remote?['id'] &&
+        pending['user_id'] == remote?['user_id'];
+    if (!pending.containsKey('order_id') ||
+        (remote?['number_state'] != 'finalized' && !finalizedDebtReference)) {
       return;
     }
     for (final key in ['order_id', 'number_state', 'provisional_order_id']) {
@@ -486,8 +495,7 @@ class FirestoreSync {
       _copyRevisionMetadata(orderData, cloudOrder);
       transaction.set(_orders(userId).doc(order.id), cloudOrder);
       if (debtData != null) {
-        final debt = Map<String, dynamic>.from(debtData)
-          ..remove('_payments')
+        final debt = DebtDto.fromCloud(debtData, userId: userId).toCloud()
           ..['order_id'] = canonicalId
           ..['revision'] = 1
           ..['base_revision'] = 0;
@@ -794,11 +802,13 @@ class FirestoreSync {
     final payment = PaymentDto.fromCloud(paymentData, debtId: debtId);
     final event = BusinessEventDto.fromCloud(eventData, userId: userId);
     final parent = DebtDto.fromCloud(debtData, userId: userId);
+    final parentData = parent.toCloud();
+    _copyRevisionMetadata(debtData, parentData);
     await _applyPaymentCommand(
       userId: userId,
       commandId: event.commandId,
       parentReference: _debts(userId).doc(debtId),
-      parentData: parent.toCloud(),
+      parentData: parentData,
       paymentReference: _debts(
         userId,
       ).doc(debtId).collection('payments').doc(payment.id),
@@ -822,11 +832,13 @@ class FirestoreSync {
     );
     final event = BusinessEventDto.fromCloud(eventData, userId: userId);
     final parent = CustomOrderDto.fromCloud(orderData, userId: userId);
+    final parentData = parent.toCloud();
+    _copyRevisionMetadata(orderData, parentData);
     await _applyPaymentCommand(
       userId: userId,
       commandId: event.commandId,
       parentReference: _customOrders(userId).doc(orderId),
-      parentData: parent.toCloud(),
+      parentData: parentData,
       paymentReference: _customOrders(
         userId,
       ).doc(orderId).collection('payments').doc(payment.id),
@@ -865,6 +877,7 @@ class FirestoreSync {
       }
       final parent = await transaction.get(parentReference);
       final remoteData = parent.data() as Map<String, dynamic>?;
+      _retainFinalizedOrderIdentity(parentData, remoteData);
       final remoteRevision = remoteData?['revision'] as int? ?? 0;
       if (!parent.exists || remoteRevision != expectedRevision) {
         throw SyncConflictException(

@@ -11,7 +11,6 @@ import 'package:intl/intl.dart';
 import '../core/app_constants.dart';
 import '../core/money.dart';
 import '../core/app_state.dart';
-import '../models/order_model.dart';
 import '../models/debt_model.dart';
 import '../services/export_service.dart';
 import '../services/accounting_service.dart';
@@ -155,20 +154,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
   final _dateFmt = DateFormat('MM/dd/yy');
 
-  // ── Filtered orders ───────────────────────────────────────────────────────
-  List<Order> _filteredOrders() {
-    final orders = AppState().orders.toList();
-    if (_dateRange == null) return orders;
-    final endOfDay = _dateRange!.end
-        .add(const Duration(days: 1))
-        .subtract(const Duration(microseconds: 1));
-    return orders
-        .where(
-          (o) =>
-              !o.orderDate.isBefore(_dateRange!.start) &&
-              !o.orderDate.isAfter(endOfDay),
-        )
-        .toList();
+  @override
+  void initState() {
+    super.initState();
+    AppState().addListener(_refreshPreview);
+  }
+
+  void _refreshPreview() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    AppState().removeListener(_refreshPreview);
+    super.dispose();
   }
 
   List<CustomerDebt> _filteredDebts() {
@@ -203,7 +202,6 @@ class _ReportsScreenState extends State<ReportsScreen> {
   }
 
   _PreviewStats _computePreview() {
-    final orders = _filteredOrders();
     final debts = _filteredDebts();
     final svc = AccountingService.instance;
     final report = _accountingReport();
@@ -219,19 +217,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
         );
       case _ReportType.resellerSales:
       case _ReportType.resellerDetailed:
-        final reseller = orders
-            .where(
-              (o) =>
-                  o.isReseller &&
-                  svc.isRecognizedSale(o, AppState().businessEvents),
-            )
+        final reseller = report.recognizedOrders
+            .where((o) => o.isReseller)
             .toList();
         return _PreviewStats(
           count: reseller.length,
           label: 'reseller orders',
-          total: svc.netSales(
-            reseller,
-            businessEvents: AppState().businessEvents,
+          total: reseller.fold<Money>(
+            Money.zero,
+            (sum, order) => sum + order.customerPayAmount,
           ),
           totalLabel: 'net revenue',
         );
@@ -286,7 +280,8 @@ class _ReportsScreenState extends State<ReportsScreen> {
     });
     try {
       final state = AppState();
-      final orders = _filteredOrders();
+      // The accounting period filters delivery/payment events, not creation.
+      final orders = state.orders.toList();
       final debts = state.debts.toList();
       final filteredDebts = _filteredDebts();
       final products = state.products.toList();
@@ -299,6 +294,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ? await ExportService.exportOrdersCsv(recognized)
               : await ExportService.exportOrdersPdf(
                   recognized,
+                  businessEvents: state.businessEvents,
                   businessName: biz,
                 );
           break;
@@ -309,6 +305,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
               ? await ExportService.exportOrdersCsv(reseller)
               : await ExportService.exportOrdersPdf(
                   reseller,
+                  businessEvents: state.businessEvents,
                   businessName: biz,
                 );
           break;

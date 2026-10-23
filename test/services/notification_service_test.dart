@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:knz_scent_admin/core/money.dart';
 import 'package:knz_scent_admin/models/debt_model.dart';
@@ -201,7 +202,7 @@ void main() {
     },
   );
   test(
-    'restart retains low-stock suppression and stable notification IDs',
+    'restart repeats low-stock alerts with stable notification IDs',
     () async {
       products = [product(4)];
       await start();
@@ -209,7 +210,8 @@ void main() {
       service.dispose();
       service = create();
       await start();
-      expect(platform.shows, hasLength(1));
+      expect(platform.shows, hasLength(2));
+      expect(platform.shows.last.id, id);
       products = [product(0)];
       await service.refresh();
       expect(platform.shows.last.id, id);
@@ -222,6 +224,115 @@ void main() {
     await service.refresh();
     expect(platform.visible, isEmpty);
   });
+  test('each background return repeats eligible alerts exactly once', () async {
+    products = [product(5), product(0, id: 'empty')];
+    debts = [debt(), debt(id: 'overdue', due: DateTime.utc(2026, 1, 1))];
+    await start();
+    expect(platform.shows, hasLength(3));
+    for (var visit = 2; visit <= 3; visit++) {
+      await service.handleLifecycleState(AppLifecycleState.inactive);
+      await service.handleLifecycleState(AppLifecycleState.hidden);
+      await service.handleLifecycleState(AppLifecycleState.paused);
+      await Future.wait([
+        service.handleLifecycleState(AppLifecycleState.resumed),
+        service.handleLifecycleState(AppLifecycleState.resumed),
+        service.refresh(),
+        service.requestPermissionOnce(),
+        service.syncBusinessAlerts(products, debts),
+      ]);
+      expect(platform.shows.where((e) => e.stock), hasLength(2 * visit));
+      expect(platform.shows.where((e) => !e.stock), hasLength(visit));
+    }
+  });
+  test(
+    'initial resume and permission-dialog return share startup alerts',
+    () async {
+      products = [product(0)];
+      debts = [debt()];
+      platform.initializing = Completer<void>();
+      final initialization = service.init();
+      await service.handleLifecycleState(AppLifecycleState.resumed);
+      await service.syncBusinessAlerts(products, debts);
+      platform.initializing!.complete();
+      await initialization;
+      await Future.wait([
+        service.requestPermissionOnce(),
+        service.refresh(),
+        service.handleLifecycleState(AppLifecycleState.resumed),
+      ]);
+      await service.handleLifecycleState(AppLifecycleState.inactive);
+      await service.handleLifecycleState(AppLifecycleState.resumed);
+      expect(platform.shows, hasLength(2));
+    },
+  );
+  test(
+    'resume waits for loaded data and permission without losing its pass',
+    () async {
+      products = [product(4)];
+      debts = [debt()];
+      await start();
+      dataReady = false;
+      await service.handleLifecycleState(AppLifecycleState.paused);
+      await service.handleLifecycleState(AppLifecycleState.resumed);
+      expect(platform.shows, hasLength(2));
+      dataReady = true;
+      platform.status = AlertPermission.denied;
+      await service.refresh();
+      expect(platform.shows, hasLength(2));
+      platform.status = AlertPermission.granted;
+      await service.refresh();
+      await service.refresh();
+      expect(platform.shows, hasLength(4));
+    },
+  );
+  test('reopen excludes restocked products and fully paid debts', () async {
+    products = [product(0)];
+    debts = [debt()];
+    await start();
+    products = [product(6)];
+    debts = [debt(paid: true)];
+    await service.handleLifecycleState(AppLifecycleState.paused);
+    await service.handleLifecycleState(AppLifecycleState.resumed);
+    service.dispose();
+    service = create();
+    await start();
+    expect(platform.shows, hasLength(2));
+    expect(platform.visible, isEmpty);
+    expect(platform.planned, isEmpty);
+  });
+  test(
+    'reopen before 9 repeats due debt while retaining today\'s alarm',
+    () async {
+      now = DateTime.utc(2026, 1, 2, 23);
+      debts = [debt()];
+      await start();
+      final today = platform.planned.values.firstWhere((e) => e.when.day == 3);
+      await service.handleLifecycleState(AppLifecycleState.paused);
+      await service.handleLifecycleState(AppLifecycleState.resumed);
+      service.dispose();
+      service = create();
+      await start();
+      expect(platform.shows, hasLength(3));
+      expect(platform.planned[today.id], same(today));
+      expect(platform.scheduleCalls, 14);
+    },
+  );
+  test(
+    'retry after scheduling failure does not repeat already posted alerts',
+    () async {
+      products = [product(4)];
+      debts = [debt()];
+      platform.failScheduleAt = 1;
+      await start();
+      expect(service.lastError, isNotNull);
+      expect(platform.shows, hasLength(2));
+      platform.failScheduleAt = null;
+      await service.refresh();
+      expect(service.lastError, isNull);
+      expect(platform.shows, hasLength(2));
+      expect(platform.planned, hasLength(13));
+    },
+  );
   test(
     'simultaneous triggers post one stock alert and one grouped Utang alert',
     () async {
@@ -235,29 +346,27 @@ void main() {
       expect(platform.scheduleCalls, 13);
     },
   );
+  test('due debt repeats on restart but not on ordinary refreshes', () async {
+    debts = [debt()];
+    await start();
+    expect(platform.shows, hasLength(1));
+    expect(platform.shows.single.stock, isFalse);
+    await service.refresh();
+    await service.refresh();
+    expect(platform.shows, hasLength(1));
+    service.dispose();
+    service = create();
+    await start();
+    expect(platform.shows, hasLength(2));
+  });
   test(
-    'newly due after 9 AM alerts once; unchanged overdue debt does not spam',
-    () async {
-      debts = [debt()];
-      await start();
-      expect(platform.shows, hasLength(1));
-      expect(platform.shows.single.stock, isFalse);
-      await service.refresh();
-      await service.refresh();
-      expect(platform.shows, hasLength(1));
-      service.dispose();
-      service = create();
-      await start();
-      expect(platform.shows, hasLength(1));
-    },
-  );
-  test(
-    'before 9 AM uses one grouped OS reminder per day in a 14-day window',
+    'before 9 AM alerts immediately and keeps the 14-day scheduled window',
     () async {
       now = DateTime.utc(2026, 1, 2, 23); // Jan 3, 7 AM Manila.
       debts = [debt(), debt(id: 'd2')];
       await start();
-      expect(platform.shows, isEmpty);
+      expect(platform.shows, hasLength(1));
+      expect(platform.shows.single.stock, isFalse);
       expect(platform.planned, hasLength(14));
       expect(
         platform.planned.values.every(
@@ -304,7 +413,7 @@ void main() {
     },
   );
   test(
-    'OS-fired reminder is not duplicated after reopening; delayed inexact alarm stays single',
+    'ordinary refresh keeps a delayed alarm; later reopening repeats a delivered reminder',
     () async {
       now = DateTime.utc(2026, 1, 2, 23);
       debts = [debt()];
@@ -312,13 +421,71 @@ void main() {
       final today = platform.planned.values.firstWhere((e) => e.when.day == 3);
       now = DateTime.utc(2026, 1, 3, 2);
       await service.refresh();
-      expect(platform.shows, isEmpty); // Still awaiting the OS.
+      expect(platform.shows, hasLength(1)); // Still awaiting the OS.
       platform.planned.remove(today.id); // OS consumed it while app was closed.
       service.dispose();
       service = create();
       await start();
-      expect(platform.shows, isEmpty);
+      expect(platform.shows, hasLength(2));
       expect(platform.planned.containsKey(today.id), isFalse);
+    },
+  );
+  for (final minute in [59, 60, 120]) {
+    test(
+      'opening at 8 AM + $minute minutes replaces a pending 9 AM alarm',
+      () async {
+        now = DateTime.utc(2026, 1, 2, 23);
+        debts = [debt()];
+        await start();
+        final today = platform.planned.values.firstWhere(
+          (e) => e.when.day == 3,
+        );
+        now = DateTime.utc(2026, 1, 3, 0, minute);
+        await service.handleLifecycleState(AppLifecycleState.paused);
+        await service.handleLifecycleState(AppLifecycleState.resumed);
+        await service.refresh();
+        expect(platform.shows, hasLength(2));
+        expect(platform.planned.containsKey(today.id), isFalse);
+        expect(platform.planned, hasLength(13));
+        expect(platform.visible.containsKey(today.id), isTrue);
+      },
+    );
+  }
+  test(
+    '9 AM OS delivery covers an overlapping launch, but not the next reopen',
+    () async {
+      now = DateTime.utc(2026, 1, 2, 23);
+      products = [product(4)];
+      debts = [debt()];
+      await start();
+      final today = platform.planned.values.firstWhere((e) => e.when.day == 3);
+      now = DateTime.utc(2026, 1, 3, 1, 0, 15);
+      platform.planned.remove(today.id); // OS fired 15 seconds ago.
+      service.dispose();
+      service = create();
+      await start();
+      await service.refresh();
+      expect(platform.shows.where((e) => e.stock), hasLength(2));
+      expect(platform.shows.where((e) => !e.stock), hasLength(1));
+      expect(platform.planned, hasLength(13));
+      await service.handleLifecycleState(AppLifecycleState.paused);
+      await service.handleLifecycleState(AppLifecycleState.resumed);
+      expect(platform.shows.where((e) => !e.stock), hasLength(2));
+    },
+  );
+  test(
+    'a pre-9 visible reminder is retired when the next day has no due debts',
+    () async {
+      now = DateTime.utc(2026, 1, 2, 23);
+      debts = [debt()];
+      await start();
+      expect(platform.visible, hasLength(1));
+      now = now.add(const Duration(days: 1));
+      debts = [debt(paid: true)];
+      await service.handleLifecycleState(AppLifecycleState.paused);
+      await service.handleLifecycleState(AppLifecycleState.resumed);
+      expect(platform.visible, isEmpty);
+      expect(platform.planned, isEmpty);
     },
   );
   test(

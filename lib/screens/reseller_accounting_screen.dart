@@ -20,7 +20,10 @@ class ResellerAccountingScreen extends StatelessWidget {
       listenable: AppState(),
       builder: (context, _) {
         final orders = AppState().orders.toList();
-        final summaries = AccountingService.instance.resellerSummary(orders);
+        final summaries = AccountingService.instance.resellerSummary(
+          orders,
+          businessEvents: AppState().businessEvents,
+        );
 
         return Scaffold(
           backgroundColor: AppColors.background,

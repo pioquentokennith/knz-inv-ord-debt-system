@@ -25,6 +25,7 @@ class EditStockDialog extends StatefulWidget {
 class _EditStockDialogState extends State<EditStockDialog> {
   // Controller pre-filled with the product's current stock quantity
   late TextEditingController _ctrl;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -128,6 +129,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
                     height: 48,
                     // Parse the field value, confirm with the user, then persist the update
                     onPressed: () async {
+                      if (_isSaving) return;
                       final v = int.tryParse(_ctrl.text.trim());
                       if (v == null || v < 0) {
                         KnzToast.warning(
@@ -136,6 +138,7 @@ class _EditStockDialogState extends State<EditStockDialog> {
                         );
                         return;
                       }
+                      setState(() => _isSaving = true);
                       final confirmed = await showConfirmDialog(
                         context,
                         title: 'Update Stock',
@@ -144,7 +147,11 @@ class _EditStockDialogState extends State<EditStockDialog> {
                         confirmLabel: 'Update',
                         icon: Icons.inventory_2_rounded,
                       );
-                      if (!confirmed || !context.mounted) return;
+                      if (!context.mounted) return;
+                      if (!confirmed) {
+                        setState(() => _isSaving = false);
+                        return;
+                      }
                       try {
                         await AppState().updateStock(widget.product.id, v);
                         if (context.mounted) {
@@ -161,6 +168,8 @@ class _EditStockDialogState extends State<EditStockDialog> {
                             'Stock could not be updated. Please try again.',
                           );
                         }
+                      } finally {
+                        if (mounted) setState(() => _isSaving = false);
                       }
                     },
                   ),

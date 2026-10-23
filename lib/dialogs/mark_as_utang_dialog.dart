@@ -86,7 +86,14 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
 
   Future<void> _submit() async {
     if (_isSaving) return;
-    final initialPaid = Money.tryParse(_amountCtrl.text.trim()) ?? Money.zero;
+    final initialText = _amountCtrl.text.trim();
+    final initialPaid = initialText.isEmpty
+        ? Money.zero
+        : Money.tryParse(initialText);
+    if (initialPaid == null) {
+      setState(() => _error = 'Please enter a valid initial payment.');
+      return;
+    }
 
     if (initialPaid.isNegative) {
       setState(() => _error = 'Amount cannot be negative.');
@@ -118,6 +125,10 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
     }
     if (_dueDate != null) confirmMsg += '\nDue: $_dueDateLabel';
 
+    setState(() {
+      _isSaving = true;
+      _error = null;
+    });
     final confirmed = await showConfirmDialog(
       context,
       title: 'Record Utang?',
@@ -125,11 +136,11 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
       confirmLabel: 'Yes, Record',
       confirmColor: AppColors.warning,
     );
-    if (!confirmed || !mounted) return;
-    setState(() {
-      _isSaving = true;
-      _error = null;
-    });
+    if (!mounted) return;
+    if (!confirmed) {
+      setState(() => _isSaving = false);
+      return;
+    }
 
     final now = DateTime.now().toUtc();
     final effectiveInterestType = interestRate > 0 ? _interestType : 'none';
@@ -200,12 +211,14 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
               children: [
                 Icon(Icons.money_off, color: AppColors.warning, size: 20),
                 SizedBox(width: 10),
-                Text(
-                  'Mark as Utang',
-                  style: TextStyle(
-                    color: AppColors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
+                Expanded(
+                  child: Text(
+                    'Mark as Utang',
+                    style: TextStyle(
+                      color: AppColors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                    ),
                   ),
                 ),
               ],
@@ -225,18 +238,24 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        widget.order.customerName,
-                        style: const TextStyle(
-                          color: AppColors.white,
-                          fontWeight: FontWeight.w600,
+                      Expanded(
+                        child: Text(
+                          widget.order.customerName,
+                          style: const TextStyle(
+                            color: AppColors.white,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                      Text(
-                        widget.order.orderId,
-                        style: const TextStyle(
-                          color: AppColors.gold,
-                          fontSize: 12,
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          widget.order.orderId,
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(
+                            color: AppColors.gold,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     ],
@@ -245,18 +264,24 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'Order Total',
-                        style: TextStyle(
-                          color: AppColors.whiteTertiary,
-                          fontSize: 12,
+                      const Expanded(
+                        child: Text(
+                          'Order Total',
+                          style: TextStyle(
+                            color: AppColors.whiteTertiary,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
-                      Text(
-                        _orderTotal.format(),
-                        style: const TextStyle(
-                          color: AppColors.white,
-                          fontWeight: FontWeight.w700,
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _orderTotal.format(),
+                          textAlign: TextAlign.end,
+                          style: const TextStyle(
+                            color: AppColors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ],

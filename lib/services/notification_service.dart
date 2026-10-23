@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:timezone/timezone.dart' as tz;
 import 'package:uuid/uuid.dart';
 
@@ -58,6 +59,14 @@ class NotificationService extends ChangeNotifier {
   String? _scope;
   String? _pendingTap;
   AlertNavigation? _navigate;
+  bool _backgrounded = false;
+  int _open = 0;
+  int _evaluatedOpen = -1;
+  int _debtAlertOpen = -1;
+  final _stockAlertOpens = <int, int>{};
+  // Treat a launch within one minute of 9 AM and that day's scheduled alert
+  // as one reminder. Earlier launches still keep the upcoming 9 AM alarm.
+  static const _scheduleOverlap = Duration(minutes: 1);
   static const _bindingKey = 'notifications.session.v1';
   static const _promptKey = 'notifications.permission_prompted.v1';
 
@@ -131,6 +140,30 @@ class NotificationService extends ChangeNotifier {
     List<CustomerDebt> debts,
   ) => refresh();
 
+  /// Only a real background/foreground transition starts another alert pass.
+  /// Initial resumed callbacks and temporary inactive states (e.g. permission
+  /// dialogs) share the cold-start pass, even while data/plugin loading overlaps.
+  Future<void> handleLifecycleState(AppLifecycleState state) async {
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      _backgrounded = true;
+    } else if (state == AppLifecycleState.resumed && _backgrounded) {
+      _backgrounded = false;
+      _open++;
+      try {
+        await refresh();
+      } catch (_) {
+        // _serial publishes failures; a later refresh can retry this open.
+      }
+    }
+  }
+
+  void _resetOpenAlerts() {
+    _evaluatedOpen = -1;
+    _debtAlertOpen = -1;
+    _stockAlertOpens.clear();
+  }
+
   Future<void> refresh() {
     if (!initialized) {
       return Future.value(); // init() re-evaluates the current snapshot.
@@ -161,6 +194,7 @@ class NotificationService extends ChangeNotifier {
       }
       _boundUser = null;
       _scope = null;
+      _resetOpenAlerts();
     });
   }
 
@@ -233,11 +267,13 @@ class NotificationService extends ChangeNotifier {
         _boundUser = null;
         _scope = null;
         _pendingTap = null;
+        _resetOpenAlerts();
       }
       return;
     }
     final uid = snapshot.userId;
     final generation = _generation;
+    final open = _open;
     if (!_current(uid, generation)) return;
     if (_boundUser != uid) {
       final saved = await _store.read(_bindingKey);
@@ -258,12 +294,14 @@ class NotificationService extends ChangeNotifier {
       }
       if (!_current(uid, generation)) return;
       _boundUser = uid;
+      _resetOpenAlerts();
       await _platform.cancel(
         1001,
       ); // Retire old aggregate IDs, not their channels.
       await _platform.cancel(1002);
     }
     _deliverTap();
+    final opening = _evaluatedOpen != open;
     final encoded = await _store.read(_historyKey(uid));
     if (!_current(uid, generation)) return;
     final history = encoded == null
@@ -294,7 +332,8 @@ class NotificationService extends ChangeNotifier {
           ? false
           : level > oldLevel || previous?['pending'] == true;
       stocks[id] = {'level': level, 'pending': pending};
-      if (pending && permission == AlertPermission.granted) {
+      final repeatOnOpen = opening && _stockAlertOpens[notificationId] != open;
+      if ((pending || repeatOnOpen) && permission == AlertPermission.granted) {
         await _save(uid, history);
         if (!_current(uid, generation)) return;
         await _platform.show(
@@ -311,6 +350,7 @@ class NotificationService extends ChangeNotifier {
           return;
         }
         stocks[id] = {'level': level, 'pending': false};
+        _stockAlertOpens[notificationId] = open;
         await _save(uid, history);
       } else if (level < oldLevel && permission == AlertPermission.granted) {
         await _platform.cancel(
@@ -327,7 +367,8 @@ class NotificationService extends ChangeNotifier {
       await _save(uid, history);
       return;
     }
-    await _scheduleDebts(snapshot, history, generation);
+    await _scheduleDebts(snapshot, history, generation, open, opening);
+    if (_current(uid, generation)) _evaluatedOpen = open;
   }
 
   String _day(tz.TZDateTime value) =>
@@ -341,11 +382,18 @@ class NotificationService extends ChangeNotifier {
     NotificationSnapshot snapshot,
     Map<String, dynamic> history,
     int generation,
+    int open,
+    bool opening,
   ) async {
     final uid = snapshot.userId;
     final location = await _platform.timeZone();
     final now = tz.TZDateTime.from(_now(), location);
     final today = _day(now);
+    if (history['lastVisibleDueDay'] case final String previousDay) {
+      if (previousDay != today) {
+        await _platform.cancel(_id(uid, 'due', previousDay));
+      }
+    }
     if (history['lastDueDay'] case final String previousDay) {
       if (previousDay != today) {
         await _platform.cancel(_id(uid, 'due', previousDay));
@@ -359,6 +407,8 @@ class NotificationService extends ChangeNotifier {
     final todayId = _id(uid, 'due', today);
     final previousToday = old[today] as Map?;
     final todayNine = tz.TZDateTime(location, now.year, now.month, now.day, 9);
+    final nearNine = now.difference(todayNine).abs() <= _scheduleOverlap;
+    var justDelivered = false;
     if (previousToday != null &&
         previousToday['zone'] != location.name &&
         !now.isBefore(todayNine) &&
@@ -372,14 +422,26 @@ class NotificationService extends ChangeNotifier {
         previousToday['zone'] == location.name &&
         !now.isBefore(DateTime.parse(previousToday['at'] as String)) &&
         !pending.contains(todayId)) {
+      justDelivered = history['lastDueDay'] != today && nearNine;
       history['lastDueDay'] = today;
     }
+    final repeatOnOpen = opening && _debtAlertOpen != open;
+    if (repeatOnOpen && justDelivered) _debtAlertOpen = open;
     if (!dueNow) {
       await _platform.cancel(todayId);
-    } else if (!now.isBefore(todayNine) &&
-        history['lastDueDay'] != today &&
-        !pending.contains(todayId)) {
+    } else if ((repeatOnOpen && !justDelivered) ||
+        (!now.isBefore(todayNine) &&
+            history['lastDueDay'] != today &&
+            !pending.contains(todayId))) {
       if (!_current(uid, generation)) return;
+      // Replace today's due/delayed alarm before posting, so it cannot also
+      // fire after this opening's immediate reminder. Preserve earlier alarms.
+      final consumesSchedule = !now.isBefore(todayNine) || nearNine;
+      if (consumesSchedule) {
+        await _platform.cancel(todayId);
+        pending.remove(todayId);
+        if (!_current(uid, generation)) return;
+      }
       await _platform.show(
         todayId,
         'Utang payment is due',
@@ -391,7 +453,11 @@ class NotificationService extends ChangeNotifier {
         await _platform.cancel(todayId);
         return;
       }
-      history['lastDueDay'] = today;
+      _debtAlertOpen = open;
+      // Track visible pre-9 alerts too, so a later day can retire them without
+      // marking today's scheduled reminder as already delivered.
+      history['lastVisibleDueDay'] = today;
+      if (consumesSchedule) history['lastDueDay'] = today;
       await _save(uid, history);
     }
     for (var offset = 0; offset < 14; offset++) {

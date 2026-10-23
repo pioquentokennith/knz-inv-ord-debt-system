@@ -140,12 +140,14 @@ class _ExportDialogState extends State<ExportDialog> {
           } else if (format == 'pdf') {
             await ExportService.exportOrdersPdf(
               orders,
+              businessEvents: state.businessEvents,
               businessName: AppStrings.appName,
               userName: userName,
             );
           } else {
             await ExportService.printOrdersPdf(
               orders,
+              businessEvents: state.businessEvents,
               businessName: AppStrings.appName,
               userName: userName,
             );

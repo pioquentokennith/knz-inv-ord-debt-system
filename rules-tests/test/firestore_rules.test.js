@@ -12,6 +12,7 @@ const {
 const {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -494,6 +495,20 @@ test('revision-aware writes advance exactly one and reject stale updates', async
     base_revision: 2,
     writer_device_id: 'DEVICE02',
     updated_at: new Date().toISOString(),
+  }));
+});
+
+test('a versioned document cannot bypass conflict checks by removing revision fields', async () => {
+  await seedAccess('approved-user', 'approved', 'Staff', true);
+  const firestore = authenticated('approved-user');
+  const product = doc(firestore, 'users/approved-user/products/versioned-product');
+  await assertSucceeds(setDoc(product, {
+    id: 'versioned-product', user_id: 'approved-user', stock_qty: 10,
+    revision: 1, base_revision: 0, writer_device_id: 'DEVICE01',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }));
+  await assertFails(updateDoc(product, {
+    stock_qty: 999, revision: deleteField(), base_revision: deleteField(),
   }));
 });
 

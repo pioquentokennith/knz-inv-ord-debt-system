@@ -244,7 +244,8 @@ service cloud.firestore {
 
     function validRevisionUpdate() {
       let before = ('revision' in resource.data) ? resource.data.revision : 0;
-      return !('revision' in request.resource.data)
+      return (!('revision' in resource.data)
+          && !('revision' in request.resource.data))
         || (
           request.resource.data.base_revision == before
           && request.resource.data.revision == before + 1

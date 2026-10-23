@@ -281,4 +281,39 @@ void main() {
       expect(await database.query('sync_queue'), hasLength(count));
     },
   );
+
+  test(
+    'outbound finalization refreshes both displayed IDs without inbound changes',
+    () async {
+      await state.refreshData(collections: {'orders', 'debts'});
+      final oldOrder = state.orders.single;
+      final oldDebt = state.debts.single;
+      final product = state.products.single;
+      final oldSales = state.salesRecords;
+      expect(oldOrder.orderId, startsWith('TMP-'));
+      await database.transaction((txn) async {
+        await txn.update(
+          'orders',
+          {'order_id': 'KNZ-000004', 'number_state': 'finalized'},
+          where: 'id = ? AND user_id = ?',
+          whereArgs: [oldOrder.id, 'u'],
+        );
+        await txn.update(
+          'debts',
+          {'order_id': 'KNZ-000004'},
+          where: 'id = ? AND user_id = ?',
+          whereArgs: [oldDebt.id, 'u'],
+        );
+      });
+      await state.refreshSyncedData('other-user', {'orders', 'debts'});
+      expect(state.orders.single.orderId, oldOrder.orderId);
+      expect(state.debts.single.orderId, oldDebt.orderId);
+      await state.refreshSyncedData('u', {'orders', 'debts'});
+      expect(state.orders.single.orderId, 'KNZ-000004');
+      expect(state.debts.single.orderId, 'KNZ-000004');
+      expect(identical(state.salesRecords, oldSales), isFalse);
+      expect(identical(state.products.single, product), isTrue);
+      expect(state.isLoggedIn, isTrue);
+    },
+  );
 }

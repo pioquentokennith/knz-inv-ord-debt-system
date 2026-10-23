@@ -136,6 +136,7 @@ class _ProductDialogState extends State<ProductDialog> {
   // Validates product name, shows a confirmation dialog, then either
   // creates a new Product or updates the existing one via AppState.
   Future<void> _submit() async {
+    if (_isSaving) return;
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) {
       KnzToast.warning(context, 'Product name is required.');
@@ -171,7 +172,8 @@ class _ProductDialogState extends State<ProductDialog> {
       confirmLabel: actionLabel,
       icon: _isEditing ? Icons.edit_rounded : Icons.add_box_rounded,
     );
-    if (!confirmed || !mounted) {
+    if (!mounted) return;
+    if (!confirmed) {
       setState(() => _isSaving = false);
       return;
     }

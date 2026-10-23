@@ -61,11 +61,19 @@ class _CustomOrderDialogState extends State<CustomOrderDialog> {
   }
 
   Future<void> _pickDeliveryDate() async {
+    final firstDate = DateUtils.dateOnly(DateTime.now());
+    final lastDate = firstDate.add(const Duration(days: 365 * 3));
+    final selected = DateUtils.dateOnly(_deliveryDate);
+    final initialDate = selected.isBefore(firstDate)
+        ? firstDate
+        : selected.isAfter(lastDate)
+        ? lastDate
+        : selected;
     final picked = await showDatePicker(
       context: context,
-      initialDate: _deliveryDate,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 365 * 3)),
+      initialDate: initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
       builder: (context, child) => Theme(
         data: ThemeData.dark().copyWith(
           colorScheme: const ColorScheme.dark(primary: AppColors.gold),
@@ -73,7 +81,7 @@ class _CustomOrderDialogState extends State<CustomOrderDialog> {
         child: child!,
       ),
     );
-    if (picked != null) setState(() => _deliveryDate = picked);
+    if (picked != null && mounted) setState(() => _deliveryDate = picked);
   }
 
   Future<void> _save() async {

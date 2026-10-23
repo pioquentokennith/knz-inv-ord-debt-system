@@ -128,6 +128,7 @@ class AppState extends ChangeNotifier {
     });
     SyncQueue.instance.setAuthorizationGate(_authorizeSynchronization);
     SyncQueue.instance.setAfterSuccessfulSync(_reconcileInbound);
+    SyncQueue.instance.setAfterLocalSync(refreshSyncedData);
   }
 
   // ── State ─────────────────────────────────────────────────────────────────
@@ -638,6 +639,14 @@ class AppState extends ChangeNotifier {
   // Public shortcut to re-fetch all data (e.g. after sync or pull-to-refresh)
   Future<void> refreshData({Set<String>? collections}) =>
       _loadAllData(collections: collections);
+
+  /// Outbound finalization already updated SQLite; equal cloud revisions may
+  /// produce no inbound changes. Reload those lists for the current owner even
+  /// when another outbox operation fails or cloud access becomes unavailable.
+  Future<void> refreshSyncedData(String uid, Set<String> collections) async {
+    if (!_isLoggedIn || uid != _activeUser) return;
+    await _loadAllData(collections: collections);
+  }
 
   Future<void> _syncNotificationsForCurrentState() async {
     if (!_isLoggedIn) return;

@@ -221,6 +221,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           final crossAxisCount = constraints.maxWidth < 400
                               ? 1
                               : 2;
+                          final cardWidth =
+                              (constraints.maxWidth -
+                                  12 * (crossAxisCount - 1)) /
+                              crossAxisCount;
+                          final textScale =
+                              (MediaQuery.textScalerOf(context).scale(14) / 14)
+                                  .clamp(1.0, double.infinity);
                           return GridView.builder(
                             padding: const EdgeInsets.only(bottom: 16),
                             gridDelegate:
@@ -228,7 +235,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                   crossAxisCount: crossAxisCount,
                                   crossAxisSpacing: 12,
                                   mainAxisSpacing: 12,
-                                  mainAxisExtent: 380,
+                                  mainAxisExtent:
+                                      cardWidth * 0.55 + 220 * textScale,
                                 ),
                             itemCount: filtered.length,
                             itemBuilder: (ctx, i) {
@@ -703,20 +711,21 @@ class _ProductCardState extends State<_ProductCard>
                           ),
                         ),
                         const SizedBox(width: 4),
-                        if (widget.onDelete != null)
-                          DarkIconButton(
-                            icon: Icons.edit_outlined,
-                            semanticLabel: 'Edit product',
-                            color: AppColors.gold,
-                            onPressed: widget.onEdit,
-                          ),
-                        const SizedBox(width: 4),
                         DarkIconButton(
-                          icon: Icons.delete_outline,
-                          semanticLabel: 'Delete product',
-                          color: AppColors.error,
-                          onPressed: widget.onDelete!,
+                          icon: Icons.edit_outlined,
+                          semanticLabel: 'Edit product',
+                          color: AppColors.gold,
+                          onPressed: widget.onEdit,
                         ),
+                        if (widget.onDelete != null) ...[
+                          const SizedBox(width: 4),
+                          DarkIconButton(
+                            icon: Icons.delete_outline,
+                            semanticLabel: 'Delete product',
+                            color: AppColors.error,
+                            onPressed: widget.onDelete!,
+                          ),
+                        ],
                       ],
                     ),
                   ],

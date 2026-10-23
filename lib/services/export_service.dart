@@ -329,6 +329,7 @@ class ExportService {
   // Builds an orders PDF and opens the system share sheet
   static Future<void> exportOrdersPdf(
     List<Order> orders, {
+    required List<BusinessEvent> businessEvents,
     required String businessName,
     String? subtitle,
     String? userName,
@@ -336,6 +337,7 @@ class ExportService {
     await _ensureFonts();
     final bytes = await _buildOrdersPdf(
       orders,
+      businessEvents: businessEvents,
       businessName: businessName,
       subtitle: subtitle,
       userName: userName,
@@ -391,12 +393,14 @@ class ExportService {
 
   static Future<void> printOrdersPdf(
     List<Order> orders, {
+    required List<BusinessEvent> businessEvents,
     required String businessName,
     String? userName,
   }) async {
     await _ensureFonts();
     final pdf = _buildOrdersPdf(
       orders,
+      businessEvents: businessEvents,
       businessName: businessName,
       userName: userName,
     );
@@ -446,6 +450,7 @@ class ExportService {
 
   static pw.Document _buildOrdersPdf(
     List<Order> orders, {
+    required List<BusinessEvent> businessEvents,
     required String businessName,
     String? subtitle,
     String? userName,
@@ -455,7 +460,10 @@ class ExportService {
     final exportedOrders = orders
         .where((order) => order.status != OrderStatus.cancelled)
         .toList();
-    final revenue = AccountingService.instance.netSales(exportedOrders);
+    final revenue = AccountingService.instance.netSales(
+      exportedOrders,
+      businessEvents: businessEvents,
+    );
 
     pdf.addPage(
       pw.MultiPage(
@@ -555,9 +563,7 @@ class ExportService {
                   _cell(''),
                   _cell(''),
                   _cell(
-                    _pdfCurrency.format(
-                      AccountingService.instance.netSales(exportedOrders),
-                    ),
+                    _pdfCurrency.format(revenue),
                     bold: true,
                     color: PdfColors.grey800,
                   ),

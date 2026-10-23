@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../repositories/sync_queue.dart';
+import '../services/notification_service.dart';
 import 'app_bootstrap.dart';
-import 'app_constants.dart';
 import 'app_state.dart';
 
 class StartupGate extends StatefulWidget {
@@ -12,10 +12,12 @@ class StartupGate extends StatefulWidget {
     super.key,
     required this.bootstrap,
     required this.homeBuilder,
+    this.notifications,
   });
 
   final AppBootstrap bootstrap;
   final WidgetBuilder homeBuilder;
+  final NotificationService? notifications;
 
   @override
   State<StartupGate> createState() => _StartupGateState();
@@ -39,6 +41,10 @@ class _StartupGateState extends State<StartupGate> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    unawaited(
+      (widget.notifications ?? NotificationService.instance)
+          .handleLifecycleState(state),
+    );
     final appState = AppState();
     final uid = appState.currentUser?.id;
     if (state != AppLifecycleState.resumed ||
@@ -91,34 +97,7 @@ class _StartupGateState extends State<StartupGate> with WidgetsBindingObserver {
         }
 
         widget.bootstrap.startOptional();
-        return ValueListenableBuilder<Set<StartupCapability>>(
-          valueListenable: widget.bootstrap.unavailableCapabilities,
-          builder: (context, unavailable, _) {
-            return Column(
-              children: [
-                if (unavailable.isNotEmpty)
-                  Material(
-                    color: AppColors.warning.withValues(alpha: 0.16),
-                    child: const SafeArea(
-                      bottom: false,
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        child: Text(
-                          'Local mode is available. Cloud setup, email verification, sync, or notifications may be unavailable.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 12),
-                        ),
-                      ),
-                    ),
-                  ),
-                Expanded(child: widget.homeBuilder(context)),
-              ],
-            );
-          },
-        );
+        return widget.homeBuilder(context);
       },
     );
   }

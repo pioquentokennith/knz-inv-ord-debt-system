@@ -91,6 +91,10 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
     }
 
     // ── Confirmation prompt ───────────────────────────────────────────────
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
     final confirmed = await showConfirmDialog(
       context,
       title: 'Confirm Payment',
@@ -98,11 +102,11 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
           'Record a $_method payment of ${amount.format()} for ${widget.debt.customerName}?',
       confirmLabel: 'Yes, Confirm',
     );
-    if (!confirmed || !mounted) return;
-    setState(() {
-      _submitting = true;
-      _error = null;
-    });
+    if (!mounted) return;
+    if (!confirmed) {
+      setState(() => _submitting = false);
+      return;
+    }
     // ── END Confirmation ──────────────────────────────────────────────────
 
     final note = _method == 'GCash'
@@ -201,44 +205,49 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              widget.debt.customerName,
-                              style: const TextStyle(
-                                color: AppColors.white,
-                                fontWeight: FontWeight.w600,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                widget.debt.customerName,
+                                style: const TextStyle(
+                                  color: AppColors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            Text(
-                              widget.debt.orderId,
-                              style: const TextStyle(
-                                color: AppColors.gold,
-                                fontSize: 12,
+                              Text(
+                                widget.debt.orderId,
+                                style: const TextStyle(
+                                  color: AppColors.gold,
+                                  fontSize: 12,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            const Text(
-                              'Principal Balance',
-                              style: TextStyle(
-                                color: AppColors.whiteTertiary,
-                                fontSize: 11,
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              const Text(
+                                'Principal Balance',
+                                style: TextStyle(
+                                  color: AppColors.whiteTertiary,
+                                  fontSize: 11,
+                                ),
                               ),
-                            ),
-                            Text(
-                              remaining.format(),
-                              style: const TextStyle(
-                                color: AppColors.error,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 15,
+                              Text(
+                                remaining.format(),
+                                style: const TextStyle(
+                                  color: AppColors.error,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 15,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ],
                     ),
