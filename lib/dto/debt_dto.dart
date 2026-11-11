@@ -1,5 +1,6 @@
 import '../core/money.dart';
 import '../models/debt_model.dart';
+import '../models/interest_type.dart';
 import 'dto_reader.dart';
 
 class PaymentDto {
@@ -140,7 +141,7 @@ class DebtDto {
         principalOutstandingCentavos > principalOriginalCentavos) {
       throw const FormatException('Debt balances are invalid.');
     }
-    if (!const {'none', 'daily', 'monthly'}.contains(interestType)) {
+    if (!InterestType.isValid(interestType)) {
       throw FormatException('Debt interest type is invalid: $interestType');
     }
     if (lastAccrualTimestamp.isBefore(interestStartTimestamp)) {

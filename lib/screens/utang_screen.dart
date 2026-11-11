@@ -16,6 +16,7 @@ import '../core/app_state.dart';
 import '../core/money.dart';
 import '../core/app_state_builder.dart'; // ← FIX 6
 import '../models/debt_model.dart';
+import '../models/interest_type.dart';
 import '../widgets/shared_widgets.dart';
 import '../dialogs/utang_payment_dialog.dart'; // ← FIX 5
 import '../dialogs/utang_receipt_printer.dart'; // ← FIX 5
@@ -535,7 +536,7 @@ class _DebtCardState extends State<_DebtCard> {
                                         // Old: "10% daily (+₱1,234 as of May 23)" — 35+ chars
                                         // New: "10%/day +₱1,234"
                                         '${(debt.interestRateBasisPoints / 100).toStringAsFixed(2)}%'
-                                        '/${debt.interestType == 'daily' ? 'day' : 'mo'} '
+                                        '/${InterestType.fromString(debt.interestType).unitLabel} '
                                         '+${debt.accruedInterest.format()}',
                                         style: const TextStyle(
                                           color: AppColors.warning,

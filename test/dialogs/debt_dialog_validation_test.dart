@@ -18,6 +18,92 @@ Order order({String name = 'Customer'}) => Order(
 );
 
 void main() {
+  testWidgets('weekly Utang validates rate and confirms the selected terms', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: MarkAsUtangDialog(order: order())),
+      ),
+    );
+    await tester.ensureVisible(find.text('Weekly'));
+    await tester.tap(find.text('Weekly'));
+    await tester.pumpAndSettle();
+    final rate = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.suffixText == '%  weekly',
+    );
+    await tester.enterText(rate, '');
+    await tester.ensureVisible(find.text('Record Utang'));
+    await tester.tap(find.text('Record Utang'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Enter a valid non-negative interest rate.'),
+      findsOneWidget,
+    );
+    expect(find.text('Record Utang?'), findsNothing);
+    await tester.enterText(rate, '2.50');
+    await tester.ensureVisible(find.text('Record Utang'));
+    await tester.tap(find.text('Record Utang'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Interest: 2.50% weekly'), findsOneWidget);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Cancel'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('None'));
+    await tester.tap(find.text('None'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Record Utang'));
+    await tester.tap(find.text('Record Utang'));
+    await tester.pumpAndSettle();
+    expect(find.text('Record Utang?'), findsOneWidget);
+    expect(find.textContaining('Interest:'), findsNothing);
+    await tester.tap(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('Cancel'),
+      ),
+    );
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'weekly payment shows the rate and Full includes accrued interest',
+    (tester) async {
+      final start = DateTime.utc(2026);
+      final debt = CustomerDebt(
+        id: 'weekly',
+        customerName: 'Customer',
+        orderId: 'KNZ-001',
+        principalOriginal: const Money.fromCentavos(100000),
+        principalOutstanding: const Money.fromCentavos(100000),
+        createdAt: start,
+        interestType: 'weekly',
+        interestRateBasisPoints: 200,
+      ).accrueTo(start.add(const Duration(days: 7)));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: UtangPaymentDialog(debt: debt)),
+        ),
+      );
+      expect(find.text('Interest (2.00% weekly)'), findsOneWidget);
+      await tester.tap(find.text('Full'));
+      expect(
+        tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+        '1020.00',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('invalid initial payment is rejected instead of becoming zero', (
     tester,
   ) async {

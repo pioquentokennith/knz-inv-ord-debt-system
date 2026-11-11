@@ -164,53 +164,63 @@ void main() {
     },
   );
 
-  test('Debt local to DTO to cloud to fresh database round trip', () async {
-    final payment = PaymentRecord(
-      id: 'payment-1',
-      amount: const Money.fromCentavos(10000),
-      interestApplied: const Money.fromCentavos(1000),
-      principalApplied: const Money.fromCentavos(9000),
-      paidAt: createdAt.add(const Duration(days: 1)),
-      paymentMethod: 'Cash',
-      reference: 'OR-1',
-      note: 'First payment',
-    );
-    final debt = CustomerDebt(
-      id: 'debt-1',
-      customerName: 'Customer',
-      orderId: 'KNZ-007',
-      principalOriginal: const Money.fromCentavos(10000),
-      principalOutstanding: const Money.fromCentavos(1000),
-      createdAt: createdAt,
-      payments: [payment],
-      interestRateBasisPoints: 1000,
-      interestType: 'daily',
-      interestStartTimestamp: createdAt,
-      lastAccrualTimestamp: createdAt.add(const Duration(days: 1)),
-      dueDate: DateTime.utc(2026, 1, 15),
-    );
-    final original = DebtDto.fromDomain(debt, userId: userId);
-    await source.insert('debts', original.toLocal());
-    await source.insert('payments', original.payments.single.toLocal());
+  for (final frequency in ['daily', 'weekly']) {
+    test(
+      '$frequency debt local to DTO to cloud to fresh database round trip',
+      () async {
+        final period = Duration(days: frequency == 'weekly' ? 7 : 1);
+        final payment = PaymentRecord(
+          id: 'payment-1',
+          amount: const Money.fromCentavos(10000),
+          interestApplied: const Money.fromCentavos(1000),
+          principalApplied: const Money.fromCentavos(9000),
+          paidAt: createdAt.add(period),
+          paymentMethod: 'Cash',
+          reference: 'OR-1',
+          note: 'First payment',
+        );
+        final debt = CustomerDebt(
+          id: 'debt-1',
+          customerName: 'Customer',
+          orderId: 'KNZ-007',
+          principalOriginal: const Money.fromCentavos(10000),
+          principalOutstanding: const Money.fromCentavos(1000),
+          createdAt: createdAt,
+          payments: [payment],
+          interestRateBasisPoints: 1000,
+          interestType: frequency,
+          interestStartTimestamp: createdAt,
+          lastAccrualTimestamp: createdAt.add(period),
+          dueDate: DateTime.utc(2026, 1, 15),
+        );
+        final original = DebtDto.fromDomain(debt, userId: userId);
+        await source.insert('debts', original.toLocal());
+        await source.insert('payments', original.payments.single.toLocal());
 
-    final dto = DebtDto.fromLocal(
-      (await source.query('debts')).single,
-      await source.query('payments'),
-    );
-    final incoming = DebtDto.fromCloud(dto.toCloud(), userId: userId);
-    await restored.insert('debts', incoming.toLocal());
-    for (final row in incoming.payments) {
-      await restored.insert('payments', row.toLocal());
-    }
+        final dto = DebtDto.fromLocal(
+          (await source.query('debts')).single,
+          await source.query('payments'),
+        );
+        final incoming = DebtDto.fromCloud(dto.toCloud(), userId: userId);
+        await restored.insert('debts', incoming.toLocal());
+        for (final row in incoming.payments) {
+          await restored.insert('payments', row.toLocal());
+        }
 
-    expect(
-      (await restored.query('debts')).single,
-      _withSyncDefaults(dto.toLocal()),
+        expect(
+          (await restored.query('debts')).single,
+          _withSyncDefaults(dto.toLocal()),
+        );
+        expect(await restored.query('payments'), [
+          dto.payments.single.toLocal(),
+        ]);
+        expect(incoming.toDomain().interestRateBasisPoints, 1000);
+        expect(incoming.toDomain().interestType, frequency);
+        expect(incoming.toDomain().lastAccrualTimestamp, createdAt.add(period));
+        expect(incoming.toDomain().dueDate, DateTime.utc(2026, 1, 15));
+      },
     );
-    expect(await restored.query('payments'), [dto.payments.single.toLocal()]);
-    expect(incoming.toDomain().interestRateBasisPoints, 1000);
-    expect(incoming.toDomain().dueDate, DateTime.utc(2026, 1, 15));
-  });
+  }
 
   test('Payment local to DTO to cloud to fresh database round trip', () async {
     await _insertDebtParent(source);

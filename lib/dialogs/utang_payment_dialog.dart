@@ -259,15 +259,17 @@ class _UtangPaymentDialogState extends State<UtangPaymentDialog> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            'Interest (${(widget.debt.interestRateBasisPoints / 100).toStringAsFixed(2)}% '
-                            '${widget.debt.interestType} × '
-                            '${widget.debt.interestDaysOld} days)',
-                            style: const TextStyle(
-                              color: AppColors.warning,
-                              fontSize: 11,
+                          Expanded(
+                            child: Text(
+                              'Interest (${(widget.debt.interestRateBasisPoints / 100).toStringAsFixed(2)}% '
+                              '${widget.debt.interestType})',
+                              style: const TextStyle(
+                                color: AppColors.warning,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
+                          const SizedBox(width: 8),
                           Text(
                             '+ ${widget.debt.accruedInterest.format()}',
                             style: const TextStyle(

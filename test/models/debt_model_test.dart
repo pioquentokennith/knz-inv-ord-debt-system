@@ -97,6 +97,129 @@ void main() {
     expect(accrued.interestOutstanding.centavos, 5);
   });
 
+  test('weekly interest accrues only on complete 7-day boundaries', () {
+    final original = debt(
+      principal: 100000,
+      rateBasisPoints: 200,
+      interestType: 'weekly',
+      dueDate: start.add(const Duration(days: 30)),
+    );
+    final beforeWeek = original.accrueTo(
+      start
+          .add(const Duration(days: 7))
+          .subtract(const Duration(microseconds: 1)),
+    );
+    expect(beforeWeek.interestOutstanding, Money.zero);
+    expect(beforeWeek.lastAccrualTimestamp, start);
+
+    final weekOne = beforeWeek.accrueTo(start.add(const Duration(days: 7)));
+    expect(weekOne.interestOutstanding.centavos, 2000);
+    final repeated = weekOne.accrueTo(start.add(const Duration(days: 7)));
+    expect(repeated.interestOutstanding.centavos, 2000);
+    final dayThirteen = repeated.accrueTo(start.add(const Duration(days: 13)));
+    expect(dayThirteen.interestOutstanding.centavos, 2000);
+    expect(
+      dayThirteen.lastAccrualTimestamp,
+      start.add(const Duration(days: 7)),
+    );
+
+    // Catching up several periods uses simple interest, not compounding.
+    final weekThree = dayThirteen.accrueTo(start.add(const Duration(days: 21)));
+    expect(weekThree.interestOutstanding.centavos, 6000);
+    expect(weekThree.lastAccrualTimestamp, start.add(const Duration(days: 21)));
+  });
+
+  test(
+    'weekly partial payments preserve the schedule and use remaining principal',
+    () {
+      final original = debt(
+        principal: 100000,
+        rateBasisPoints: 200,
+        interestType: 'weekly',
+      );
+      final paid = original.allocatePayment(
+        payment(52000, start.add(const Duration(days: 10))),
+      );
+      expect(paid.payment.interestApplied.centavos, 2000);
+      expect(paid.payment.principalApplied.centavos, 50000);
+      expect(
+        paid.debt.lastAccrualTimestamp,
+        start.add(const Duration(days: 7)),
+      );
+      final weekTwo = paid.debt.accrueTo(start.add(const Duration(days: 14)));
+      expect(weekTwo.principalOutstanding.centavos, 50000);
+      expect(weekTwo.interestOutstanding.centavos, 1000);
+
+      final settled = weekTwo
+          .allocatePayment(
+            payment(51000, start.add(const Duration(days: 14)), id: 'p-2'),
+          )
+          .debt;
+      expect(settled.isPaid, isTrue);
+      expect(
+        settled.accrueTo(start.add(const Duration(days: 70))).totalOutstanding,
+        Money.zero,
+      );
+    },
+  );
+
+  test('weekly initial payment reduces the first period interest', () {
+    final paid = debt(
+      principal: 100000,
+      rateBasisPoints: 200,
+      interestType: 'weekly',
+    ).allocatePayment(payment(50000, start)).debt;
+    expect(
+      paid
+          .accrueTo(start.add(const Duration(days: 7)))
+          .interestOutstanding
+          .centavos,
+      1000,
+    );
+  });
+
+  test(
+    'weekly rounding is half-up per period and zero rates accrue nothing',
+    () {
+      final original = debt(
+        principal: 105,
+        rateBasisPoints: 1000,
+        interestType: 'weekly',
+      );
+      expect(
+        original
+            .accrueTo(start.add(const Duration(days: 14)))
+            .interestOutstanding
+            .centavos,
+        22,
+      );
+      final zeroRate = debt(interestType: 'weekly');
+      expect(
+        zeroRate
+            .accrueTo(start.add(const Duration(days: 14)))
+            .interestOutstanding,
+        Money.zero,
+      );
+    },
+  );
+
+  test('monthly interest still uses complete 30-day periods', () {
+    final original = debt(rateBasisPoints: 200, interestType: 'monthly');
+    expect(
+      original
+          .accrueTo(start.add(const Duration(days: 29)))
+          .interestOutstanding,
+      Money.zero,
+    );
+    expect(
+      original
+          .accrueTo(start.add(const Duration(days: 30)))
+          .interestOutstanding
+          .centavos,
+      200,
+    );
+  });
+
   test('overpayment is rejected without creating a payment history entry', () {
     final original = debt();
 

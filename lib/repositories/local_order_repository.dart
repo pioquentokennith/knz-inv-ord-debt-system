@@ -9,6 +9,7 @@ import '../dto/debt_dto.dart';
 import '../dto/order_dto.dart';
 import '../dto/product_dto.dart';
 import '../models/debt_model.dart';
+import '../models/interest_type.dart';
 import '../models/business_event_model.dart';
 import '../models/order_model.dart';
 import '../models/order_state_machine.dart';
@@ -1281,7 +1282,7 @@ class LocalOrderRepository extends BaseRepository implements OrderRepository {
         'debt.interestRateBasisPoints',
       );
     }
-    if (!const {'none', 'daily', 'monthly'}.contains(debt.interestType)) {
+    if (!InterestType.isValid(debt.interestType)) {
       throw ArgumentError.value(debt.interestType, 'debt.interestType');
     }
     final paymentIds = <String>{};

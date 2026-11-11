@@ -146,10 +146,10 @@ BusinessEvent _financialEvent({
   commandId: id,
 );
 
-CustomerDebt _debt(String id) => CustomerDebt(
+CustomerDebt _debt(String id, {String orderId = 'PENDING'}) => CustomerDebt(
   id: id,
   customerName: 'Customer',
-  orderId: 'PENDING',
+  orderId: orderId,
   principalOriginal: const Money.fromCentavos(10000),
   principalOutstanding: const Money.fromCentavos(10000),
   createdAt: DateTime.utc(2026),
@@ -305,6 +305,54 @@ void main() {
       expectedDebtCount: 1,
     );
   });
+
+  for (final convertExisting in [false, true]) {
+    test(
+      '${convertExisting ? 'converted' : 'new'} Utang order saves weekly terms',
+      () async {
+        final repo = repository();
+        final terms = _debt(
+          'weekly-debt',
+        ).copyWith(interestType: 'weekly', interestRateBasisPoints: 200);
+        if (convertExisting) {
+          final saved = await repo.addWithInventory(
+            _order(id: 'weekly-order'),
+            'user-1',
+          );
+          await repo.markAsUtang(
+            'weekly-order',
+            _debt(
+              'weekly-debt',
+              orderId: saved.order.orderId,
+            ).copyWith(interestType: 'weekly', interestRateBasisPoints: 200),
+          );
+        } else {
+          await repo.addWithInventory(
+            _order(id: 'weekly-order', status: OrderStatus.utang),
+            'user-1',
+            debt: terms,
+          );
+        }
+        final row = (await database.query('debts')).single;
+        expect(row['interest_type'], 'weekly');
+        expect(row['interest_rate_basis_points'], 200);
+        expect(row['principal_outstanding_centavos'], 10000);
+        expect(row['interest_outstanding_centavos'], 0);
+        expect(
+          row['order_id'],
+          (await database.query('orders')).single['order_id'],
+        );
+        expect(await stock(), 4);
+        final queue = await database.query('sync_queue');
+        final debtPayloads = queue
+            .map((row) => jsonDecode(row['data'] as String))
+            .map((payload) => payload['_debt'] ?? payload)
+            .where((payload) => payload['interest_type'] != null);
+        expect(debtPayloads, isNotEmpty);
+        expect(debtPayloads.last['interest_type'], 'weekly');
+      },
+    );
+  }
 
   test(
     'persists reconciled discounted headers, lines, and outbox data',

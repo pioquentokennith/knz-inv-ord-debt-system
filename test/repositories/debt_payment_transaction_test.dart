@@ -180,4 +180,57 @@ void main() {
     expect(await database.query('payments'), isEmpty);
     expect(await database.query('sync_queue'), hasLength(1));
   });
+
+  test(
+    'weekly debt reload and payment persist exact balances and sync terms',
+    () async {
+      await repository.add(
+        CustomerDebt(
+          id: 'weekly-debt',
+          customerName: 'Customer',
+          orderId: 'KNZ-001',
+          principalOriginal: const Money.fromCentavos(100000),
+          principalOutstanding: const Money.fromCentavos(100000),
+          createdAt: start,
+          interestRateBasisPoints: 200,
+          interestType: 'weekly',
+        ),
+        'user-1',
+      );
+      now = start.add(const Duration(days: 7));
+      expect(
+        (await repository.getAll('user-1')).single.totalOutstanding.centavos,
+        102000,
+      );
+      // A fresh repository simulates reopening the saved debt.
+      final reopened = LocalDebtRepository(
+        databaseProvider: () async => database,
+        queue: _Outbox()..nextKey = 100,
+        now: () => now,
+      );
+      final reloaded = (await reopened.getAll('user-1')).single;
+      expect(reloaded.interestType, 'weekly');
+      expect(reloaded.interestOutstanding.centavos, 2000);
+      expect(await database.query('sync_queue'), hasLength(2));
+
+      await reopened.addPayment(
+        'weekly-debt',
+        PaymentRecord(
+          id: 'weekly-payment',
+          amount: const Money.fromCentavos(52000),
+          paidAt: now,
+        ),
+      );
+      now = start.add(const Duration(days: 14));
+      final nextWeek = (await reopened.getAll('user-1')).single;
+      expect(nextWeek.principalOutstanding.centavos, 50000);
+      expect(nextWeek.interestOutstanding.centavos, 1000);
+      expect(nextWeek.payments.single.interestApplied.centavos, 2000);
+      final queued = await database.query('sync_queue', orderBy: 'id');
+      final payload = jsonDecode(queued.last['data'] as String);
+      expect(payload['interest_type'], 'weekly');
+      expect(payload['interest_rate_basis_points'], 200);
+      expect(payload['interest_outstanding_centavos'], 1000);
+    },
+  );
 }

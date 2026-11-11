@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import '../core/money.dart';
 import 'base_model.dart';
+import 'interest_type.dart';
 
 enum DebtStatus { open, paid }
 
@@ -252,9 +253,7 @@ class CustomerDebt extends BaseModel {
     if (!hasInterest || _principalOutstanding.isZero) {
       return copyWith(lastAccrualTimestamp: target);
     }
-    final period = _interestType == 'daily'
-        ? const Duration(days: 1)
-        : const Duration(days: 30);
+    final period = InterestType.fromString(_interestType).period!;
     final elapsed = target.difference(_lastAccrualTimestamp);
     final periods = elapsed.inSeconds ~/ period.inSeconds;
     if (periods == 0) return this;
@@ -379,11 +378,11 @@ class DebtPaymentResult {
 }
 
 String _validInterestType(String value) {
-  if (!const {'none', 'daily', 'monthly'}.contains(value)) {
+  if (!InterestType.isValid(value)) {
     throw ArgumentError.value(
       value,
       'interestType',
-      'Must be none, daily, or monthly.',
+      'Must be none, daily, weekly, or monthly.',
     );
   }
   return value;

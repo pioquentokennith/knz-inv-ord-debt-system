@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // mark_as_utang_dialog.dart  (v6: optional interest rate fields added)
 // Purpose : Converts a completed order into a debt record.
-//           v6 adds: interest rate %, type (daily/monthly/none), start date.
+//           Optional interest: none, daily, weekly, or monthly.
 // ─────────────────────────────────────────────────────────────────────────────
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,9 +10,11 @@ import '../core/app_constants.dart';
 import '../core/app_state.dart';
 import '../core/money.dart';
 import '../models/debt_model.dart';
+import '../models/interest_type.dart';
 import '../models/order_model.dart';
 import '../screens/main_shell.dart';
 import '../widgets/shared_widgets.dart';
+import '../widgets/interest_type_selector.dart';
 
 class MarkAsUtangDialog extends StatefulWidget {
   final Order order;
@@ -49,7 +51,7 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
   DateTime? _dueDate;
 
   // v6 interest
-  String _interestType = 'none'; // 'none' | 'daily' | 'monthly'
+  String _interestType = 'none';
 
   // The customer-pay total is authoritative; SRP is reference data only.
   Money get _orderTotal => widget.order.customerPayAmount;
@@ -107,9 +109,11 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
       return;
     }
 
-    final interestRate = Money.tryParse(_interestCtrl.text.trim());
+    final interestRate = _interestType == 'none'
+        ? Money.zero
+        : Money.tryParse(_interestCtrl.text.trim());
     if (interestRate == null || interestRate.isNegative) {
-      setState(() => _error = 'Interest rate cannot be negative.');
+      setState(() => _error = 'Enter a valid non-negative interest rate.');
       return;
     }
 
@@ -388,44 +392,13 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
             const SizedBox(height: 10),
 
             // Interest type selector
-            Row(
-              children: [
-                for (final type in ['none', 'daily', 'monthly'])
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => setState(() => _interestType = type),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 150),
-                        margin: const EdgeInsets.only(right: 6),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: _interestType == type
-                              ? AppColors.warning.withValues(alpha: 0.15)
-                              : AppColors.inputFill,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _interestType == type
-                                ? AppColors.warning
-                                : AppColors.cardBorder,
-                          ),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          type == 'none'
-                              ? 'None'
-                              : type[0].toUpperCase() + type.substring(1),
-                          style: TextStyle(
-                            color: _interestType == type
-                                ? AppColors.warning
-                                : AppColors.whiteTertiary,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
+            InterestTypeSelector(
+              value: _interestType,
+              onChanged: (type) => setState(() {
+                _interestType = type;
+                if (type == 'none') _interestCtrl.text = '0';
+                _error = null;
+              }),
             ),
 
             if (_interestType != 'none') ...[
@@ -445,7 +418,12 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
                   decimal: true,
                 ),
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*')),
+                  TextInputFormatter.withFunction(
+                    (oldValue, newValue) =>
+                        RegExp(r'^\d*\.?\d{0,2}$').hasMatch(newValue.text)
+                        ? newValue
+                        : oldValue,
+                  ),
                 ],
                 style: const TextStyle(color: AppColors.white),
                 decoration: InputDecoration(
@@ -477,9 +455,7 @@ class _MarkAsUtangDialogState extends State<MarkAsUtangDialog> {
               ),
               const SizedBox(height: 8),
               Text(
-                _interestType == 'daily'
-                    ? 'Accrued = balance × rate% × days unpaid'
-                    : 'Accrued = balance × rate% × (days/30)',
+                InterestType.fromString(_interestType).accrualDescription,
                 style: const TextStyle(
                   color: AppColors.whiteTertiary,
                   fontSize: 10,

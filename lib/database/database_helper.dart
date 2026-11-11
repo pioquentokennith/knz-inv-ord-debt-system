@@ -15,6 +15,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
 import '../core/money.dart';
+import '../models/interest_type.dart';
 import '../dto/activity_log_dto.dart';
 import '../dto/business_event_dto.dart';
 import '../dto/custom_order_dto.dart';
@@ -1583,7 +1584,7 @@ class DatabaseHelper {
           ? createdAt
           : DateTime.parse(debt['interest_start_date'] as String).toUtc();
       final interestType = debt['interest_type'] as String? ?? 'none';
-      if (!const {'none', 'daily', 'monthly'}.contains(interestType)) {
+      if (!InterestType.isValid(interestType)) {
         throw StateError(
           'Debt $debtId has invalid interest type $interestType.',
         );
@@ -1605,9 +1606,7 @@ class DatabaseHelper {
           cursor = target;
           return;
         }
-        final period = interestType == 'daily'
-            ? const Duration(days: 1)
-            : const Duration(days: 30);
+        final period = InterestType.fromString(interestType).period!;
         final periods = target.difference(cursor).inSeconds ~/ period.inSeconds;
         if (periods == 0) return;
         final perPeriod = Money.fromCentavos(

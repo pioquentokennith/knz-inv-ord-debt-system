@@ -62,7 +62,7 @@ extension _ReportTypeExt on _ReportType {
       case _ReportType.outstandingDebts:
         return 'Unpaid utang records with remaining balances';
       case _ReportType.debtWithInterest:
-        return 'Utang including accrued daily/monthly interest';
+        return 'Utang including accrued daily/weekly/monthly interest';
       case _ReportType.customOrderStatus:
         return 'All custom perfume agreements and their status';
       case _ReportType.inventoryStock:
